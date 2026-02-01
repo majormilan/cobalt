@@ -35,13 +35,6 @@ runtime_display_string:
     pop rsi                             ; string pointer
     syscall
 
-    ; Newline after string
-    mov rax, 1
-    mov rdi, 1
-    lea rsi, [rel newline]
-    mov rdx, 1
-    syscall
-
     leave
     ret
 
@@ -102,13 +95,6 @@ runtime_display_numeric:
     mov rdx, r9                         ; updated length
     mov rax, 1
     mov rdi, 1
-    syscall
-
-    ; Newline after number
-    mov rax, 1
-    mov rdi, 1
-    lea rsi, [rel newline]
-    mov rdx, 1
     syscall
 
     leave

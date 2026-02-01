@@ -63,6 +63,7 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
         }
         i = i->next;
     }
+    fprintf(f, "newline db 10, 0\n");
     fprintf(f, "\n");
 
     fprintf(f, "section .text\n");
