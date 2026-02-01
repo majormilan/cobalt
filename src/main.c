@@ -183,8 +183,9 @@ int main(int argc, char **argv) {
     current_filename = input_file;
 
     char *source = read_file(input_file);
-    lexer_init(source);
-    AstNode *ast = parse_program(&mode, source);
+    Lexer lexer;
+    lexer_init(&lexer, source, &mode);
+    AstNode *ast = parse_program(&lexer, &mode, source);
 
     if (!ast) {
         free(source);
