@@ -1,5 +1,6 @@
-; runtime/x86_64-linux-elf.asm - Fully fixed COBOL runtime
-; Assemble: nasm -f elf64 runtime/x86_64-linux-elf.asm -o runtime.o
+; runtime/x86_64-linux-elf.asm
+; COBOL runtime for x86_64 Linux ELF
+; Updated: newline after each display, proper trimming, correct decimal placement
 
 section .text
 
@@ -15,6 +16,8 @@ runtime_init:
 
 ; rdi = null-terminated string pointer
 runtime_display_string:
+    push rbp
+    mov rbp, rsp
     push rdi
 
     ; Compute length
@@ -32,47 +35,51 @@ runtime_display_string:
     pop rsi                             ; string pointer
     syscall
 
-    ; Newline
+    ; Newline after string
     mov rax, 1
     mov rdi, 1
     lea rsi, [rel newline]
     mov rdx, 1
     syscall
 
+    leave
     ret
 
 ; rdi = variable pointer (raw digits)
 ; rsi = total size in bytes
-; rdx = decimal places
+; rdx = number of decimal places
 runtime_display_numeric:
     push rbp
     mov rbp, rsp
-    push rdi                            ; save var pointer
-    push rsi                            ; save size
-    push rdx                            ; save decimals
+    push rdi                            ; [rbp-8]  = var ptr
+    push rsi                            ; [rbp-16] = size
+    push rdx                            ; [rbp-24] = decimals
 
-    sub rsp, 64                         ; temp buffer (max 32 digits + . + \0)
+    sub rsp, 64                         ; temp buffer
     mov r8, rsp                         ; r8 = temp buffer
 
+    mov r9, [rbp-16]                    ; r9 = original size
+
     ; Copy raw digits
-    mov rcx, rsi                        ; size
-    mov rsi, rdi                        ; var pointer
+    mov rcx, r9
+    mov rsi, [rbp-8]                    ; var ptr
     mov rdi, r8
     rep movsb
-    mov byte [r8 + rsi], 0              ; null-terminate
+    mov byte [r8 + r9], 0               ; null-terminate
 
     ; Insert '.' if decimals > 0
-    pop rdx                             ; decimals
+    mov rdx, [rbp-24]                   ; decimals
     test rdx, rdx
     jz .no_dot
-    mov rcx, rsi                        ; size
+    mov rcx, r9                         ; original size
     sub rcx, rdx                        ; position for '.'
     cmp rcx, 0
     jle .no_dot
     mov byte [r8 + rcx], '.'
+    inc r9                              ; length += 1 for '.'
 .no_dot:
 
-    ; Trim leading '0's (keep at least one '0' if value is zero)
+    ; Trim leading '0's (keep one '0' if value is zero)
     mov rsi, r8
 .trim_loop:
     cmp byte [rsi], '0'
@@ -80,31 +87,24 @@ runtime_display_numeric:
     inc rsi
     cmp byte [rsi], 0
     jne .trim_loop
-    dec rsi                             ; point to single '0'
+    dec rsi                             ; point back to single '0'
 .trim_done:
 
-    ; If after trim we have '.' as first char, prepend '0'
+    ; If trimmed result starts with '.', prepend '0'
     cmp byte [rsi], '.'
-    jne .no_prepend_zero
+    jne .print
     mov byte [r8], '0'
     mov rsi, r8
+    inc r9
 
-.no_prepend_zero:
+.print:
     ; Print trimmed string
-    mov rdi, rsi
-    xor rcx, rcx
-.strlen_num:
-    cmp byte [rdi + rcx], 0
-    je .print_num
-    inc rcx
-    jmp .strlen_num
-.print_num:
-    mov rdx, rcx
+    mov rdx, r9                         ; updated length
     mov rax, 1
     mov rdi, 1
     syscall
 
-    ; Newline
+    ; Newline after number
     mov rax, 1
     mov rdi, 1
     lea rsi, [rel newline]
@@ -115,44 +115,46 @@ runtime_display_numeric:
     ret
 
 ; rdi = dest buffer
-; rsi = src buffer/literal
-; rdx = src len
+; rsi = src buffer / literal
+; rdx = src length
 ; rcx = dest size
 runtime_move_alphanum:
     push rbp
     mov rbp, rsp
+    push rdi                            ; save dest
 
-    ; Copy min(src_len, dest_size)
+    ; Fill with spaces
+    mov al, ' '
+    push rcx
+    rep stosb
+    pop rcx
+
+    ; Copy source
+    pop rdi                             ; dest
     cmp rdx, rcx
     cmovbe rcx, rdx
     rep movsb
 
-    ; Pad right with spaces
-    mov rcx, [rbp + 32]                 ; original dest_size (pushed rcx)
-    sub rcx, rdx
-    jle .done_alpha
-    mov al, ' '
-    rep stosb
-
-.done_alpha:
     leave
     ret
 
 ; rdi = dest buffer
-; rsi = src digits/literal
-; rdx = src len
+; rsi = src digits / literal
+; rdx = src length
 ; rcx = dest size
 runtime_move_numeric:
     push rbp
     mov rbp, rsp
     push rdi                            ; save dest
 
-    ; Fill entire dest with '0'
+    ; Fill with '0'
     mov al, '0'
+    push rcx
     rep stosb
+    pop rcx
 
-    ; Right-align src
-    pop rdi                             ; dest start
+    ; Right-align source
+    pop rdi                             ; dest
     add rdi, rcx                        ; dest + size
     sub rdi, rdx                        ; dest + (size - src_len)
     mov rcx, rdx

@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
+
 static char *escape_string(const char *s) {
     if (!s) return strdup("\"\"");
     size_t len = strlen(s);
@@ -12,6 +13,7 @@ static char *escape_string(const char *s) {
     for (const char *p = s; *p; p++)
         if (*p == '"' || *p == '\\') extra++;
     char *esc = malloc(len + extra + 3);
+    if (!esc) return NULL;
     char *d = esc;
     *d++ = '"';
     for (const char *p = s; *p; p++) {
@@ -69,34 +71,70 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
     fprintf(f, "    call runtime_init\n\n");
 
     i = ir->head;
+    bool in_display = false;
+
     while (i) {
         switch (i->op) {
             case IR_CALL_DISPLAY_STR:
-                fprintf(f, "    lea rdi, [%s]\n", i->lit_name);
-                fprintf(f, "    call runtime_display_string\n\n");
-                break;
             case IR_CALL_DISPLAY_NUM:
-                fprintf(f, "    lea rdi, [%s]\n", i->var_name);
-                fprintf(f, "    mov rsi, %d\n", i->size);
-                fprintf(f, "    mov rdx, %d\n", i->decimal_places);
-                fprintf(f, "    call runtime_display_numeric\n\n");
+                if (!in_display) {
+                    in_display = true;
+                }
+
+                if (i->op == IR_CALL_DISPLAY_STR) {
+                    fprintf(f, "    lea rdi, [%s]\n", i->lit_name);
+                    fprintf(f, "    call runtime_display_string\n");
+                } else {
+                    fprintf(f, "    lea rdi, [%s]\n", i->var_name);
+                    fprintf(f, "    mov rsi, %d\n", i->size);
+                    fprintf(f, "    mov rdx, %d\n", i->decimal_places);
+                    fprintf(f, "    call runtime_display_numeric\n");
+                }
                 break;
-            case IR_CALL_MOVE_ALPHA:
-            case IR_CALL_MOVE_NUM:
-                fprintf(f, "    lea rdi, [%s]\n", i->var_name);
-                fprintf(f, "    lea rsi, [%s]\n", i->lit_name);
-                fprintf(f, "    mov rdx, %d\n", i->lit_len);
-                fprintf(f, "    mov rcx, %d\n", i->size);
-                fprintf(f, "    call runtime_move_%s\n\n", i->op == IR_CALL_MOVE_NUM ? "numeric" : "alphanum");
-                break;
-            case IR_CALL_EXIT:
-                fprintf(f, "    call runtime_exit\n");
-                break;
+
             default:
+                // When we leave a DISPLAY block, emit one newline
+                if (in_display) {
+                    fprintf(f, "    mov rax, 1\n");
+                    fprintf(f, "    mov rdi, 1\n");
+                    fprintf(f, "    lea rsi, [rel newline]\n");
+                    fprintf(f, "    mov rdx, 1\n");
+                    fprintf(f, "    syscall\n\n");
+                    in_display = false;
+                }
+
+                switch (i->op) {
+                    case IR_CALL_MOVE_ALPHA:
+                    case IR_CALL_MOVE_NUM:
+                        fprintf(f, "    lea rdi, [%s]\n", i->var_name);
+                        fprintf(f, "    lea rsi, [%s]\n", i->lit_name);
+                        fprintf(f, "    mov rdx, %d\n", i->lit_len);
+                        fprintf(f, "    mov rcx, %d\n", i->size);
+                        fprintf(f, "    call runtime_move_%s\n\n",
+                                i->op == IR_CALL_MOVE_NUM ? "numeric" : "alphanum");
+                        break;
+
+                    case IR_CALL_EXIT:
+                        fprintf(f, "    call runtime_exit\n");
+                        break;
+
+                    default:
+                        break;
+                }
                 break;
         }
         i = i->next;
     }
 
+    // Final newline if the last statement was a DISPLAY
+    if (in_display) {
+        fprintf(f, "    mov rax, 1\n");
+        fprintf(f, "    mov rdi, 1\n");
+        fprintf(f, "    lea rsi, [rel newline]\n");
+        fprintf(f, "    mov rdx, 1\n");
+        fprintf(f, "    syscall\n");
+    }
+
     fclose(f);
 }
+
