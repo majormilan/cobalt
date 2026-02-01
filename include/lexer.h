@@ -3,6 +3,9 @@
 #include <stddef.h>
 #include "config.h" // Include config.h for CompilerMode
 
+// Forward declaration
+struct Lexer;
+
 typedef enum {
     TOK_EOF,
     TOK_IDENT,
@@ -114,15 +117,20 @@ typedef struct {
     int column;
 } Token;
 
-typedef struct {
+typedef struct Lexer {
     const char *src;
     int current_line;
     int current_col;
     const char *original_source;
     const CompilerMode *mode; // Add CompilerMode to lexer state
+    Token (*get_keyword_or_ident)(struct Lexer *l, const char *start, size_t len); // Function pointer for standard-specific keyword check
 } Lexer;
 
 void lexer_init(Lexer *l, const char *source, const CompilerMode *mode);
 Token lexer_next(Lexer *l);
+
+// Public helper functions for standard-specific lexers
+int is_ident_char(char c);
+Token make_token_public(Lexer *l, TokenKind kind, const char *start, size_t length);
 
 #endif
