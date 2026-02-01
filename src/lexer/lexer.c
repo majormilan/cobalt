@@ -1,4 +1,3 @@
-/* src/lexer/lexer.c */
 #include "lexer.h"
 #include "diag.h"
 #include <ctype.h>
@@ -6,31 +5,27 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
-static const char *src;
-static int current_line = 1;
-static int current_col = 1;
-static const char *original_source = NULL;
-
-void lexer_init(const char *source) {
-    original_source = source;
-    src = source;
-    current_line = 1;
-    current_col = 1;
+void lexer_init(Lexer *l, const char *source, const CompilerMode *mode) {
+    l->original_source = source;
+    l->src = source;
+    l->current_line = 1;
+    l->current_col = 1;
+    l->mode = mode;
 }
 
-static void advance(void) {
-    if (*src == '\n') {
-        current_line++;
-        current_col = 1;
+static void advance(Lexer *l) {
+    if (*l->src == '\n') {
+        l->current_line++;
+        l->current_col = 1;
     } else {
-        current_col++;
+        l->current_col++;
     }
-    src++;
+    l->src++;
 }
 
-static void skip_ws(void) {
-    while (*src && isspace(*src)) {
-        advance();
+static void skip_ws(Lexer *l) {
+    while (*l->src && isspace(*l->src)) {
+        advance(l);
     }
 }
 
@@ -38,18 +33,18 @@ static int is_ident_char(char c) {
     return isalnum(c) || c == '-' || c == '_';
 }
 
-static Token make_token(TokenKind kind, const char *start, size_t length) {
+static Token make_token(Lexer *l, TokenKind kind, const char *start, size_t length) {
     Token t;
     t.kind = kind;
     t.lexeme = start;
     t.length = length;
-    t.line = current_line;
-    t.column = current_col - length;
+    t.line = l->current_line;
+    t.column = l->current_col - length;
     return t;
 }
 
-static Token keyword_or_ident(const char *start, size_t len) {
-    #define KW(s, k) if (len == strlen(s) && strncasecmp(start, s, len) == 0) return make_token(k, start, len)
+static Token keyword_or_ident(Lexer *l, const char *start, size_t len) {
+    #define KW(s, k) if (len == strlen(s) && strncasecmp(start, s, len) == 0) return make_token(l, k, start, len)
 
     KW("IDENTIFICATION", TOK_IDENTIFICATION);
     KW("DIVISION",        TOK_DIVISION);
@@ -59,7 +54,10 @@ static Token keyword_or_ident(const char *start, size_t len) {
     KW("WORKING-STORAGE", TOK_WORKING_STORAGE);
     KW("LINKAGE",         TOK_LINKAGE);
     KW("FILE",            TOK_FILE);
-    KW("LOCAL-STORAGE",   TOK_LOCAL_STORAGE);
+    // LOCAL-STORAGE is COBOL 2002+
+    if (l->mode->std >= STD_COBOL2002) {
+        KW("LOCAL-STORAGE", TOK_LOCAL_STORAGE);
+    }
     KW("PROCEDURE",       TOK_PROCEDURE);
     KW("VALUE",           TOK_VALUE);
     KW("SECTION",         TOK_SECTION);
@@ -121,127 +119,129 @@ static Token keyword_or_ident(const char *start, size_t len) {
 
     if (len == 1) {
         switch (toupper(start[0])) {
-            case 'X': return make_token(TOK_X, start, len);
-            case 'V': return make_token(TOK_V, start, len);
-            case 'S': return make_token(TOK_S, start, len);
-            case 'P': return make_token(TOK_P, start, len);
+            case 'X': return make_token(l, TOK_X, start, len);
+            case 'V': return make_token(l, TOK_V, start, len);
+            case 'S': return make_token(l, TOK_S, start, len);
+            case 'P': return make_token(l, TOK_P, start, len);
         }
     }
 
-    return make_token(TOK_IDENT, start, len);
+    return make_token(l, TOK_IDENT, start, len);
 }
 
-Token lexer_next(void) {
-    skip_ws();
+Token lexer_next(Lexer *l) {
+    skip_ws(l);
 
-    const char *start = src;
+    const char *start = l->src;
 
-    if (*src == '\0') {
-        return make_token(TOK_EOF, start, 0);
+    if (*l->src == '\0') {
+        return make_token(l, TOK_EOF, start, 0);
     }
 
-    if (*src == '"') {
-        advance();  // skip opening "
-        start = src;
-        while (*src && *src != '"') advance();
-        size_t len = src - start;
-        if (*src == '"') advance();  // skip closing "
-        return make_token(TOK_STRING, start, len);
+    // TODO: Handle fixed/free format here
+
+    if (*l->src == '"') {
+        advance(l);  // skip opening "
+        start = l->src;
+        while (*l->src && *l->src != '"') advance(l);
+        size_t len = l->src - start;
+        if (*l->src == '"') advance(l);  // skip closing "
+        return make_token(l, TOK_STRING, start, len);
     }
 
     // Handle numbers
     bool negative = false;
-    if (*src == '-') {
+    if (*l->src == '-') {
         negative = true;
-        advance();
+        advance(l);
     }
 
-    if (isdigit(*src) || (*src == '.' && isdigit(src[1]))) {
-        if (*src == '.') advance();  // for .56 style, but rare in COBOL
-        while (isdigit(*src)) advance();
-        if (*src == '.' && isdigit(src[1])) {
-            advance();
-            while (isdigit(*src)) advance();
+    if (isdigit(*l->src) || (*l->src == '.' && isdigit(l->src[1]))) {
+        if (*l->src == '.') advance(l);  // for .56 style, but rare in COBOL
+        while (isdigit(*l->src)) advance(l);
+        if (*l->src == '.' && isdigit(l->src[1])) {
+            advance(l);
+            while (isdigit(*l->src)) advance(l);
         }
-        size_t len = src - start;
+        size_t len = l->src - start;
         if (negative) {
             start--;  // include the '-'
             len++;
         }
-        return make_token(TOK_NUMBER, start, len);
+        return make_token(l, TOK_NUMBER, start, len);
     } else if (negative) {
         // If - not followed by number, treat as minus operator
-        return make_token(TOK_MINUS, start, 1);
+        return make_token(l, TOK_MINUS, start, 1);
     }
 
-    if (isalpha(*src)) {
-        while (is_ident_char(*src)) advance();
-        return keyword_or_ident(start, src - start);
+    if (isalpha(*l->src)) {
+        while (is_ident_char(*l->src)) advance(l);
+        return keyword_or_ident(l, start, l->src - start);
     }
 
-    if (*src == '(') {
-        advance();
-        return make_token(TOK_LPAREN, start, 1);
+    if (*l->src == '(') {
+        advance(l);
+        return make_token(l, TOK_LPAREN, start, 1);
     }
 
-    if (*src == ')') {
-        advance();
-        return make_token(TOK_RPAREN, start, 1);
+    if (*l->src == ')') {
+        advance(l);
+        return make_token(l, TOK_RPAREN, start, 1);
     }
 
-    if (*src == '.') {
-        advance();
-        return make_token(TOK_PERIOD, start, 1);
+    if (*l->src == '.') {
+        advance(l);
+        return make_token(l, TOK_PERIOD, start, 1);
     }
 
-    if (*src == '>') {
-        advance();
-        if (*src == '=') {
-            advance();
-            return make_token(TOK_GE, start, 2);
+    if (*l->src == '>') {
+        advance(l);
+        if (*l->src == '=') {
+            advance(l);
+            return make_token(l, TOK_GE, start, 2);
         }
-        return make_token(TOK_GT, start, 1);
+        return make_token(l, TOK_GT, start, 1);
     }
 
-    if (*src == '<') {
-        advance();
-        if (*src == '>') {
-            advance();
-            return make_token(TOK_NE, start, 2);
+    if (*l->src == '<') {
+        advance(l);
+        if (*l->src == '>') {
+            advance(l);
+            return make_token(l, TOK_NE, start, 2);
         }
-        if (*src == '=') {
-            advance();
-            return make_token(TOK_LE, start, 2);
+        if (*l->src == '=') {
+            advance(l);
+            return make_token(l, TOK_LE, start, 2);
         }
-        return make_token(TOK_LT, start, 1);
+        return make_token(l, TOK_LT, start, 1);
     }
 
-    if (*src == '=') {
-        advance();
-        return make_token(TOK_EQ, start, 1);
+    if (*l->src == '=') {
+        advance(l);
+        return make_token(l, TOK_EQ, start, 1);
     }
 
-    if (*src == '+') {
-        advance();
-        return make_token(TOK_PLUS, start, 1);
+    if (*l->src == '+') {
+        advance(l);
+        return make_token(l, TOK_PLUS, start, 1);
     }
 
-    if (*src == '-') {
-        advance();
-        return make_token(TOK_MINUS, start, 1);
+    if (*l->src == '-') {
+        advance(l);
+        return make_token(l, TOK_MINUS, start, 1);
     }
 
-    if (*src == '*') {
-        advance();
-        return make_token(TOK_MUL, start, 1);
+    if (*l->src == '*') {
+        advance(l);
+        return make_token(l, TOK_MUL, start, 1);
     }
 
-    if (*src == '/') {
-        advance();
-        return make_token(TOK_DIV, start, 1);
+    if (*l->src == '/') {
+        advance(l);
+        return make_token(l, TOK_DIV, start, 1);
     }
 
-    cobalt_error_loc(original_source, current_line, current_col, "Unexpected character '%c'", *src);
-    advance();
-    return lexer_next();  // recovery
+    cobalt_error_loc(l->original_source, l->current_line, l->current_col, "Unexpected character '%c'", *l->src);
+    advance(l);
+    return lexer_next(l);  // recovery
 }

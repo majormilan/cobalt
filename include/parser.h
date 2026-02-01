@@ -3,7 +3,8 @@
 
 #include "ast.h"
 #include "config.h"
+#include "lexer.h" // Include lexer.h for Lexer struct
 
-AstNode *parse_program(CompilerMode *mode, const char *source);
+AstNode *parse_program(Lexer *l, CompilerMode *mode, const char *source);
 
 #endif

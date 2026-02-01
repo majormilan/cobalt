@@ -9,10 +9,10 @@
 #include <strings.h>  // for strcasecmp
 
 static Token tok;
-static const char *source_buffer = NULL;
+static Lexer *current_lexer; // Temporary global lexer for parser functions
 
 static void next(void) {
-    tok = lexer_next();
+    tok = lexer_next(current_lexer);
 }
 
 static char *tok_to_str(void) {
@@ -27,7 +27,14 @@ static char *tok_to_str(void) {
 static void expect(TokenKind k, const char *msg) {
     if (tok.kind != k) {
         char *got_str = tok_to_str();
-        cobalt_error_loc(source_buffer, tok.line, tok.column, "Expected %s, got '%s'", msg, got_str ? got_str : "EOF");
+        if (current_lexer->mode->strictness == STRICT_RELAXED) {
+            cobalt_warn_loc(current_lexer->original_source, tok.line, tok.column, "Expected %s, got '%.*s'. Continuing in relaxed mode.", msg, (int)tok.length, tok.lexeme);
+        } else {
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Expected %s, got '%.*s'", msg, (int)tok.length, tok.lexeme);
+            free(got_str);
+            while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF) next();
+            return;
+        }
         free(got_str);
         while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF) next();
     } else {
@@ -67,6 +74,11 @@ static AstNode *parse_identification_paragraph(void) {
     while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF && pos < sizeof(val_buf) - 1) {
         char *part = tok_to_str();
 
+        // Example of standard-specific behavior:
+        // In COBOL85, these are common identification paragraphs.
+        // In newer standards, some might be deprecated or have different implications.
+        // For now, we'll keep the general check, but this is where
+        // current_lexer->mode->std could be used for more fine-grained control.
         if (tok.kind == TOK_IDENT && is_known_ident_para(part)) {
             free(part);
             break;
@@ -367,7 +379,7 @@ static AstNode *parse_statement(bool require_period) {
         return perf;
     }
 
-    cobalt_warn_loc(source_buffer, tok.line, tok.column, "Skipping unknown statement starting with '%.*s'", (int)tok.length, tok.lexeme);
+    cobalt_warn_loc(current_lexer->original_source, tok.line, tok.column, "Skipping unknown statement starting with '%.*s'", (int)tok.length, tok.lexeme);
     while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF &&
            tok.kind != TOK_ELSE && tok.kind != TOK_END_IF) next();
     if (require_period && tok.kind == TOK_PERIOD) next();
@@ -375,7 +387,6 @@ static AstNode *parse_statement(bool require_period) {
 }
 
 static AstNode *parse_paragraph(CompilerMode *mode) {
-    (void)mode;
     if (tok.kind != TOK_IDENT) return NULL;
 
     SourceLocation loc = {tok.line, tok.column};
@@ -404,7 +415,6 @@ static AstNode *parse_paragraph(CompilerMode *mode) {
 }
 
 static AstNode *parse_section(CompilerMode *mode) {
-    (void)mode;
     SourceLocation loc = {tok.line, tok.column};
     expect(TOK_SECTION, "SECTION");
     expect(TOK_PERIOD, ".");
@@ -506,15 +516,15 @@ static AstNode *parse_division(CompilerMode *mode) {
             sec = parse_section(mode);
             div->children = sec;
         } else {
-            cobalt_warn_loc(source_buffer, tok.line, tok.column, "Only WORKING-STORAGE supported in DATA DIVISION for now");
+            cobalt_warn_loc(current_lexer->original_source, tok.line, tok.column, "Only WORKING-STORAGE supported in DATA DIVISION for now");
         }
     }
 
     return div;
 }
 
-AstNode *parse_program(CompilerMode *mode, const char *source) {
-    source_buffer = source;
+AstNode *parse_program(Lexer *l, CompilerMode *mode, const char *source) {
+    current_lexer = l; // Initialize the temporary global lexer
     next();
 
     SourceLocation loc = {tok.line, tok.column};
@@ -532,7 +542,7 @@ AstNode *parse_program(CompilerMode *mode, const char *source) {
             div->text = NULL;
         }
     } else {
-        cobalt_error_loc(source_buffer, tok.line, tok.column, "Missing IDENTIFICATION DIVISION");
+        cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Missing IDENTIFICATION DIVISION");
     }
 
     while (tok.kind != TOK_EOF) {

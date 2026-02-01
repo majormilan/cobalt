@@ -1,6 +1,7 @@
 #ifndef COBALT_LEXER_H
 #define COBALT_LEXER_H
 #include <stddef.h>
+#include "config.h" // Include config.h for CompilerMode
 
 typedef enum {
     TOK_EOF,
@@ -113,7 +114,15 @@ typedef struct {
     int column;
 } Token;
 
-void lexer_init(const char *source);
-Token lexer_next(void);
+typedef struct {
+    const char *src;
+    int current_line;
+    int current_col;
+    const char *original_source;
+    const CompilerMode *mode; // Add CompilerMode to lexer state
+} Lexer;
+
+void lexer_init(Lexer *l, const char *source, const CompilerMode *mode);
+Token lexer_next(Lexer *l);
 
 #endif
