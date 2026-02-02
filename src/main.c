@@ -242,7 +242,8 @@ int main(int argc, char **argv) {
         const char *exe_name = output_file ? output_file : "a.out";
         printf("\nTo build and run (Linux):\n");
         printf("  nasm -f elf64 \"%s\" -o \"%s.o\"\n", asm_filename, exe_name);
-        printf("  ld \"%s.o\" -o \"%s\"\n", exe_name, exe_name);
+        printf("  nasm -f elf64 \"runtime/x86_64-linux-elf.asm\" -o \"runtime.o\"\n");
+        printf("  ld \"%s.o\" \"runtime.o\" -o \"%s\"\n", exe_name, exe_name);
         printf("  ./%s\n", exe_name);
     }
 

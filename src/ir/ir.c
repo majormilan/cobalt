@@ -135,6 +135,7 @@ static void lower_node(IrProgram *ir, AstNode *node) {
             }
             arg = arg->next;
         }
+        append_instr(ir, new_instr(IR_EMIT_NEWLINE, NULL, NULL, NULL, 0, 0, 0, 0));
     } else if (node->kind == AST_STATEMENT_MOVE) {
         AstNode *src = node->children;
         AstNode *dest = src ? src->next : NULL;

@@ -72,15 +72,11 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
     fprintf(f, "    call runtime_init\n\n");
 
     i = ir->head;
-    bool in_display = false;
 
     while (i) {
         switch (i->op) {
             case IR_CALL_DISPLAY_STR:
             case IR_CALL_DISPLAY_NUM:
-                if (!in_display) {
-                    in_display = true;
-                }
 
                 if (i->op == IR_CALL_DISPLAY_STR) {
                     fprintf(f, "    lea rdi, [%s]\n", i->lit_name);
@@ -92,18 +88,15 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
                     fprintf(f, "    call runtime_display_numeric\n");
                 }
                 break;
+            case IR_EMIT_NEWLINE:
+                fprintf(f, "    mov rax, 1\n"); // syscall number for write
+                fprintf(f, "    mov rdi, 1\n"); // file descriptor 1 (stdout)
+                fprintf(f, "    lea rsi, [rel newline]\n"); // address of newline character
+                fprintf(f, "    mov rdx, 1\n"); // length of string
+                fprintf(f, "    syscall\n\n");
+                break;
 
             default:
-                // When we leave a DISPLAY block, emit one newline
-                if (in_display) {
-                    fprintf(f, "    mov rax, 1\n");
-                    fprintf(f, "    mov rdi, 1\n");
-                    fprintf(f, "    lea rsi, [rel newline]\n");
-                    fprintf(f, "    mov rdx, 1\n");
-                    fprintf(f, "    syscall\n\n");
-                    in_display = false;
-                }
-
                 switch (i->op) {
                     case IR_CALL_MOVE_ALPHA:
                     case IR_CALL_MOVE_NUM:
@@ -125,15 +118,6 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
                 break;
         }
         i = i->next;
-    }
-
-    // Final newline if the last statement was a DISPLAY
-    if (in_display) {
-        fprintf(f, "    mov rax, 1\n");
-        fprintf(f, "    mov rdi, 1\n");
-        fprintf(f, "    lea rsi, [rel newline]\n");
-        fprintf(f, "    mov rdx, 1\n");
-        fprintf(f, "    syscall\n");
     }
 
     fclose(f);
