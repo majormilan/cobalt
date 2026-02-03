@@ -51,6 +51,8 @@ Token lexer_cobol85_keyword_or_ident(Lexer *l, const char *start, size_t len) {
     KW("I-O",             TOK_I_O);
     KW("EXTEND",          TOK_EXTEND);
 
+    KW("IS",              TOK_IS); // Added for USAGE IS COMP/DISPLAY
+
     KW("PIC",             TOK_PIC);
     KW("USAGE",           TOK_USAGE);
     KW("COMP",            TOK_COMP);

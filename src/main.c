@@ -192,7 +192,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    SemaContext ctx = { .mode = &mode };
+    SemaContext ctx = { .mode = &mode, .original_source = source };
     sema_basic_check(ast, &ctx);
 
     if (dump_ast) {

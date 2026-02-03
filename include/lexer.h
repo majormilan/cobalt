@@ -67,6 +67,7 @@ typedef enum {
     TOK_S,
     TOK_P,
     TOK_USAGE,
+    TOK_IS,
     TOK_COMP,
     TOK_COMP_1,
     TOK_COMP_2,

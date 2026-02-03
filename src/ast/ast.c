@@ -12,6 +12,12 @@ AstNode *ast_new(AstKind kind, const char *name, SourceLocation loc) {
         n->name = strdup(name);
     }
     n->loc = loc;
+    // Initialize new semantic fields. calloc already zeros out the memory.
+    n->data_size = 0;
+    n->usage_type = USAGE_DISPLAY; // Default COBOL usage type
+    n->is_numeric = false;
+    n->is_signed = false;
+    n->decimal_places = 0;
     return n;
 }
 
@@ -55,6 +61,9 @@ void ast_dump(AstNode *node, FILE *out, int indent) {
         case AST_IDENTIFICATION_PARAGRAPH:  kind_name = "ID-PARAGRAPH"; break;
         case AST_CONDITION:                 kind_name = "CONDITION"; break;
         case AST_PIC_CLAUSE:                kind_name = "PIC"; break;
+        case AST_USAGE_CLAUSE:              kind_name = "USAGE"; break;
+        case AST_USAGE_TYPE_COMP:           kind_name = "USAGE-COMP"; break;
+        case AST_USAGE_TYPE_DISPLAY:        kind_name = "USAGE-DISPLAY"; break;
         default:                            kind_name = "UNKNOWN"; break;
     }
 

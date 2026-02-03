@@ -2,6 +2,15 @@
 #ifndef COBALT_AST_H
 #define COBALT_AST_H
 #include <stdio.h>
+#include <stdbool.h> // For bool type
+#include <stddef.h>  // For size_t type
+
+// New enum for UsageType
+typedef enum {
+    USAGE_DISPLAY,
+    USAGE_COMP,
+    // Add other COMP types like COMP-1, COMP-2, COMP-3, COMP-5 later
+} AstUsageType;
 
 typedef enum {
     AST_PROGRAM,
@@ -28,6 +37,9 @@ typedef enum {
     AST_SELECT,
     AST_CONDITION,
     AST_PIC_CLAUSE,
+    AST_USAGE_CLAUSE,
+    AST_USAGE_TYPE_COMP,
+    AST_USAGE_TYPE_DISPLAY,
 } AstKind;
 
 typedef struct {
@@ -40,6 +52,14 @@ typedef struct AstNode {
     char *name;             // owned
     char *text;             // owned
     SourceLocation loc;     // ← new: where this node starts in source
+
+    // Semantic information for VAR_DECL nodes
+    size_t data_size;       // Size in bytes
+    AstUsageType usage_type; // e.g., DISPLAY, COMP
+    bool is_numeric;        // True if the data item is numeric
+    bool is_signed;         // True if the data item is signed
+    int decimal_places;     // Number of decimal places for numeric items (V in PIC)
+
     struct AstNode *children;
     struct AstNode *next;
 } AstNode;

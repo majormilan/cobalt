@@ -6,6 +6,7 @@
 
 typedef struct {
     CompilerMode *mode;
+    const char *original_source; // For error reporting with source context
     // future: symbol table, error list, etc.
 } SemaContext;
 

@@ -126,6 +126,7 @@ static AstNode *parse_var_decl(void) {
     AstNode *var = ast_new(AST_VAR_DECL, name, loc);
     free(name);
     var->text = level;
+    AstNode *current_child_tail = NULL; // New helper to track the end of the children list
 
     if (tok.kind == TOK_PIC) {
         next();
@@ -139,8 +140,49 @@ static AstNode *parse_var_decl(void) {
             next();
         }
         AstNode *pic = ast_new(AST_PIC_CLAUSE, strdup(pic_buf), loc);
-        var->children = pic;
+        if (!var->children) { // If it's the first child
+            var->children = pic;
+        } else { // Append to the existing children list
+            current_child_tail->next = pic;
+        }
+        current_child_tail = pic; // Update tail
     }
+
+    // --- Start of USAGE parsing logic ---
+    if (tok.kind == TOK_USAGE) {
+        next(); // Consume TOK_USAGE
+
+        // Optional IS
+        if (tok.kind == TOK_IS) {
+            next(); // Consume TOK_IS
+        }
+
+        AstNode *usage_clause = ast_new(AST_USAGE_CLAUSE, NULL, loc);
+        AstNode *usage_type = NULL;
+
+        if (tok.kind == TOK_COMP) {
+            next(); // Consume TOK_COMP
+            usage_type = ast_new(AST_USAGE_TYPE_COMP, NULL, loc);
+        } else if (tok.kind == TOK_DISPLAY) {
+            next(); // Consume TOK_DISPLAY
+            usage_type = ast_new(AST_USAGE_TYPE_DISPLAY, NULL, loc);
+        } else {
+            cobalt_warn_loc(current_lexer->original_source, tok.line, tok.column, "Expected COMP or DISPLAY after USAGE, got '%.*s'", (int)tok.length, tok.lexeme);
+            // Optionally, handle error or default to DISPLAY
+        }
+
+        if (usage_type) {
+            usage_clause->children = usage_type;
+        }
+
+        if (!var->children) { // If it's the first child
+            var->children = usage_clause;
+        } else { // Append to the existing children list
+            current_child_tail->next = usage_clause;
+        }
+        current_child_tail = usage_clause; // Update tail
+    }
+    // --- End of USAGE parsing logic ---
 
     if (tok.kind == TOK_VALUE) {
         next();
@@ -151,8 +193,12 @@ static AstNode *parse_var_decl(void) {
             val, (SourceLocation){tok.line, tok.column}
         );
         free(val);
-        if (var->children) var->children->next = val_node;
-        else var->children = val_node;
+        if (!var->children) { // If it's the first child
+            var->children = val_node;
+        } else { // Append to the existing children list
+            current_child_tail->next = val_node;
+        }
+        current_child_tail = val_node; // Update tail
         next();
     }
 

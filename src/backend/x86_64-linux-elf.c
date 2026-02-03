@@ -76,17 +76,15 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
     while (i) {
         switch (i->op) {
             case IR_CALL_DISPLAY_STR:
+                fprintf(f, "    lea rdi, [%s]\n", i->lit_name);
+                fprintf(f, "    call runtime_display_string\n");
+                break;
             case IR_CALL_DISPLAY_NUM:
-
-                if (i->op == IR_CALL_DISPLAY_STR) {
-                    fprintf(f, "    lea rdi, [%s]\n", i->lit_name);
-                    fprintf(f, "    call runtime_display_string\n");
-                } else {
-                    fprintf(f, "    lea rdi, [%s]\n", i->var_name);
-                    fprintf(f, "    mov rsi, %d\n", i->size);
-                    fprintf(f, "    mov rdx, %d\n", i->decimal_places);
-                    fprintf(f, "    call runtime_display_numeric\n");
-                }
+                fprintf(f, "    lea rdi, [%s]\n", i->var_name);
+                fprintf(f, "    mov rsi, %d\n", i->size);
+                fprintf(f, "    mov rdx, %d\n", i->decimal_places);
+                fprintf(f, "    mov rcx, %d\n", i->usage_type); // Pass usage_type
+                fprintf(f, "    call runtime_display_numeric\n");
                 break;
             case IR_EMIT_NEWLINE:
                 fprintf(f, "    mov rax, 1\n"); // syscall number for write
@@ -95,26 +93,21 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
                 fprintf(f, "    mov rdx, 1\n"); // length of string
                 fprintf(f, "    syscall\n\n");
                 break;
-
+            case IR_CALL_MOVE_ALPHA:
+            case IR_CALL_MOVE_NUM:
+                fprintf(f, "    lea rdi, [%s]\n", i->var_name);
+                fprintf(f, "    lea rsi, [%s]\n", i->lit_name);
+                fprintf(f, "    mov rdx, %d\n", i->lit_len);
+                fprintf(f, "    mov rcx, %d\n", i->size);
+                fprintf(f, "    mov r8, %d\n", i->usage_type); // Pass usage_type
+                fprintf(f, "    call runtime_move_%s\n\n",
+                        i->op == IR_CALL_MOVE_NUM ? "numeric" : "alphanum");
+                break;
+            case IR_CALL_EXIT:
+                fprintf(f, "    call runtime_exit\n");
+                break;
             default:
-                switch (i->op) {
-                    case IR_CALL_MOVE_ALPHA:
-                    case IR_CALL_MOVE_NUM:
-                        fprintf(f, "    lea rdi, [%s]\n", i->var_name);
-                        fprintf(f, "    lea rsi, [%s]\n", i->lit_name);
-                        fprintf(f, "    mov rdx, %d\n", i->lit_len);
-                        fprintf(f, "    mov rcx, %d\n", i->size);
-                        fprintf(f, "    call runtime_move_%s\n\n",
-                                i->op == IR_CALL_MOVE_NUM ? "numeric" : "alphanum");
-                        break;
-
-                    case IR_CALL_EXIT:
-                        fprintf(f, "    call runtime_exit\n");
-                        break;
-
-                    default:
-                        break;
-                }
+                // Handle other IR opcodes if necessary, or do nothing for IR_DATA_VAR/IR_DATA_LIT as they are handled in .bss/.data sections
                 break;
         }
         i = i->next;

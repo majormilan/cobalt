@@ -27,6 +27,7 @@ struct IrInstr {
     int size;                   // or dest_size
     int decimal_places;
     char pad_char;
+    AstUsageType usage_type; // For data variables: DISPLAY, COMP, etc.
     IrInstr *next;
 };
 
