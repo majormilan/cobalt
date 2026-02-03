@@ -444,6 +444,27 @@ static AstNode *parse_statement(bool require_period) {
         if (require_period) expect(TOK_PERIOD, ".");
         return perf;
     }
+    else if (tok.kind == TOK_ACCEPT) {
+        next(); // Consume TOK_ACCEPT
+        AstNode *accept_stmt = ast_new(AST_STATEMENT_ACCEPT, NULL, loc);
+
+        if (tok.kind == TOK_IDENT) {
+            char *var_name = tok_to_str();
+            AstNode *target = ast_new(AST_IDENTIFIER, var_name, (SourceLocation){tok.line, tok.column});
+            free(var_name);
+            accept_stmt->children = target;
+            next();
+        } else {
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "ACCEPT statement requires a variable name");
+            // Attempt to recover by consuming until period
+            while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF) next();
+            if (tok.kind == TOK_PERIOD) next();
+            return NULL;
+        }
+
+        if (require_period) expect(TOK_PERIOD, ".");
+        return accept_stmt;
+    }
 
     cobalt_warn_loc(current_lexer->original_source, tok.line, tok.column, "Skipping unknown statement starting with '%.*s'", (int)tok.length, tok.lexeme);
     while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF &&

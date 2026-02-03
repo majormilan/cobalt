@@ -178,6 +178,15 @@ static void sema_walk_ast(AstNode *node, SemaContext *ctx) {
         case AST_VAR_DECL:
             sema_analyze_var_decl(node, ctx);
             break;
+        case AST_STATEMENT_ACCEPT:
+            if (!node->children || node->children->kind != AST_IDENTIFIER) {
+                cobalt_error_loc(ctx->original_source, node->loc.line, node->loc.column,
+                                 "ACCEPT statement requires an identifier (variable name)");
+            } else {
+                // Future: Check if the identifier is a declared variable.
+                // For now, just ensure it's an identifier.
+            }
+            break;
         // Add other cases for statements, etc., as semantic analysis grows
         default:
             break;

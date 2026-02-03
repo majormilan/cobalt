@@ -134,6 +134,18 @@ static void lower_node(IrProgram *ir, AstNode *node) {
         }
     } else if (node->kind == AST_STATEMENT_STOP) {
         append_instr(ir, new_instr(IR_CALL_EXIT, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+    } else if (node->kind == AST_STATEMENT_ACCEPT) {
+        AstNode *var_node = node->children; // Should be an AST_IDENTIFIER
+        if (var_node && var_node->kind == AST_IDENTIFIER) {
+            VarInfo *v = find_var(var_node->name);
+            if (v) {
+                append_instr(ir, new_instr(IR_CALL_ACCEPT, v->name, NULL, NULL, 0, v->size, v->decimal_places, 0, v->usage_type));
+            } else {
+                cobalt_warn("Variable '%s' not found for ACCEPT", var_node->name);
+            }
+        } else {
+            cobalt_warn("ACCEPT statement requires a variable", NULL);
+        }
     }
 }
 

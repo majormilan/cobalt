@@ -301,5 +301,75 @@ runtime_move_fill:
     ret
 
 
+global runtime_accept
+
+; rdi = dest_var (pointer)
+; rsi = size
+; rdx = decimal_places
+; rcx = usage_type
+runtime_accept:
+    push rbp
+    mov rbp, rsp
+    ; Save incoming arguments onto the stack
+    push rdi                            ; [rbp-8] = dest_var
+    push rsi                            ; [rbp-16] = size
+    push rdx                            ; [rbp-24] = decimal_places
+    push rcx                            ; [rbp-32] = usage_type
+
+    ; Read from stdin (fd 0)
+    mov rax, 0                          ; sys_read
+    mov rdi, 0                          ; stdin
+    mov rsi, [rbp-8]                    ; dest_var (from stack)
+    mov rdx, [rbp-16]                   ; size (from stack)
+    syscall
+
+    ; After sys_read, rax contains number of bytes read
+    ; For simplicity, we assume the user presses ENTER, so we need to
+    ; null-terminate the input or strip the newline.
+    ; For ACCEPT, COBOL typically doesn't expect null termination, but fills exactly 'size' chars.
+    ; Any remaining space in 'dest_var' should probably be padded.
+    ; We need to handle this padding in a more sophisticated runtime.
+    ; For now, let's just make sure it reads up to size, and potentially pads if less is read.
+
+    ; Let rbx = actual bytes read (from rax)
+    ; Let r10 = original size
+    ; Let r11 = dest_var
+    mov rbx, rax                        ; rbx = bytes read
+    mov r10, [rbp-16]                   ; r10 = original size
+    mov r11, [rbp-8]                    ; r11 = dest_var
+
+    ; If actual bytes read is less than size, fill the rest with spaces (alphanumeric) or zeros (numeric)
+    cmp rbx, r10
+    jge .no_padding                     ; If read >= size, no padding needed
+
+    ; Determine pad character based on usage_type
+    mov r12d, [rbp-32]                  ; r12 = usage_type
+    cmp r12d, 1                         ; USAGE_COMP (1)
+    je .pad_zeros                       ; If COMP, pad with '0'
+    mov al, ' '                         ; Else (DISPLAY), pad with ' '
+    jmp .do_padding
+.pad_zeros:
+    mov al, '0'
+.do_padding:
+    mov rdi, r11                        ; dest_var
+    add rdi, rbx                        ; start padding after bytes read
+    mov rcx, r10                        ; total size
+    sub rcx, rbx                        ; remaining size to pad
+    cld                                 ; clear direction flag
+    rep stosb                           ; fill remaining with pad char
+
+.no_padding:
+    ; For numeric ACCEPT, COBOL might convert string digits to internal format (e.g., COMP).
+    ; For now, we assume direct character input for DISPLAY and raw bytes for COMP.
+    ; This conversion logic will be handled later.
+
+    ; Restore registers and clean stack
+    pop rcx                             ; restore rcx (usage_type)
+    pop rdx                             ; restore rdx (decimal_places)
+    pop rsi                             ; restore rsi (size)
+    pop rdi                             ; restore rdi (dest_var)
+    leave
+    ret
+
 section .data
 newline db 10, 0
