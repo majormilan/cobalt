@@ -94,6 +94,8 @@ typedef enum {
     TOK_YEAR,
     TOK_YYYYMMDD,
     TOK_YYDDD,
+    TOK_ZEROS,
+    TOK_SPACES,
 
     // Operators
     TOK_GT,

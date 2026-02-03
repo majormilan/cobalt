@@ -25,6 +25,18 @@ static char *escape_string(const char *s) {
     return esc;
 }
 
+static char *sanitize_label_name(const char *name) {
+    if (!name) return NULL;
+    char *sanitized = strdup(name);
+    if (!sanitized) return NULL;
+    for (char *p = sanitized; *p; p++) {
+        if (*p == '-') {
+            *p = '_';
+        }
+    }
+    return sanitized;
+}
+
 void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple target) {
     (void)target;
 
@@ -41,13 +53,19 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
     fprintf(f, "extern runtime_display_numeric\n");
     fprintf(f, "extern runtime_move_alphanum\n");
     fprintf(f, "extern runtime_move_numeric\n");
-    fprintf(f, "extern runtime_exit\n\n");
+    fprintf(f, "extern runtime_display_fill\n"); // New
+    fprintf(f, "extern runtime_move_fill\n");    // New
+    fprintf(f, "extern runtime_display_var_string\n"); // New
+    fprintf(f, "extern runtime_exit\n");
+    fprintf(f, "\n"); // Add a single newline for readability if preferred
 
     fprintf(f, "section .bss\n");
     IrInstr *i = ir->head;
     while (i) {
         if (i->op == IR_DATA_VAR && i->var_name) {
-            fprintf(f, "%s resb %d\n", i->var_name, i->size);
+            char *sanitized_name = sanitize_label_name(i->var_name);
+            fprintf(f, "%s: resb %d\n", sanitized_name, i->size);
+            free(sanitized_name);
         }
         i = i->next;
     }
@@ -57,13 +75,15 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
     i = ir->head;
     while (i) {
         if (i->op == IR_DATA_LIT && i->lit_name && i->content) {
+            char *sanitized_name = sanitize_label_name(i->lit_name);
             char *esc = escape_string(i->content);
-            fprintf(f, "%s db %s, 0\n", i->lit_name, esc);
+            fprintf(f, "%s: db %s, 0\n", sanitized_name, esc);
             free(esc);
+            free(sanitized_name);
         }
         i = i->next;
     }
-    fprintf(f, "newline db 10, 0\n");
+    fprintf(f, "newline: db 10, 0\n");
     fprintf(f, "\n");
 
     fprintf(f, "section .text\n");
@@ -74,17 +94,35 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
     i = ir->head;
 
     while (i) {
+        char *sanitized_var_name = NULL;
+        char *sanitized_lit_name = NULL;
+
+        if (i->var_name) sanitized_var_name = sanitize_label_name(i->var_name);
+        if (i->lit_name) sanitized_lit_name = sanitize_label_name(i->lit_name);
+
         switch (i->op) {
             case IR_CALL_DISPLAY_STR:
-                fprintf(f, "    lea rdi, [%s]\n", i->lit_name);
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_lit_name);
                 fprintf(f, "    call runtime_display_string\n");
                 break;
             case IR_CALL_DISPLAY_NUM:
-                fprintf(f, "    lea rdi, [%s]\n", i->var_name);
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
                 fprintf(f, "    mov rsi, %d\n", i->size);
                 fprintf(f, "    mov rdx, %d\n", i->decimal_places);
                 fprintf(f, "    mov rcx, %d\n", i->usage_type); // Pass usage_type
                 fprintf(f, "    call runtime_display_numeric\n");
+                break;
+            case IR_CALL_DISPLAY_FILL: // New
+                fprintf(f, "    mov rdi, %d\n", i->pad_char);   // fill_char
+                fprintf(f, "    mov rsi, %d\n", i->size);       // size (new)
+                fprintf(f, "    mov rdx, %d\n", i->usage_type); // usage_type (new)
+                fprintf(f, "    call runtime_display_fill\n");
+                break;
+            case IR_CALL_DISPLAY_VAR_STR:
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name); // var_name
+                fprintf(f, "    mov rsi, %d\n", i->size);               // size
+                fprintf(f, "    mov rdx, %d\n", i->usage_type);         // usage_type
+                fprintf(f, "    call runtime_display_var_string\n");
                 break;
             case IR_EMIT_NEWLINE:
                 fprintf(f, "    mov rax, 1\n"); // syscall number for write
@@ -95,13 +133,20 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
                 break;
             case IR_CALL_MOVE_ALPHA:
             case IR_CALL_MOVE_NUM:
-                fprintf(f, "    lea rdi, [%s]\n", i->var_name);
-                fprintf(f, "    lea rsi, [%s]\n", i->lit_name);
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
+                fprintf(f, "    lea rsi, [%s]\n", sanitized_lit_name);
                 fprintf(f, "    mov rdx, %d\n", i->lit_len);
                 fprintf(f, "    mov rcx, %d\n", i->size);
                 fprintf(f, "    mov r8, %d\n", i->usage_type); // Pass usage_type
                 fprintf(f, "    call runtime_move_%s\n\n",
                         i->op == IR_CALL_MOVE_NUM ? "numeric" : "alphanum");
+                break;
+            case IR_CALL_MOVE_FILL: // New
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name); // dest_var
+                fprintf(f, "    mov rsi, %d\n", i->pad_char);   // fill_char
+                fprintf(f, "    mov rdx, %d\n", i->size);       // size
+                fprintf(f, "    mov rcx, %d\n", i->usage_type); // usage_type
+                fprintf(f, "    call runtime_move_fill\n\n");
                 break;
             case IR_CALL_EXIT:
                 fprintf(f, "    call runtime_exit\n");
@@ -110,6 +155,8 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
                 // Handle other IR opcodes if necessary, or do nothing for IR_DATA_VAR/IR_DATA_LIT as they are handled in .bss/.data sections
                 break;
         }
+        free(sanitized_var_name); // Free the sanitized name
+        free(sanitized_lit_name); // Free the sanitized name
         i = i->next;
     }
 

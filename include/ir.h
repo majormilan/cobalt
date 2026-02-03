@@ -11,10 +11,13 @@ typedef enum {
     IR_DATA_LIT,            // lit_name, content, len
     IR_CALL_INIT,           // no args (runtime_init)
     IR_CALL_DISPLAY_STR,    // lit_name
-    IR_CALL_DISPLAY_NUM,    // var_name, size, decimal_places
+    IR_CALL_DISPLAY_NUM,    // var_name, size, decimal_places, usage_type
+    IR_CALL_DISPLAY_VAR_STR, // var_name, size, usage_type
     IR_EMIT_NEWLINE,        // no args (for DISPLAY statement newline)
     IR_CALL_MOVE_ALPHA,     // dest_var, src_lit, src_len, dest_size
     IR_CALL_MOVE_NUM,       // dest_var, src_lit, src_len, dest_size, decimals
+    IR_CALL_DISPLAY_FILL,   // pad_char, size, decimal_places, usage_type
+    IR_CALL_MOVE_FILL,      // dest_var, fill_char, size, usage_type
     IR_CALL_EXIT            // no args
 } IrOpcode;
 

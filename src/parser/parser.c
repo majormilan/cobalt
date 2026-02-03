@@ -187,11 +187,21 @@ static AstNode *parse_var_decl(void) {
     if (tok.kind == TOK_VALUE) {
         next();
         char *val = tok_to_str();
-        AstNode *val_node = ast_new(
-            tok.kind == TOK_STRING ? AST_STRING_LITERAL :
-            tok.kind == TOK_NUMBER ? AST_LITERAL_NUMBER : AST_IDENTIFIER,
-            val, (SourceLocation){tok.line, tok.column}
-        );
+        AstNode *val_node = NULL;
+        if (tok.kind == TOK_STRING) {
+            val_node = ast_new(AST_STRING_LITERAL, val, (SourceLocation){tok.line, tok.column});
+        } else if (tok.kind == TOK_NUMBER) {
+            val_node = ast_new(AST_LITERAL_NUMBER, val, (SourceLocation){tok.line, tok.column});
+        } else if (tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) {
+            val_node = ast_new(AST_FIGURATIVE_CONSTANT, val, (SourceLocation){tok.line, tok.column});
+        } else if (tok.kind == TOK_IDENT) {
+            val_node = ast_new(AST_IDENTIFIER, val, (SourceLocation){tok.line, tok.column});
+        } else {
+            // Handle error: unexpected token after VALUE
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Expected literal or figurative constant after VALUE, got '%.*s'", (int)tok.length, tok.lexeme);
+            free(val);
+            return NULL; // Or try to recover
+        }
         free(val);
         if (!var->children) { // If it's the first child
             var->children = val_node;
@@ -220,14 +230,19 @@ static AstNode *parse_statement(bool require_period) {
                tok.kind != TOK_ELSE &&
                tok.kind != TOK_END_IF &&
                tok.kind != TOK_EOF) {
-            if (tok.kind == TOK_STRING || tok.kind == TOK_IDENT || tok.kind == TOK_NUMBER) {
+            if (tok.kind == TOK_STRING || tok.kind == TOK_IDENT || tok.kind == TOK_NUMBER ||
+                tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) { // Added figurative constants
                 char *val = tok_to_str();
-                AstNode *arg = ast_new(
-                    tok.kind == TOK_STRING ? AST_STRING_LITERAL :
-                    tok.kind == TOK_NUMBER ? AST_LITERAL_NUMBER :
-                    AST_IDENTIFIER,
-                    val, (SourceLocation){tok.line, tok.column}
-                );
+                AstNode *arg = NULL;
+                if (tok.kind == TOK_STRING) {
+                    arg = ast_new(AST_STRING_LITERAL, val, (SourceLocation){tok.line, tok.column});
+                } else if (tok.kind == TOK_NUMBER) {
+                    arg = ast_new(AST_LITERAL_NUMBER, val, (SourceLocation){tok.line, tok.column});
+                } else if (tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) {
+                    arg = ast_new(AST_FIGURATIVE_CONSTANT, val, (SourceLocation){tok.line, tok.column});
+                } else { // TOK_IDENT
+                    arg = ast_new(AST_IDENTIFIER, val, (SourceLocation){tok.line, tok.column});
+                }
                 free(val);
                 if (!display->children) display->children = arg;
                 else last->next = arg;
@@ -249,14 +264,19 @@ static AstNode *parse_statement(bool require_period) {
         next();
         AstNode *move = ast_new(AST_STATEMENT_MOVE, NULL, loc);
 
-        if (tok.kind == TOK_STRING || tok.kind == TOK_NUMBER || tok.kind == TOK_IDENT) {
+        if (tok.kind == TOK_STRING || tok.kind == TOK_NUMBER || tok.kind == TOK_IDENT ||
+            tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) { // Added figurative constants
             char *val = tok_to_str();
-            AstNode *src = ast_new(
-                tok.kind == TOK_STRING ? AST_STRING_LITERAL :
-                tok.kind == TOK_NUMBER ? AST_LITERAL_NUMBER :
-                AST_IDENTIFIER,
-                val, (SourceLocation){tok.line, tok.column}
-            );
+            AstNode *src = NULL;
+            if (tok.kind == TOK_STRING) {
+                src = ast_new(AST_STRING_LITERAL, val, (SourceLocation){tok.line, tok.column});
+            } else if (tok.kind == TOK_NUMBER) {
+                src = ast_new(AST_LITERAL_NUMBER, val, (SourceLocation){tok.line, tok.column});
+            } else if (tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) {
+                src = ast_new(AST_FIGURATIVE_CONSTANT, val, (SourceLocation){tok.line, tok.column});
+            } else { // TOK_IDENT
+                src = ast_new(AST_IDENTIFIER, val, (SourceLocation){tok.line, tok.column});
+            }
             free(val);
             move->children = src;
             next();

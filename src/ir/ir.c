@@ -71,15 +71,36 @@ static void lower_node(IrProgram *ir, AstNode *node) {
         while (arg) {
             const char *content = arg->name ? arg->name : "";
             int len = strlen(content);
-            if ((arg->kind == AST_STRING_LITERAL || arg->kind == AST_LITERAL_NUMBER) && len > 0) {
+            if (arg->kind == AST_STRING_LITERAL || arg->kind == AST_LITERAL_NUMBER) {
                 char lit_name[32];
                 sprintf(lit_name, "lit_%d", lit_counter++);
                 append_instr(ir, new_instr(IR_DATA_LIT, NULL, lit_name, content, len, 0, 0, 0, USAGE_DISPLAY));
                 append_instr(ir, new_instr(IR_CALL_DISPLAY_STR, NULL, lit_name, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+            } else if (arg->kind == AST_FIGURATIVE_CONSTANT) {
+                char pad_char = 0;
+                if (strcasecmp(arg->name, "ZEROS") == 0 || strcasecmp(arg->name, "ZERO") == 0) {
+                    pad_char = '0';
+                } else if (strcasecmp(arg->name, "SPACES") == 0 || strcasecmp(arg->name, "SPACE") == 0) {
+                    pad_char = ' ';
+                }
+                // Need variable info for size and usage type if displaying to screen.
+                // For direct display of figurative constant, assume default string display.
+                // The backend will need to know what to fill.
+                // For simplicity here, we pass a dummy size and usage,
+                // and use the pad_char as the primary instruction.
+                // If it's a variable, we pass the variable's properties.
+                // If it's a literal figurative constant, we need to know what size to fill/display.
+                // For now, let's assume a default size for direct literal display, or this needs rethinking.
+                // For now, I'll pass 0 for size and decimals, and USAGE_DISPLAY.
+                append_instr(ir, new_instr(IR_CALL_DISPLAY_FILL, NULL, NULL, NULL, 0, 1, 0, pad_char, USAGE_DISPLAY));
             } else if (arg->kind == AST_IDENTIFIER) {
                 VarInfo *v = find_var(arg->name);
                 if (v) {
-                    append_instr(ir, new_instr(IR_CALL_DISPLAY_NUM, arg->name, NULL, NULL, 0, v->size, v->decimal_places, 0, v->usage_type));
+                    if (v->is_numeric) {
+                        append_instr(ir, new_instr(IR_CALL_DISPLAY_NUM, arg->name, NULL, NULL, 0, v->size, v->decimal_places, 0, v->usage_type));
+                    } else {
+                        append_instr(ir, new_instr(IR_CALL_DISPLAY_VAR_STR, arg->name, NULL, NULL, 0, v->size, 0, 0, v->usage_type));
+                    }
                 } else {
                     cobalt_warn("Variable '%s' not found for DISPLAY", arg->name);
                 }
@@ -92,7 +113,7 @@ static void lower_node(IrProgram *ir, AstNode *node) {
         AstNode *dest = src ? src->next : NULL;
         if (src && dest && dest->kind == AST_IDENTIFIER) {
             VarInfo *v = find_var(dest->name);
-            if (v && src->kind == AST_STRING_LITERAL) {
+            if (v && (src->kind == AST_STRING_LITERAL || src->kind == AST_LITERAL_NUMBER)) {
                 const char *content = src->name;
                 int len = strlen(content);
                 if (len > v->size) len = v->size;
@@ -101,6 +122,14 @@ static void lower_node(IrProgram *ir, AstNode *node) {
                 append_instr(ir, new_instr(IR_DATA_LIT, NULL, lit_name, content, len, 0, 0, 0, USAGE_DISPLAY));
                 IrOpcode move_op = v->is_numeric ? IR_CALL_MOVE_NUM : IR_CALL_MOVE_ALPHA;
                 append_instr(ir, new_instr(move_op, dest->name, lit_name, NULL, len, v->size, v->decimal_places, 0, v->usage_type));
+            } else if (v && src->kind == AST_FIGURATIVE_CONSTANT) {
+                char fill_char = 0;
+                if (strcasecmp(src->name, "ZEROS") == 0 || strcasecmp(src->name, "ZERO") == 0) {
+                    fill_char = '0';
+                } else if (strcasecmp(src->name, "SPACES") == 0 || strcasecmp(src->name, "SPACE") == 0) {
+                    fill_char = ' ';
+                }
+                append_instr(ir, new_instr(IR_CALL_MOVE_FILL, dest->name, NULL, NULL, 0, v->size, v->decimal_places, fill_char, v->usage_type));
             }
         }
     } else if (node->kind == AST_STATEMENT_STOP) {
@@ -182,12 +211,12 @@ IrProgram *lower_to_ir(AstNode *program) {
                                         v->init_len = strlen(digits);
                                         v->pad_char = '0';
                                     }
-                                } else if (val_node->kind == AST_IDENTIFIER) { // Figurative constants
+                                } else if (val_node->kind == AST_FIGURATIVE_CONSTANT) { // Figurative constants
                                     if (strcasecmp(val_str, "ZERO") == 0 || strcasecmp(val_str, "ZEROS") == 0) {
-                                        if (!is_numeric) cobalt_error("ZERO not allowed for alphanumeric %s", v->name);
+                                        if (!is_numeric) cobalt_error("ZEROS not allowed for alphanumeric variable %s", v->name);
                                         v->pad_char = '0';
                                     } else if (strcasecmp(val_str, "SPACE") == 0 || strcasecmp(val_str, "SPACES") == 0) {
-                                        if (is_numeric) cobalt_error("SPACE not allowed for numeric %s", v->name);
+                                        if (is_numeric) cobalt_error("SPACES not allowed for numeric variable %s", v->name);
                                         v->pad_char = ' ';
                                     }
                                 }

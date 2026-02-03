@@ -49,6 +49,7 @@ void ast_dump(AstNode *node, FILE *out, int indent) {
         case AST_STRING_LITERAL:            kind_name = "STRING"; break;
         case AST_IDENTIFIER:                kind_name = "IDENT"; break;
         case AST_LITERAL_NUMBER:            kind_name = "NUMBER"; break;
+        case AST_FIGURATIVE_CONSTANT:       kind_name = "FIG-CONST"; break;
         case AST_PARAGRAPH:                 kind_name = "PARAGRAPH"; break;
         case AST_STATEMENT_MOVE:            kind_name = "MOVE"; break;
         case AST_STATEMENT_ADD:             kind_name = "ADD"; break;

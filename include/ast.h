@@ -33,6 +33,7 @@ typedef enum {
     AST_STATEMENT_PERFORM,
     AST_IDENTIFICATION_PARAGRAPH,
     AST_LITERAL_NUMBER,     // numeric literal
+    AST_FIGURATIVE_CONSTANT, // e.g., ZEROS, SPACES
     AST_FILE_DECL,          // FD/SD
     AST_SELECT,
     AST_CONDITION,

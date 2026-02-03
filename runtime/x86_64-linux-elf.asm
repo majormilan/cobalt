@@ -10,6 +10,9 @@ global runtime_display_numeric
 global runtime_move_alphanum
 global runtime_move_numeric
 global runtime_exit
+global runtime_display_fill
+global runtime_move_fill
+global runtime_display_var_string
 
 runtime_init:
     ret
@@ -41,27 +44,29 @@ runtime_display_string:
 ; rdi = variable pointer (raw digits)
 ; rsi = total size in bytes
 ; rdx = number of decimal places
+; rcx = usage_type
 runtime_display_numeric:
     push rbp
     mov rbp, rsp
+    ; Save incoming arguments onto the stack
     push rdi                            ; [rbp-8]  = var ptr
     push rsi                            ; [rbp-16] = size
     push rdx                            ; [rbp-24] = decimals
+    push rcx                            ; [rbp-32] = usage_type
 
     sub rsp, 64                         ; temp buffer
     mov r8, rsp                         ; r8 = temp buffer
 
-    mov r9, [rbp-16]                    ; r9 = original size
-
+    mov r9, [rbp-16]                    ; r9 = size (from stack)
     ; Copy raw digits
     mov rcx, r9
-    mov rsi, [rbp-8]                    ; var ptr
+    mov rsi, [rbp-8]                    ; var ptr (from stack)
     mov rdi, r8
     rep movsb
     mov byte [r8 + r9], 0               ; null-terminate
 
     ; Insert '.' if decimals > 0
-    mov rdx, [rbp-24]                   ; decimals
+    mov rdx, [rbp-24]                   ; decimals (from stack)
     test rdx, rdx
     jz .no_dot
     mov rcx, r9                         ; original size
@@ -92,11 +97,51 @@ runtime_display_numeric:
 
 .print:
     ; Print trimmed string
-    mov rdx, r9                         ; updated length
+    ; Calculate length of trimmed string
+    mov rdx, 0
+    mov r10, rsi    ; r10 points to trimmed start
+.strlen_trimmed_loop:
+    cmp byte [r10 + rdx], 0
+    je .strlen_trimmed_done
+    inc rdx
+    jmp .strlen_trimmed_loop
+.strlen_trimmed_done:
+    ; rdx now holds the correct length of the trimmed string
+
     mov rax, 1
     mov rdi, 1
     syscall
 
+    add rsp, 64 ; clean temp buffer
+    pop rcx ; restore rcx (usage_type)
+    pop rdx ; restore rdx (decimals)
+    pop rsi ; restore rsi (size)
+    pop rdi ; restore rdi (var ptr)
+    leave
+    ret
+
+; rdi = var_name (pointer)
+; rsi = size
+; rdx = usage_type (currently unused)
+runtime_display_var_string:
+    push rbp
+    mov rbp, rsp
+    ; Save incoming arguments onto the stack
+    push rdi                            ; [rbp-8] = var_name
+    push rsi                            ; [rbp-16] = size
+    push rdx                            ; [rbp-24] = usage_type
+
+    ; Call sys_write to display the string
+    mov rax, 1                          ; sys_write
+    mov rdi, 1                          ; stdout
+    mov rsi, [rbp-8]                    ; var_name (from stack)
+    mov rdx, [rbp-16]                   ; size (from stack)
+    syscall
+
+    ; Restore registers and clean stack
+    pop rdx                             ; restore rdx (usage_type)
+    pop rsi                             ; restore rsi (size)
+    pop rdi                             ; restore rdi (var_name)
     leave
     ret
 
@@ -104,23 +149,40 @@ runtime_display_numeric:
 ; rsi = src buffer / literal
 ; rdx = src length
 ; rcx = dest size
+; r8 = usage_type
 runtime_move_alphanum:
     push rbp
     mov rbp, rsp
-    push rdi                            ; save dest
+    ; Save incoming arguments onto the stack
+    push rdi                            ; [rbp-8]  = rdi (dest)
+    push rsi                            ; [rbp-16] = rsi (src)
+    push rdx                            ; [rbp-24] = rdx (src_len)
+    push rcx                            ; [rbp-32] = rcx (dest_size)
+    push r8                             ; [rbp-40] = r8 (usage_type)
+
+    cld ; Clear direction flag for rep stosb
 
     ; Fill with spaces
     mov al, ' '
-    push rcx
+    mov rdi, [rbp-8]                    ; dest_var from stack
+    mov rcx, [rbp-32]                   ; dest_size from stack
     rep stosb
-    pop rcx
 
     ; Copy source
-    pop rdi                             ; dest
+    mov rdi, [rbp-8]                    ; dest_var
+    mov rsi, [rbp-16]                   ; src_buffer
+    mov rdx, [rbp-24]                   ; src_len
+    mov rcx, [rbp-32]                   ; dest_size
     cmp rdx, rcx
-    cmovbe rcx, rdx
+    cmovbe rcx, rdx                     ; rcx = min(src_len, dest_size)
     rep movsb
 
+    ; Restore registers and clean stack
+    pop r8                              ; restore r8 (usage_type)
+    pop rcx                             ; restore rcx (dest_size)
+    pop rdx                             ; restore rdx (src_len)
+    pop rsi                             ; restore rsi (src)
+    pop rdi                             ; restore rdi (dest)
     leave
     ret
 
@@ -128,24 +190,39 @@ runtime_move_alphanum:
 ; rsi = src digits / literal
 ; rdx = src length
 ; rcx = dest size
+; r8 = usage_type
 runtime_move_numeric:
     push rbp
     mov rbp, rsp
-    push rdi                            ; save dest
+    ; Save incoming arguments onto the stack
+    push rdi                            ; [rbp-8] = rdi (dest)
+    push rsi                            ; [rbp-16] = rsi (src)
+    push rdx                            ; [rbp-24] = rdx (src_len)
+    push rcx                            ; [rbp-32] = rcx (dest_size)
+    push r8                             ; [rbp-40] = r8 (usage_type)
+
+    cld ; Clear direction flag for rep stosb
 
     ; Fill with '0'
     mov al, '0'
-    push rcx
+    mov rdi, [rbp-8]                    ; dest_var from stack
+    mov rcx, [rbp-32]                   ; dest_size from stack
     rep stosb
-    pop rcx
 
     ; Right-align source
-    pop rdi                             ; dest
-    add rdi, rcx                        ; dest + size
-    sub rdi, rdx                        ; dest + (size - src_len)
-    mov rcx, rdx
+    mov rdi, [rbp-8]                    ; dest_var
+    add rdi, [rbp-32]                   ; dest + dest_size
+    sub rdi, [rbp-24]                   ; dest + (dest_size - src_len)
+    mov rsi, [rbp-16]                   ; src_buffer
+    mov rcx, [rbp-24]                   ; src_len
     rep movsb
 
+    ; Restore registers and clean stack
+    pop r8                              ; restore r8 (usage_type)
+    pop rcx                             ; restore rcx (dest_size)
+    pop rdx                             ; restore rdx (src_len)
+    pop rsi                             ; restore rsi (src)
+    pop rdi                             ; restore rdi (dest)
     leave
     ret
 
@@ -153,6 +230,76 @@ runtime_exit:
     mov rax, 60
     xor rdi, rdi
     syscall
+
+; rdi = fill_char
+; rsi = size
+; rdx = usage_type
+runtime_display_fill:
+    push rbp
+    mov rbp, rsp
+    ; Save incoming arguments onto the stack
+    push rdi ; [rbp-8] = fill_char
+    push rsi ; [rbp-16] = size
+    push rdx ; [rbp-24] = usage_type
+
+    ; Create a temporary buffer on the stack for the output characters
+    ; We need 'size' bytes for chars + 1 for null terminator
+    mov r8, [rbp-16] ; get size
+    add r8, 1        ; add 1 for null terminator
+    sub rsp, r8      ; allocate buffer on stack
+    mov rdi, rsp     ; rdi = pointer to buffer
+
+    ; Fill the buffer with fill_char
+    mov al, [rbp-8]  ; get fill_char
+    mov rcx, [rbp-16] ; get size
+    cld              ; clear direction flag
+    rep stosb        ; fill buffer
+    mov byte [rdi], 0 ; null-terminate after fill (rdi points to end after rep stosb)
+
+    ; Call sys_write
+    mov rax, 1       ; sys_write
+    mov rdi, 1       ; stdout
+    mov rsi, rsp     ; pointer to buffer
+    mov rdx, [rbp-16] ; length is size
+    syscall
+
+    add rsp, r8      ; clean up temp buffer
+    pop rdx          ; restore rdx (usage_type)
+    pop rsi          ; restore rsi (size)
+    pop rdi          ; restore rdi (fill_char)
+    leave
+    ret
+
+; rdi = dest_var
+; rsi = fill_char
+; rdx = size
+; rcx = usage_type
+runtime_move_fill:
+    push rbp
+    mov rbp, rsp
+    ; Save incoming arguments onto the stack
+    push rdi                            ; [rbp-8] = dest_var
+    push rsi                            ; [rbp-16] = fill_char
+    push rdx                            ; [rbp-24] = size
+    push rcx                            ; [rbp-32] = usage_type
+
+    cld ; Clear direction flag for rep stosb
+
+    mov rdi, [rbp-8]                    ; dest_var from stack
+    mov al, [rbp-16]                    ; fill_char from stack
+    mov rcx, [rbp-24]                   ; size from stack
+    
+    ; Fill the destination with the character
+    rep stosb
+
+    ; Restore registers and clean stack
+    pop rcx                             ; restore rcx (usage_type)
+    pop rdx                             ; restore rdx (size)
+    pop rsi                             ; restore rsi (fill_char)
+    pop rdi                             ; restore rdi (dest_var)
+    leave
+    ret
+
 
 section .data
 newline db 10, 0

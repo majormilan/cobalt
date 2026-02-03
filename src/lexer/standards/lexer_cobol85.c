@@ -76,6 +76,8 @@ Token lexer_cobol85_keyword_or_ident(Lexer *l, const char *start, size_t len) {
     KW("YEAR",            TOK_YEAR);
     KW("YYYYMMDD",        TOK_YYYYMMDD);
     KW("YYDDD",           TOK_YYDDD);
+    KW("ZEROS",           TOK_ZEROS);
+    KW("SPACES",          TOK_SPACES);
 
     #undef KW
 
