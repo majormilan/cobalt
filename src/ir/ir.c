@@ -299,8 +299,6 @@ IrProgram *lower_to_ir(AstNode *program) {
         div = div->next;
     }
 
-    append_instr(ir, new_instr(IR_CALL_EXIT, NULL, NULL, NULL, 0, 0, 0, 0));
-
     return ir;
 }
 
