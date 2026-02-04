@@ -96,6 +96,7 @@ typedef enum {
     TOK_YYDDD,
     TOK_ZEROS,
     TOK_SPACES,
+    TOK_COPY, // Add TOK_COPY for the COPY command
 
     // Operators
     TOK_GT,
@@ -124,16 +125,26 @@ typedef struct Lexer {
     const char *src;
     int current_line;
     int current_col;
-    const char *original_source;
-    const CompilerMode *mode; // Add CompilerMode to lexer state
+    const char *original_source; // The original source string, used for error reporting
+    const CompilerMode *mode;    // Add CompilerMode to lexer state
     Token (*get_keyword_or_ident)(struct Lexer *l, const char *start, size_t len); // Function pointer for standard-specific keyword check
+
+    // For COPY statement handling
+    const char *filename;           // The name of the current file being lexed
+    char *file_content;             // Owned content if read from a file, NULL otherwise
+    bool free_content_on_pop;       // Whether to free `file_content` when this lexer is popped
+    struct Lexer *prev;             // Pointer to the previous lexer state (for COPY)
 } Lexer;
 
-void lexer_init(Lexer *l, const char *source, const CompilerMode *mode);
+void lexer_init(Lexer *l, const char *source, const CompilerMode *mode, const char *filename);
 Token lexer_next(Lexer *l);
 
 // Public helper functions for standard-specific lexers
 int is_ident_char(char c);
 Token make_token_public(Lexer *l, TokenKind kind, const char *start, size_t length);
+
+// Functions for managing lexer input source stack
+void lexer_push_source(Lexer *l, const char *new_source_content, const char *new_filename, bool free_content);
+void lexer_pop_source(Lexer *l);
 
 #endif

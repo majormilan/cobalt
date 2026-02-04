@@ -10,10 +10,48 @@
 
 static Token tok;
 static Lexer *current_lexer; // Temporary global lexer for parser functions
+static bool parser_panic_mode = false;
 
 static void next(void) {
     tok = lexer_next(current_lexer);
 }
+
+// Function to synchronize parser after an error
+static void synchronize() {
+    parser_panic_mode = true;
+    while (tok.kind != TOK_EOF) {
+        // We've already advanced past the error, now look for a safe point
+        // A period often ends a statement, good place to recover.
+        if (tok.kind == TOK_PERIOD) {
+            next(); // Consume the period
+            parser_panic_mode = false; // Reset panic mode
+            return;
+        }
+
+        switch (tok.kind) {
+            // Division headers are strong synchronization points
+            case TOK_IDENTIFICATION:
+            case TOK_ENVIRONMENT:
+            case TOK_DATA:
+            case TOK_PROCEDURE:
+            // Section headers are also strong synchronization points
+            case TOK_SECTION:
+            // Common statement keywords are good synchronization points
+            case TOK_DISPLAY:
+            case TOK_STOP:
+            case TOK_MOVE:
+            case TOK_ADD:
+            case TOK_IF:
+            case TOK_PERFORM:
+            case TOK_ACCEPT:
+                parser_panic_mode = false; // Reset panic mode
+                return; 
+            default:
+                next(); // Keep consuming tokens
+        }
+    }
+}
+
 
 static char *tok_to_str(void) {
     char *s = malloc(tok.length + 1);
@@ -26,21 +64,21 @@ static char *tok_to_str(void) {
 
 static void expect(TokenKind k, const char *msg) {
     if (tok.kind != k) {
-        char *got_str = tok_to_str();
-        if (current_lexer->mode->strictness == STRICT_RELAXED) {
-            cobalt_warn_loc(current_lexer->original_source, tok.line, tok.column, "Expected %s, got '%.*s'. Continuing in relaxed mode.", msg, (int)tok.length, tok.lexeme);
-        } else {
+        if (!parser_panic_mode) { // Only report first error in a sequence
+            char *got_str = tok_to_str();
             cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Expected %s, got '%.*s'", msg, (int)tok.length, tok.lexeme);
             free(got_str);
-            while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF) next();
-            return;
+            synchronize(); // Enter panic mode and synchronize
+        } else {
+            // Already in panic mode, just consume until next synchronization point
+            next(); // Advance one token, synchronize will handle the rest
         }
-        free(got_str);
-        while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF) next();
     } else {
-        next();
+        next(); // Consume the expected token
+        parser_panic_mode = false; // Successfully parsed, exit panic mode
     }
 }
+
 
 static bool is_known_ident_para(const char *s) {
     return strcasecmp(s, "AUTHOR") == 0 ||
@@ -59,11 +97,13 @@ static bool is_division_start(TokenKind kind) {
 
 static AstNode *parse_identification_paragraph(void) {
     if (tok.kind != TOK_IDENT) return NULL;
+    if (parser_panic_mode) return NULL; // Don't parse if in panic mode
 
     SourceLocation loc = {tok.line, tok.column};
     char *name = tok_to_str();
     next();
     expect(TOK_PERIOD, ".");
+    if (parser_panic_mode) { free(name); return NULL; }
 
     AstNode *para = ast_new(AST_IDENTIFICATION_PARAGRAPH, name, loc);
     free(name);
@@ -71,14 +111,9 @@ static AstNode *parse_identification_paragraph(void) {
     char val_buf[256] = {0};
     size_t pos = 0;
 
-    while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF && pos < sizeof(val_buf) - 1) {
+    while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF && pos < sizeof(val_buf) - 1 && !parser_panic_mode) {
         char *part = tok_to_str();
 
-        // Example of standard-specific behavior:
-        // In COBOL85, these are common identification paragraphs.
-        // In newer standards, some might be deprecated or have different implications.
-        // For now, we'll keep the general check, but this is where
-        // current_lexer->mode->std could be used for more fine-grained control.
         if (tok.kind == TOK_IDENT && is_known_ident_para(part)) {
             free(part);
             break;
@@ -103,12 +138,13 @@ static AstNode *parse_identification_paragraph(void) {
     if (tok.kind == TOK_PERIOD) {
         next();
     }
-
+    
     return para;
 }
 
 static AstNode *parse_var_decl(void) {
     if (tok.kind != TOK_NUMBER) return NULL;
+    if (parser_panic_mode) return NULL; // Don't parse if in panic mode
 
     SourceLocation loc = {tok.line, tok.column};
     char *level = tok_to_str();
@@ -120,19 +156,20 @@ static AstNode *parse_var_decl(void) {
         next();
     } else {
         free(level);
+        synchronize(); // No identifier after level, error
         return NULL;
     }
 
     AstNode *var = ast_new(AST_VAR_DECL, name, loc);
     free(name);
     var->text = level;
-    AstNode *current_child_tail = NULL; // New helper to track the end of the children list
+    AstNode *current_child_tail = NULL; 
 
     if (tok.kind == TOK_PIC) {
         next();
         char pic_buf[64] = {0};
         size_t pos = 0;
-        while (tok.kind != TOK_VALUE && tok.kind != TOK_USAGE && tok.kind != TOK_PERIOD && tok.kind != TOK_EOF) {
+        while (tok.kind != TOK_VALUE && tok.kind != TOK_USAGE && tok.kind != TOK_PERIOD && tok.kind != TOK_EOF && !parser_panic_mode) {
             char *part = tok_to_str();
             strncat(pic_buf + pos, part, sizeof(pic_buf) - pos - 1);
             pos += strlen(part);
@@ -140,49 +177,45 @@ static AstNode *parse_var_decl(void) {
             next();
         }
         AstNode *pic = ast_new(AST_PIC_CLAUSE, strdup(pic_buf), loc);
-        if (!var->children) { // If it's the first child
+        if (!var->children) { 
             var->children = pic;
-        } else { // Append to the existing children list
+        } else { 
             current_child_tail->next = pic;
         }
-        current_child_tail = pic; // Update tail
+        current_child_tail = pic; 
     }
 
-    // --- Start of USAGE parsing logic ---
     if (tok.kind == TOK_USAGE) {
-        next(); // Consume TOK_USAGE
+        next(); 
 
-        // Optional IS
         if (tok.kind == TOK_IS) {
-            next(); // Consume TOK_IS
+            next(); 
         }
 
         AstNode *usage_clause = ast_new(AST_USAGE_CLAUSE, NULL, loc);
         AstNode *usage_type = NULL;
 
         if (tok.kind == TOK_COMP) {
-            next(); // Consume TOK_COMP
+            next(); 
             usage_type = ast_new(AST_USAGE_TYPE_COMP, NULL, loc);
         } else if (tok.kind == TOK_DISPLAY) {
-            next(); // Consume TOK_DISPLAY
+            next(); 
             usage_type = ast_new(AST_USAGE_TYPE_DISPLAY, NULL, loc);
         } else {
             cobalt_warn_loc(current_lexer->original_source, tok.line, tok.column, "Expected COMP or DISPLAY after USAGE, got '%.*s'", (int)tok.length, tok.lexeme);
-            // Optionally, handle error or default to DISPLAY
         }
 
         if (usage_type) {
             usage_clause->children = usage_type;
         }
 
-        if (!var->children) { // If it's the first child
+        if (!var->children) { 
             var->children = usage_clause;
-        } else { // Append to the existing children list
+        } else { 
             current_child_tail->next = usage_clause;
         }
-        current_child_tail = usage_clause; // Update tail
+        current_child_tail = usage_clause; 
     }
-    // --- End of USAGE parsing logic ---
 
     if (tok.kind == TOK_VALUE) {
         next();
@@ -197,28 +230,31 @@ static AstNode *parse_var_decl(void) {
         } else if (tok.kind == TOK_IDENT) {
             val_node = ast_new(AST_IDENTIFIER, val, (SourceLocation){tok.line, tok.column});
         } else {
-            // Handle error: unexpected token after VALUE
             cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Expected literal or figurative constant after VALUE, got '%.*s'", (int)tok.length, tok.lexeme);
             free(val);
-            return NULL; // Or try to recover
+            synchronize(); // Error, enter panic mode
+            return NULL;
         }
         free(val);
-        if (!var->children) { // If it's the first child
+        if (!var->children) { 
             var->children = val_node;
-        } else { // Append to the existing children list
+        } else { 
             current_child_tail->next = val_node;
         }
-        current_child_tail = val_node; // Update tail
+        current_child_tail = val_node; 
         next();
     }
 
     expect(TOK_PERIOD, ".");
+    if (parser_panic_mode) return NULL;
     return var;
 }
 
 static AstNode *parse_statement(bool require_period);
 
 static AstNode *parse_statement(bool require_period) {
+    if (parser_panic_mode) return NULL; // Don't try to parse statements if in panic mode
+
     SourceLocation loc = {tok.line, tok.column};
 
     if (tok.kind == TOK_DISPLAY) {
@@ -229,9 +265,9 @@ static AstNode *parse_statement(bool require_period) {
         while (tok.kind != TOK_PERIOD &&
                tok.kind != TOK_ELSE &&
                tok.kind != TOK_END_IF &&
-               tok.kind != TOK_EOF) {
+               tok.kind != TOK_EOF && !parser_panic_mode) { // Added panic mode check
             if (tok.kind == TOK_STRING || tok.kind == TOK_IDENT || tok.kind == TOK_NUMBER ||
-                tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) { // Added figurative constants
+                tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) { 
                 char *val = tok_to_str();
                 AstNode *arg = NULL;
                 if (tok.kind == TOK_STRING) {
@@ -240,7 +276,7 @@ static AstNode *parse_statement(bool require_period) {
                     arg = ast_new(AST_LITERAL_NUMBER, val, (SourceLocation){tok.line, tok.column});
                 } else if (tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) {
                     arg = ast_new(AST_FIGURATIVE_CONSTANT, val, (SourceLocation){tok.line, tok.column});
-                } else { // TOK_IDENT
+                } else { 
                     arg = ast_new(AST_IDENTIFIER, val, (SourceLocation){tok.line, tok.column});
                 }
                 free(val);
@@ -257,6 +293,7 @@ static AstNode *parse_statement(bool require_period) {
     else if (tok.kind == TOK_STOP) {
         next();
         expect(TOK_RUN, "RUN");
+        if (parser_panic_mode) return NULL;
         if (require_period) expect(TOK_PERIOD, ".");
         return ast_new(AST_STATEMENT_STOP, NULL, loc);
     }
@@ -265,7 +302,7 @@ static AstNode *parse_statement(bool require_period) {
         AstNode *move = ast_new(AST_STATEMENT_MOVE, NULL, loc);
 
         if (tok.kind == TOK_STRING || tok.kind == TOK_NUMBER || tok.kind == TOK_IDENT ||
-            tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) { // Added figurative constants
+            tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) { 
             char *val = tok_to_str();
             AstNode *src = NULL;
             if (tok.kind == TOK_STRING) {
@@ -274,7 +311,7 @@ static AstNode *parse_statement(bool require_period) {
                 src = ast_new(AST_LITERAL_NUMBER, val, (SourceLocation){tok.line, tok.column});
             } else if (tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) {
                 src = ast_new(AST_FIGURATIVE_CONSTANT, val, (SourceLocation){tok.line, tok.column});
-            } else { // TOK_IDENT
+            } else { 
                 src = ast_new(AST_IDENTIFIER, val, (SourceLocation){tok.line, tok.column});
             }
             free(val);
@@ -283,6 +320,7 @@ static AstNode *parse_statement(bool require_period) {
         }
 
         expect(TOK_TO, "TO");
+        if (parser_panic_mode) return NULL;
 
         if (tok.kind == TOK_IDENT) {
             char *target = tok_to_str();
@@ -290,6 +328,9 @@ static AstNode *parse_statement(bool require_period) {
             free(target);
             move->children->next = tgt;
             next();
+        } else {
+            synchronize(); // Missing target for MOVE
+            return NULL;
         }
 
         if (require_period) expect(TOK_PERIOD, ".");
@@ -303,7 +344,7 @@ static AstNode *parse_statement(bool require_period) {
         AstNode *last_src = NULL;
 
         while (tok.kind != TOK_TO && tok.kind != TOK_GIVING && tok.kind != TOK_PERIOD && tok.kind != TOK_EOF &&
-               tok.kind != TOK_ELSE && tok.kind != TOK_END_IF) {
+               tok.kind != TOK_ELSE && tok.kind != TOK_END_IF && !parser_panic_mode) {
             if (tok.kind == TOK_IDENT || tok.kind == TOK_NUMBER) {
                 char *val = tok_to_str();
                 AstNode *op = ast_new(
@@ -317,6 +358,7 @@ static AstNode *parse_statement(bool require_period) {
             }
             next();
         }
+        if (parser_panic_mode) return NULL;
 
         add->children = sources;
 
@@ -325,9 +367,12 @@ static AstNode *parse_statement(bool require_period) {
             AstNode *dest = NULL;
             if (tok.kind == TOK_IDENT) {
                 char *val = tok_to_str();
-                dest = ast_new(AST_IDENTIFIER, val, (SourceLocation){tok.line, tok.column});
+                dest = ast_new(AST_IDENTIFIER, val, (SourceLocation){tok.line, tok.column}); // Re-allocate for AST node
                 free(val);
                 next();
+            } else {
+                synchronize(); // Missing target for ADD TO
+                return NULL;
             }
             if (last_src) last_src->next = dest;
             else if (sources) sources->next = dest;
@@ -342,6 +387,9 @@ static AstNode *parse_statement(bool require_period) {
                 giving = ast_new(AST_IDENTIFIER, val, (SourceLocation){tok.line, tok.column});
                 free(val);
                 next();
+            } else {
+                synchronize(); // Missing target for ADD GIVING
+                return NULL;
             }
             if (last_src) last_src->next = giving;
         }
@@ -356,15 +404,16 @@ static AstNode *parse_statement(bool require_period) {
         AstNode *cond = ast_new(AST_CONDITION, NULL, loc);
         if_stmt->children = cond;
 
-        // left operand
         if (tok.kind == TOK_IDENT) {
             char *left = tok_to_str();
             cond->children = ast_new(AST_IDENTIFIER, left, (SourceLocation){tok.line, tok.column});
             free(left);
             next();
+        } else {
+            synchronize(); // Missing left operand for IF
+            return NULL;
         }
 
-        // operator
         const char *op = NULL;
         if (tok.kind == TOK_GT) { op = ">"; next(); }
         else if (tok.kind == TOK_LT) { op = "<"; next(); }
@@ -372,9 +421,13 @@ static AstNode *parse_statement(bool require_period) {
         else if (tok.kind == TOK_LE) { op = "<="; next(); }
         else if (tok.kind == TOK_EQ) { op = "="; next(); }
         else if (tok.kind == TOK_NE) { op = "<>"; next(); }
+        else {
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Expected comparison operator, got '%.*s'", (int)tok.length, tok.lexeme);
+            synchronize();
+            return NULL;
+        }
         if (op) cond->text = strdup(op);
 
-        // right operand
         if (tok.kind == TOK_NUMBER || tok.kind == TOK_IDENT) {
             char *right = tok_to_str();
             AstNode *right_node = ast_new(
@@ -384,23 +437,26 @@ static AstNode *parse_statement(bool require_period) {
             free(right);
             cond->children->next = right_node;
             next();
+        } else {
+            synchronize(); // Missing right operand for IF
+            return NULL;
         }
 
-        // Optional THEN
         if (tok.kind == TOK_THEN) next();
 
         AstNode *then_block = NULL;
         AstNode *last_then = NULL;
-        while (tok.kind != TOK_ELSE && tok.kind != TOK_END_IF && tok.kind != TOK_EOF) {
-            AstNode *stmt = parse_statement(false);  // no period required inside blocks
+        while (tok.kind != TOK_ELSE && tok.kind != TOK_END_IF && tok.kind != TOK_EOF && !parser_panic_mode) { 
+            AstNode *stmt = parse_statement(false);  
             if (stmt) {
                 if (!then_block) then_block = stmt;
                 else last_then->next = stmt;
                 last_then = stmt;
             } else {
-                next();
+                next(); // Skip unknown token in statement block
             }
         }
+        if (parser_panic_mode) return NULL;
 
         if (then_block) {
             cond->next = then_block;
@@ -410,18 +466,25 @@ static AstNode *parse_statement(bool require_period) {
             next();
             AstNode *else_block = NULL;
             AstNode *last_else = NULL;
-            while (tok.kind != TOK_END_IF && tok.kind != TOK_EOF) {
-                AstNode *stmt = parse_statement(false);  // no period required inside blocks
+            while (tok.kind != TOK_END_IF && tok.kind != TOK_EOF && !parser_panic_mode) { 
+                AstNode *stmt = parse_statement(false);
                 if (stmt) {
                     if (!else_block) else_block = stmt;
                     else last_else->next = stmt;
                     last_else = stmt;
                 } else {
-                    next();
+                    next(); // Skip unknown token in statement block
                 }
             }
-            if (else_block && last_then) {
-                last_then->next = else_block;
+            if (parser_panic_mode) return NULL;
+
+            if (else_block && then_block) { // Attach else block after then block
+                AstNode *temp = then_block;
+                while (temp && temp->next) temp = temp->next;
+                if (temp) temp->next = else_block;
+            } else if (!then_block && else_block) {
+                // Only an ELSE block (valid in some COBOL contexts)
+                cond->next = else_block;
             }
         }
 
@@ -439,13 +502,17 @@ static AstNode *parse_statement(bool require_period) {
             free(para);
             perf->children = target;
             next();
+        } else {
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "PERFORM statement requires a paragraph name");
+            synchronize();
+            return NULL;
         }
 
         if (require_period) expect(TOK_PERIOD, ".");
         return perf;
     }
     else if (tok.kind == TOK_ACCEPT) {
-        next(); // Consume TOK_ACCEPT
+        next(); 
         AstNode *accept_stmt = ast_new(AST_STATEMENT_ACCEPT, NULL, loc);
 
         if (tok.kind == TOK_IDENT) {
@@ -456,9 +523,7 @@ static AstNode *parse_statement(bool require_period) {
             next();
         } else {
             cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "ACCEPT statement requires a variable name");
-            // Attempt to recover by consuming until period
-            while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF) next();
-            if (tok.kind == TOK_PERIOD) next();
+            synchronize(); // Error, enter panic mode
             return NULL;
         }
 
@@ -466,20 +531,23 @@ static AstNode *parse_statement(bool require_period) {
         return accept_stmt;
     }
 
-    cobalt_warn_loc(current_lexer->original_source, tok.line, tok.column, "Skipping unknown statement starting with '%.*s'", (int)tok.length, tok.lexeme);
-    while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF &&
-           tok.kind != TOK_ELSE && tok.kind != TOK_END_IF) next();
-    if (require_period && tok.kind == TOK_PERIOD) next();
+    if (tok.kind != TOK_EOF) {
+        cobalt_warn_loc(current_lexer->original_source, tok.line, tok.column, "Skipping unknown statement starting with '%.*s'", (int)tok.length, tok.lexeme);
+        synchronize(); // Try to recover
+    }
     return NULL;
 }
 
 static AstNode *parse_paragraph(CompilerMode *mode) {
     if (tok.kind != TOK_IDENT) return NULL;
+    if (parser_panic_mode) return NULL; // Don't parse if in panic mode
 
     SourceLocation loc = {tok.line, tok.column};
     char *name = tok_to_str();
     next();
     expect(TOK_PERIOD, ".");
+    if (parser_panic_mode) { free(name); return NULL; }
+
 
     AstNode *para = ast_new(AST_PARAGRAPH, name, loc);
     free(name);
@@ -487,14 +555,17 @@ static AstNode *parse_paragraph(CompilerMode *mode) {
     AstNode *last = NULL;
     while (tok.kind != TOK_EOF &&
            tok.kind != TOK_IDENT && tok.kind != TOK_SECTION &&
-           tok.kind != TOK_END) {
+           !is_division_start(tok.kind) && // Division starts also end a paragraph
+           tok.kind != TOK_END && !parser_panic_mode) {
         AstNode *stmt = parse_statement(true);
         if (stmt) {
             if (!para->children) para->children = stmt;
             else last->next = stmt;
             last = stmt;
         } else {
-            next();
+            // If parse_statement failed but didn't cause panic,
+            // we should still advance to avoid infinite loop on bad tokens.
+            if (!parser_panic_mode && tok.kind != TOK_EOF) next();
         }
     }
 
@@ -505,15 +576,17 @@ static AstNode *parse_section(CompilerMode *mode) {
     SourceLocation loc = {tok.line, tok.column};
     expect(TOK_SECTION, "SECTION");
     expect(TOK_PERIOD, ".");
+    if (parser_panic_mode) return NULL;
 
     AstNode *sec = ast_new(AST_SECTION, NULL, loc);
     AstNode *last = NULL;
 
     while (tok.kind != TOK_EOF &&
-           tok.kind != TOK_IDENTIFICATION &&
-           tok.kind != TOK_ENVIRONMENT &&
-           tok.kind != TOK_DATA &&
-           tok.kind != TOK_PROCEDURE) {
+           !is_division_start(tok.kind) && // Division starts end a section
+           tok.kind != TOK_IDENTIFICATION && // Explicit check for safety
+           !parser_panic_mode) {
+        
+        // Try parsing a variable declaration
         AstNode *decl = parse_var_decl();
         if (decl) {
             if (!sec->children) sec->children = decl;
@@ -522,19 +595,28 @@ static AstNode *parse_section(CompilerMode *mode) {
             continue;
         }
 
+        // Consume periods that might be standalone after included sections/declarations
+        if (tok.kind == TOK_PERIOD) {
+            next(); // Consume the period
+            continue;
+        }
+
+        // Try parsing a paragraph
         AstNode *para = parse_paragraph(mode);
         if (para) {
             if (!sec->children) sec->children = para;
             else last->next = para;
             last = para;
         } else {
+            // If neither worked, try a single statement
             AstNode *stmt = parse_statement(true);
             if (stmt) {
                 if (!sec->children) sec->children = stmt;
                 else last->next = stmt;
                 last = stmt;
             } else {
-                next();
+                // If all parsing attempts failed, advance to avoid infinite loop
+                if (!parser_panic_mode && tok.kind != TOK_EOF) next();
             }
         }
     }
@@ -548,6 +630,7 @@ static AstNode *parse_division(CompilerMode *mode) {
     next();
     expect(TOK_DIVISION, "DIVISION");
     expect(TOK_PERIOD, ".");
+    if (parser_panic_mode) { free(name); return NULL; }
 
     AstNode *div = ast_new(AST_DIVISION, name, loc);
     free(name);
@@ -562,23 +645,23 @@ static AstNode *parse_division(CompilerMode *mode) {
 
         AstNode *last_para = NULL;
         while (tok.kind == TOK_IDENT && 
-               tok.kind != TOK_ENVIRONMENT && tok.kind != TOK_DATA && tok.kind != TOK_PROCEDURE) {
+               !is_division_start(tok.kind) &&
+               !parser_panic_mode) {
             AstNode *para = parse_identification_paragraph();
             if (para) {
                 if (!div->children) div->children = para;
                 else last_para->next = para;
                 last_para = para;
             } else {
-                next();
+                if (!parser_panic_mode && tok.kind != TOK_EOF) next(); // Skip unknown token
             }
         }
     }
     else if (strcasecmp(div->name, "PROCEDURE") == 0) {
         AstNode *last = NULL;
         while (tok.kind != TOK_EOF &&
-               tok.kind != TOK_IDENTIFICATION &&
-               tok.kind != TOK_ENVIRONMENT &&
-               tok.kind != TOK_DATA) {
+               !is_division_start(tok.kind) && // Division starts end a procedure
+               !parser_panic_mode) {
             AstNode *para = parse_paragraph(mode);
             if (para) {
                 if (!div->children) div->children = para;
@@ -591,7 +674,7 @@ static AstNode *parse_division(CompilerMode *mode) {
                     else last->next = stmt;
                     last = stmt;
                 } else {
-                    next();
+                     if (!parser_panic_mode && tok.kind != TOK_EOF) next(); // Skip unknown token
                 }
             }
         }
@@ -604,6 +687,7 @@ static AstNode *parse_division(CompilerMode *mode) {
             div->children = sec;
         } else {
             cobalt_warn_loc(current_lexer->original_source, tok.line, tok.column, "Only WORKING-STORAGE supported in DATA DIVISION for now");
+            synchronize();
         }
     }
 
@@ -611,43 +695,53 @@ static AstNode *parse_division(CompilerMode *mode) {
 }
 
 AstNode *parse_program(Lexer *l, CompilerMode *mode, const char *source) {
-    current_lexer = l; // Initialize the temporary global lexer
+    current_lexer = l; 
+    parser_panic_mode = false;
+    reset_diagnostics(); // Reset counters for this compilation
     next();
 
     SourceLocation loc = {tok.line, tok.column};
     AstNode *prog = ast_new(AST_PROGRAM, NULL, loc);
     AstNode *last_div = NULL;
     int has_proc = 0;
+    int error_count_before = error_count;
 
     if (tok.kind == TOK_IDENTIFICATION) {
         AstNode *div = parse_division(mode);
-        prog->children = div;
-        last_div = div;
+        if (div) {
+            prog->children = div;
+            last_div = div;
 
-        if (div->text) {
-            prog->name = div->text;
-            div->text = NULL;
+            if (div->text) {
+                prog->name = div->text;
+                div->text = NULL;
+            }
         }
     } else {
         cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Missing IDENTIFICATION DIVISION");
+        synchronize();
     }
 
-    while (tok.kind != TOK_EOF) {
-        if (tok.kind == TOK_ENVIRONMENT ||
-            tok.kind == TOK_DATA ||
-            tok.kind == TOK_PROCEDURE) {
-            AstNode *div = parse_division(mode);
-            if (last_div) last_div->next = div;
-            else prog->children = div;
-            last_div = div;
-
-            if (strcasecmp(div->name, "PROCEDURE") == 0) has_proc = 1;
-        } else {
-            next();
+    while (tok.kind != TOK_EOF && !parser_panic_mode) {
+        if (is_division_start(tok.kind)) {
+             AstNode *div = parse_division(mode);
+             if (div) {
+                if (last_div) last_div->next = div;
+                else prog->children = div;
+                last_div = div;
+                if (strcasecmp(div->name, "PROCEDURE") == 0) has_proc = 1;
+             }
+        } else if (tok.kind == TOK_PERIOD) { // Consume standalone periods that might be after COPY statements
+            next(); // Consume the period
+        }
+        else {
+            // Unexpected token at global scope, outside a division
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Expected a DIVISION start");
+            synchronize();
         }
     }
 
-    if (!has_proc) {
+    if (!has_proc && error_count == error_count_before) { // Only report if no other errors prevented parsing PROCEDURE
         cobalt_error("Missing PROCEDURE DIVISION");
     }
 

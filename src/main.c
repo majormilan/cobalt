@@ -111,6 +111,7 @@ static void print_help(const char *progname) {
 }
 
 int main(int argc, char **argv) {
+    reset_diagnostics();
     if (argc == 1 || strcmp(argv[1], "--help") == 0) {
         print_help(argv[0]);
         return 0;
@@ -184,7 +185,7 @@ int main(int argc, char **argv) {
 
     char *source = read_file(input_file);
     Lexer lexer;
-    lexer_init(&lexer, source, &mode);
+    lexer_init(&lexer, source, &mode, input_file);
     AstNode *ast = parse_program(&lexer, &mode, source);
 
     if (!ast) {

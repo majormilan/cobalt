@@ -4,15 +4,44 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <stdio.h> // For file operations
+#include <errno.h> // For errno and strerror
 
 #include "lexer_cobol85.h" // Corrected include path
 #include "lexer_cobol2002.h" // Corrected include path
 
-// Token make_token (Lexer *l, ...)` is already in lexer_cobol85.c and lexer_cobol2002.c.
-// To avoid duplication, we need a common helper or keep `make_token` here if it's truly generic.
-// For now, let's keep it here and make the standard-specific keyword functions accept it.
-// Actually, `make_token` is static, so it should be fine. The problem is with `is_ident_char`
-// and `advance`, `skip_ws` which are also static. I should pass `l` to them as well.
+// Reads an entire file into a dynamically allocated string.
+// Returns NULL on failure. Caller is responsible for freeing the memory.
+static char *read_file_content(const char *filepath) {
+    FILE *file = fopen(filepath, "r");
+    if (file == NULL) {
+        cobalt_error(NULL, "Could not open file '%s': %s", filepath, strerror(errno));
+        return NULL;
+    }
+
+    fseek(file, 0, SEEK_END);
+    long length = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    char *buffer = malloc(length + 1);
+    if (buffer == NULL) {
+        cobalt_error(NULL, "Could not allocate memory for file '%s'", filepath);
+        fclose(file);
+        return NULL;
+    }
+
+    size_t read_bytes = fread(buffer, 1, length, file);
+    if (read_bytes != (size_t)length) {
+        cobalt_error(NULL, "Could not read entire file '%s'", filepath);
+        free(buffer);
+        fclose(file);
+        return NULL;
+    }
+    buffer[length] = '\0';
+
+    fclose(file);
+    return buffer;
+}
 
 static void advance(Lexer *l) {
     if (*l->src == '\n') {
@@ -51,12 +80,16 @@ Token make_token_public(Lexer *l, TokenKind kind, const char *start, size_t leng
 }
 
 
-void lexer_init(Lexer *l, const char *source, const CompilerMode *mode) {
+void lexer_init(Lexer *l, const char *source, const CompilerMode *mode, const char *filename) {
     l->original_source = source;
     l->src = source;
     l->current_line = 1;
     l->current_col = 1;
     l->mode = mode;
+    l->filename = filename;
+    l->file_content = NULL; // Not owned by the initial lexer
+    l->free_content_on_pop = false;
+    l->prev = NULL;
 
     // Set standard-specific keyword checker
     switch (l->mode->std) {
@@ -73,14 +106,68 @@ void lexer_init(Lexer *l, const char *source, const CompilerMode *mode) {
     }
 }
 
-Token lexer_next(Lexer *l) {
-    skip_ws(l);
-
-    const char *start = l->src;
-
-    if (*l->src == '\0') {
-        return make_token_public(l, TOK_EOF, start, 0);
+void lexer_push_source(Lexer *l, const char *new_source_content, const char *new_filename, bool free_content) {
+    Lexer *new_lexer_state = malloc(sizeof(Lexer));
+    if (new_lexer_state == NULL) {
+        cobalt_error(l->original_source, "Failed to allocate memory for new lexer state.");
+        return; // Or exit, depending on error handling strategy
     }
+
+    // Save the current lexer's state into the new_lexer_state (which will become l->prev)
+    memcpy(new_lexer_state, l, sizeof(Lexer));
+
+    // Now, initialize the current lexer `l` with the new source
+    l->original_source = new_source_content;
+    l->src = new_source_content;
+    l->current_line = 1;
+    l->current_col = 1;
+    // l->mode and l->get_keyword_or_ident remain the same
+    l->filename = new_filename;
+    l->file_content = (char*)new_source_content; // Store as char* if it's heap allocated
+    l->free_content_on_pop = free_content;
+    l->prev = new_lexer_state; // Link to the previous state
+}
+
+void lexer_pop_source(Lexer *l) {
+    if (l->prev == NULL) {
+        cobalt_error(l->original_source, "Attempted to pop source from an empty lexer stack.");
+        return; // Cannot pop the base lexer
+    }
+
+    if (l->free_content_on_pop && l->file_content != NULL) {
+        free(l->file_content);
+    }
+
+    Lexer *old_lexer_state = l->prev;
+    // Restore the lexer `l` to the state of `l->prev`
+    memcpy(l, old_lexer_state, sizeof(Lexer));
+    free(old_lexer_state); // Free the memory of the popped lexer state
+}
+
+
+Token lexer_next(Lexer *l) {
+    // Keep trying to get a token until a non-EOF token is found
+    // or we truly hit EOF on the base lexer.
+    while (true) {
+        // If we've reached the end of a pushed source, pop it.
+        if (*l->src == '\0' && l->prev != NULL) {
+            lexer_pop_source(l);
+            // After popping, loop again to get the next token from the restored source.
+            continue; 
+        }
+        
+        skip_ws(l);
+
+        const char *start = l->src;
+
+        if (*l->src == '\0') {
+            // If it's EOF on the base lexer, return TOK_EOF
+            if (l->prev == NULL) {
+                return make_token_public(l, TOK_EOF, start, 0);
+            }
+            // If it's EOF on a pushed source, continue the loop to pop it.
+            continue;
+        }
 
     // TODO: Handle fixed/free format here
 
@@ -120,7 +207,43 @@ Token lexer_next(Lexer *l) {
 
     if (isalpha(*l->src)) {
         while (is_ident_char(l->src[0])) advance(l); // Use non-static is_ident_char
-        return l->get_keyword_or_ident(l, start, l->src - start); // Use function pointer
+        Token t = l->get_keyword_or_ident(l, start, l->src - start);
+        if (t.kind == TOK_COPY) {
+            // Found a COPY statement, now parse the filename
+            // For simplicity, assume filename is a string literal immediately after COPY
+            skip_ws(l);
+            if (*l->src == '"') {
+                advance(l); // skip opening "
+                const char *filename_start = l->src;
+                while (*l->src && *l->src != '"') advance(l);
+                size_t filename_len = l->src - filename_start;
+                if (*l->src == '"') advance(l); // skip closing "
+
+                char *copied_filename = strndup(filename_start, filename_len);
+                if (copied_filename == NULL) {
+                    cobalt_error(l->original_source, "Failed to duplicate filename for COPY statement.");
+                    return make_token_public(l, TOK_EOF, start, 0); // Error recovery
+                }
+
+                char *file_content = read_file_content(copied_filename);
+                if (file_content == NULL) {
+                    char error_msg[512]; // Buffer for error message
+                    snprintf(error_msg, sizeof(error_msg), "Failed to read content of copied file '%s'.", copied_filename);
+                    free(copied_filename);
+                    cobalt_error(l->original_source, "%s", error_msg);
+                    return make_token_public(l, TOK_EOF, start, 0); // Error recovery
+                }
+                
+                lexer_push_source(l, file_content, copied_filename, true);
+                // After pushing, we don't return TOK_COPY. We immediately get the next token
+                // which will be from the newly pushed source.
+                continue; // Continue the while(true) loop to get the first token from the new source.
+            } else {
+                cobalt_error(l->original_source, "Expected string literal after COPY statement.");
+                return make_token_public(l, TOK_EOF, start, 0); // Error recovery
+            }
+        }
+        return t;
     }
 
     if (*l->src == '(') {
@@ -188,4 +311,7 @@ Token lexer_next(Lexer *l) {
     cobalt_error_loc(l->original_source, l->current_line, l->current_col, "Unexpected character '%c'", *l->src);
     advance(l);
     return lexer_next(l);  // recovery
+    } // Closing brace for while(true)
 }
+
+
