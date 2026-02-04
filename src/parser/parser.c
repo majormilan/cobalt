@@ -4,12 +4,14 @@
 #include "diag.h"
 #include "ast.h"
 #include "config.h"
+#include "symtab.h" // Added for symbol table integration
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>  // for strcasecmp
 
 static Token tok;
 static Lexer *current_lexer; // Temporary global lexer for parser functions
+static SymbolTable *current_symtab; // Global symbol table for parser functions
 static bool parser_panic_mode = false;
 
 static void next(void) {
@@ -99,7 +101,7 @@ static AstNode *parse_identification_paragraph(void) {
     if (tok.kind != TOK_IDENT) return NULL;
     if (parser_panic_mode) return NULL; // Don't parse if in panic mode
 
-    SourceLocation loc = {tok.line, tok.column};
+    SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
     char *name = tok_to_str();
     next();
     expect(TOK_PERIOD, ".");
@@ -146,8 +148,9 @@ static AstNode *parse_var_decl(void) {
     if (tok.kind != TOK_NUMBER) return NULL;
     if (parser_panic_mode) return NULL; // Don't parse if in panic mode
 
-    SourceLocation loc = {tok.line, tok.column};
-    char *level = tok_to_str();
+    SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
+    char *level_str = tok_to_str();
+    int level_num = atoi(level_str);
     next();
 
     char *name = NULL;
@@ -155,20 +158,28 @@ static AstNode *parse_var_decl(void) {
         name = tok_to_str();
         next();
     } else {
-        free(level);
+        free(level_str);
         synchronize(); // No identifier after level, error
         return NULL;
     }
 
     AstNode *var = ast_new(AST_VAR_DECL, name, loc);
+    // Declare the symbol
+    Symbol *sym = symtab_declare_symbol(current_symtab, name, SYM_VAR, loc);
+    if (sym) {
+        sym->level = level_num;
+    }
+
     free(name);
-    var->text = level;
+    var->text = level_str; // Keep level_str in AST node for now, or just free it.
     AstNode *current_child_tail = NULL; 
 
     if (tok.kind == TOK_PIC) {
         next();
         char pic_buf[64] = {0};
         size_t pos = 0;
+        // Keep track of the start of the PIC string for location
+        SourceLocation pic_loc = {current_lexer->filename, tok.line, tok.column}; 
         while (tok.kind != TOK_VALUE && tok.kind != TOK_USAGE && tok.kind != TOK_PERIOD && tok.kind != TOK_EOF && !parser_panic_mode) {
             char *part = tok_to_str();
             strncat(pic_buf + pos, part, sizeof(pic_buf) - pos - 1);
@@ -176,13 +187,19 @@ static AstNode *parse_var_decl(void) {
             free(part);
             next();
         }
-        AstNode *pic = ast_new(AST_PIC_CLAUSE, strdup(pic_buf), loc);
+        AstNode *pic_node = ast_new(AST_PIC_CLAUSE, strdup(pic_buf), pic_loc);
         if (!var->children) { 
-            var->children = pic;
+            var->children = pic_node;
         } else { 
-            current_child_tail->next = pic;
+            current_child_tail->next = pic_node;
         }
-        current_child_tail = pic; 
+        current_child_tail = pic_node; 
+
+        // Store PIC string in symbol and parse its attributes
+        if (sym) {
+            sym->pic_string = strdup(pic_buf);
+            symtab_parse_pic_string(sym, sym->pic_string);
+        }
     }
 
     if (tok.kind == TOK_USAGE) {
@@ -198,9 +215,13 @@ static AstNode *parse_var_decl(void) {
         if (tok.kind == TOK_COMP) {
             next(); 
             usage_type = ast_new(AST_USAGE_TYPE_COMP, NULL, loc);
+            if (sym) {
+                sym->var_type = VAR_TYPE_COMP; // Update symbol type for COMP
+            }
         } else if (tok.kind == TOK_DISPLAY) {
             next(); 
             usage_type = ast_new(AST_USAGE_TYPE_DISPLAY, NULL, loc);
+            // Default alphanumeric, no change needed if PIC already set it
         } else {
             cobalt_warn_loc(current_lexer->original_source, tok.line, tok.column, "Expected COMP or DISPLAY after USAGE, got '%.*s'", (int)tok.length, tok.lexeme);
         }
@@ -222,13 +243,13 @@ static AstNode *parse_var_decl(void) {
         char *val = tok_to_str();
         AstNode *val_node = NULL;
         if (tok.kind == TOK_STRING) {
-            val_node = ast_new(AST_STRING_LITERAL, val, (SourceLocation){tok.line, tok.column});
+            val_node = ast_new(AST_STRING_LITERAL, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
         } else if (tok.kind == TOK_NUMBER) {
-            val_node = ast_new(AST_LITERAL_NUMBER, val, (SourceLocation){tok.line, tok.column});
+            val_node = ast_new(AST_LITERAL_NUMBER, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
         } else if (tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) {
-            val_node = ast_new(AST_FIGURATIVE_CONSTANT, val, (SourceLocation){tok.line, tok.column});
+            val_node = ast_new(AST_FIGURATIVE_CONSTANT, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
         } else if (tok.kind == TOK_IDENT) {
-            val_node = ast_new(AST_IDENTIFIER, val, (SourceLocation){tok.line, tok.column});
+            val_node = ast_new(AST_IDENTIFIER, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
         } else {
             cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Expected literal or figurative constant after VALUE, got '%.*s'", (int)tok.length, tok.lexeme);
             free(val);
@@ -255,7 +276,7 @@ static AstNode *parse_statement(bool require_period);
 static AstNode *parse_statement(bool require_period) {
     if (parser_panic_mode) return NULL; // Don't try to parse statements if in panic mode
 
-    SourceLocation loc = {tok.line, tok.column};
+    SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
 
     if (tok.kind == TOK_DISPLAY) {
         next();
@@ -271,15 +292,23 @@ static AstNode *parse_statement(bool require_period) {
                 char *val = tok_to_str();
                 AstNode *arg = NULL;
                 if (tok.kind == TOK_STRING) {
-                    arg = ast_new(AST_STRING_LITERAL, val, (SourceLocation){tok.line, tok.column});
+                    arg = ast_new(AST_STRING_LITERAL, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
                 } else if (tok.kind == TOK_NUMBER) {
-                    arg = ast_new(AST_LITERAL_NUMBER, val, (SourceLocation){tok.line, tok.column});
+                    arg = ast_new(AST_LITERAL_NUMBER, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
                 } else if (tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) {
-                    arg = ast_new(AST_FIGURATIVE_CONSTANT, val, (SourceLocation){tok.line, tok.column});
-                } else { 
-                    arg = ast_new(AST_IDENTIFIER, val, (SourceLocation){tok.line, tok.column});
-                }
-                free(val);
+                    arg = ast_new(AST_FIGURATIVE_CONSTANT, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
+                            } else { 
+                                arg = ast_new(AST_IDENTIFIER, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
+                                // Resolve and mark as used
+                                Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, val);
+                                if (!resolved_sym) {
+                                    cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", val);
+                                } else {
+                                    symtab_mark_symbol_as_used(resolved_sym);
+                                    // Optionally, attach symbol to AST node for later use
+                                    // arg->symbol = resolved_sym; 
+                                }
+                            }                free(val);
                 if (!display->children) display->children = arg;
                 else last->next = arg;
                 last = arg;
@@ -306,13 +335,21 @@ static AstNode *parse_statement(bool require_period) {
             char *val = tok_to_str();
             AstNode *src = NULL;
             if (tok.kind == TOK_STRING) {
-                src = ast_new(AST_STRING_LITERAL, val, (SourceLocation){tok.line, tok.column});
+                src = ast_new(AST_STRING_LITERAL, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
             } else if (tok.kind == TOK_NUMBER) {
-                src = ast_new(AST_LITERAL_NUMBER, val, (SourceLocation){tok.line, tok.column});
+                src = ast_new(AST_LITERAL_NUMBER, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
             } else if (tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) {
-                src = ast_new(AST_FIGURATIVE_CONSTANT, val, (SourceLocation){tok.line, tok.column});
+                src = ast_new(AST_FIGURATIVE_CONSTANT, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
             } else { 
-                src = ast_new(AST_IDENTIFIER, val, (SourceLocation){tok.line, tok.column});
+                src = ast_new(AST_IDENTIFIER, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
+                // Resolve and mark source as used
+                Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, val);
+                if (!resolved_sym) {
+                    cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", val);
+                } else {
+                    symtab_mark_symbol_as_used(resolved_sym);
+                    // src->symbol = resolved_sym; 
+                }
             }
             free(val);
             move->children = src;
@@ -324,7 +361,15 @@ static AstNode *parse_statement(bool require_period) {
 
         if (tok.kind == TOK_IDENT) {
             char *target = tok_to_str();
-            AstNode *tgt = ast_new(AST_IDENTIFIER, target, (SourceLocation){tok.line, tok.column});
+            AstNode *tgt = ast_new(AST_IDENTIFIER, target, (SourceLocation){current_lexer->filename, tok.line, tok.column});
+            // Resolve and mark target as used
+            Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, target);
+            if (!resolved_sym) {
+                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", target);
+            } else {
+                symtab_mark_symbol_as_used(resolved_sym);
+                // tgt->symbol = resolved_sym;
+            }
             free(target);
             move->children->next = tgt;
             next();
@@ -349,8 +394,17 @@ static AstNode *parse_statement(bool require_period) {
                 char *val = tok_to_str();
                 AstNode *op = ast_new(
                     tok.kind == TOK_NUMBER ? AST_LITERAL_NUMBER : AST_IDENTIFIER,
-                    val, (SourceLocation){tok.line, tok.column}
+                    val, (SourceLocation){current_lexer->filename, tok.line, tok.column}
                 );
+                if (tok.kind == TOK_IDENT) {
+                    Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, val);
+                    if (!resolved_sym) {
+                        cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", val);
+                    } else {
+                        symtab_mark_symbol_as_used(resolved_sym);
+                        // op->symbol = resolved_sym;
+                    }
+                }
                 free(val);
                 if (!sources) sources = op;
                 else last_src->next = op;
@@ -367,7 +421,15 @@ static AstNode *parse_statement(bool require_period) {
             AstNode *dest = NULL;
             if (tok.kind == TOK_IDENT) {
                 char *val = tok_to_str();
-                dest = ast_new(AST_IDENTIFIER, val, (SourceLocation){tok.line, tok.column}); // Re-allocate for AST node
+                dest = ast_new(AST_IDENTIFIER, val, (SourceLocation){current_lexer->filename, tok.line, tok.column}); // Re-allocate for AST node
+                // Resolve and mark TO target as used
+                Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, val);
+                if (!resolved_sym) {
+                    cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", val);
+                } else {
+                    symtab_mark_symbol_as_used(resolved_sym);
+                    // dest->symbol = resolved_sym;
+                }
                 free(val);
                 next();
             } else {
@@ -384,7 +446,15 @@ static AstNode *parse_statement(bool require_period) {
             AstNode *giving = NULL;
             if (tok.kind == TOK_IDENT) {
                 char *val = tok_to_str();
-                giving = ast_new(AST_IDENTIFIER, val, (SourceLocation){tok.line, tok.column});
+                giving = ast_new(AST_IDENTIFIER, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
+                // Resolve and mark GIVING target as used
+                Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, val);
+                if (!resolved_sym) {
+                    cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", val);
+                } else {
+                    symtab_mark_symbol_as_used(resolved_sym);
+                    // giving->symbol = resolved_sym;
+                }
                 free(val);
                 next();
             } else {
@@ -406,7 +476,15 @@ static AstNode *parse_statement(bool require_period) {
 
         if (tok.kind == TOK_IDENT) {
             char *left = tok_to_str();
-            cond->children = ast_new(AST_IDENTIFIER, left, (SourceLocation){tok.line, tok.column});
+            cond->children = ast_new(AST_IDENTIFIER, left, (SourceLocation){current_lexer->filename, tok.line, tok.column});
+            // Resolve and mark left operand as used
+            Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, left);
+            if (!resolved_sym) {
+                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", left);
+            } else {
+                symtab_mark_symbol_as_used(resolved_sym);
+                // cond->children->symbol = resolved_sym;
+            }
             free(left);
             next();
         } else {
@@ -432,8 +510,18 @@ static AstNode *parse_statement(bool require_period) {
             char *right = tok_to_str();
             AstNode *right_node = ast_new(
                 tok.kind == TOK_NUMBER ? AST_LITERAL_NUMBER : AST_IDENTIFIER,
-                right, (SourceLocation){tok.line, tok.column}
+                right, (SourceLocation){current_lexer->filename, tok.line, tok.column}
             );
+            if (tok.kind == TOK_IDENT) {
+                // Resolve and mark right operand as used
+                Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, right);
+                if (!resolved_sym) {
+                    cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", right);
+                } else {
+                    symtab_mark_symbol_as_used(resolved_sym);
+                    // right_node->symbol = resolved_sym;
+                }
+            }
             free(right);
             cond->children->next = right_node;
             next();
@@ -498,7 +586,18 @@ static AstNode *parse_statement(bool require_period) {
 
         if (tok.kind == TOK_IDENT) {
             char *para = tok_to_str();
-            AstNode *target = ast_new(AST_IDENTIFIER, para, (SourceLocation){tok.line, tok.column});
+            AstNode *target = ast_new(AST_IDENTIFIER, para, (SourceLocation){current_lexer->filename, tok.line, tok.column});
+            // Resolve and validate PERFORM target
+            Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, para);
+            if (!resolved_sym) {
+                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared paragraph or section '%s' for PERFORM.", para);
+            } else {
+                symtab_mark_symbol_as_used(resolved_sym);
+                // target->symbol = resolved_sym;
+                if (resolved_sym->kind != SYM_PARAGRAPH && resolved_sym->kind != SYM_SECTION && resolved_sym->kind != SYM_PROGRAM) {
+                    cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "'%s' is not a paragraph, section, or program-id and cannot be PERFORMED.", para);
+                }
+            }
             free(para);
             perf->children = target;
             next();
@@ -517,7 +616,15 @@ static AstNode *parse_statement(bool require_period) {
 
         if (tok.kind == TOK_IDENT) {
             char *var_name = tok_to_str();
-            AstNode *target = ast_new(AST_IDENTIFIER, var_name, (SourceLocation){tok.line, tok.column});
+            AstNode *target = ast_new(AST_IDENTIFIER, var_name, (SourceLocation){current_lexer->filename, tok.line, tok.column});
+            // Resolve and mark ACCEPT target as used
+            Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, var_name);
+            if (!resolved_sym) {
+                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", var_name);
+            } else {
+                symtab_mark_symbol_as_used(resolved_sym);
+                // target->symbol = resolved_sym;
+            }
             free(var_name);
             accept_stmt->children = target;
             next();
@@ -538,19 +645,19 @@ static AstNode *parse_statement(bool require_period) {
     return NULL;
 }
 
-static AstNode *parse_paragraph(CompilerMode *mode) {
+static AstNode *parse_paragraph(void) {
     if (tok.kind != TOK_IDENT) return NULL;
     if (parser_panic_mode) return NULL; // Don't parse if in panic mode
 
-    SourceLocation loc = {tok.line, tok.column};
-    char *name = tok_to_str();
-    next();
-    expect(TOK_PERIOD, ".");
-    if (parser_panic_mode) { free(name); return NULL; }
-
-
-    AstNode *para = ast_new(AST_PARAGRAPH, name, loc);
-    free(name);
+    SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
+        char *name = tok_to_str();
+        next();
+        expect(TOK_PERIOD, ".");
+        if (parser_panic_mode) { free(name); return NULL; }
+    
+        AstNode *para = ast_new(AST_PARAGRAPH, name, loc);
+        symtab_declare_symbol(current_symtab, name, SYM_PARAGRAPH, loc);
+        free(name);
 
     AstNode *last = NULL;
     while (tok.kind != TOK_EOF &&
@@ -572,8 +679,8 @@ static AstNode *parse_paragraph(CompilerMode *mode) {
     return para;
 }
 
-static AstNode *parse_section(CompilerMode *mode) {
-    SourceLocation loc = {tok.line, tok.column};
+static AstNode *parse_section(void) {
+    SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
     expect(TOK_SECTION, "SECTION");
     expect(TOK_PERIOD, ".");
     if (parser_panic_mode) return NULL;
@@ -602,7 +709,7 @@ static AstNode *parse_section(CompilerMode *mode) {
         }
 
         // Try parsing a paragraph
-        AstNode *para = parse_paragraph(mode);
+        AstNode *para = parse_paragraph();
         if (para) {
             if (!sec->children) sec->children = para;
             else last->next = para;
@@ -624,8 +731,8 @@ static AstNode *parse_section(CompilerMode *mode) {
     return sec;
 }
 
-static AstNode *parse_division(CompilerMode *mode) {
-    SourceLocation loc = {tok.line, tok.column};
+static AstNode *parse_division(void) {
+    SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
     char *name = tok_to_str();
     next();
     expect(TOK_DIVISION, "DIVISION");
@@ -638,10 +745,13 @@ static AstNode *parse_division(CompilerMode *mode) {
     if (strcasecmp(div->name, "IDENTIFICATION") == 0) {
         expect(TOK_PROGRAM_ID, "PROGRAM-ID");
         expect(TOK_PERIOD, ".");
-        char *prog = tok_to_str();
+        char *prog_name_str = tok_to_str();
         expect(TOK_IDENT, "program name");
         expect(TOK_PERIOD, ".");
-        div->text = prog;
+        div->text = prog_name_str; // Assign to AST node
+
+        // Declare the PROGRAM-ID in the symbol table
+        symtab_declare_symbol(current_symtab, prog_name_str, SYM_PROGRAM, (SourceLocation){current_lexer->filename, tok.line, tok.column});
 
         AstNode *last_para = NULL;
         while (tok.kind == TOK_IDENT && 
@@ -662,7 +772,7 @@ static AstNode *parse_division(CompilerMode *mode) {
         while (tok.kind != TOK_EOF &&
                !is_division_start(tok.kind) && // Division starts end a procedure
                !parser_panic_mode) {
-            AstNode *para = parse_paragraph(mode);
+            AstNode *para = parse_paragraph();
             if (para) {
                 if (!div->children) div->children = para;
                 else last->next = para;
@@ -682,8 +792,10 @@ static AstNode *parse_division(CompilerMode *mode) {
     else if (strcasecmp(div->name, "DATA") == 0) {
         AstNode *sec = NULL;
         if (tok.kind == TOK_WORKING_STORAGE) {
-            next();
-            sec = parse_section(mode);
+            SourceLocation ws_loc = {current_lexer->filename, tok.line, tok.column};
+            next(); // Consume TOK_WORKING_STORAGE
+            symtab_declare_symbol(current_symtab, "WORKING-STORAGE", SYM_SECTION, ws_loc); // Declare WORKING-STORAGE as a section
+            sec = parse_section();
             div->children = sec;
         } else {
             cobalt_warn_loc(current_lexer->original_source, tok.line, tok.column, "Only WORKING-STORAGE supported in DATA DIVISION for now");
@@ -694,20 +806,23 @@ static AstNode *parse_division(CompilerMode *mode) {
     return div;
 }
 
-AstNode *parse_program(Lexer *l, CompilerMode *mode, const char *source) {
+AstNode *parse_program(Lexer *l) {
     current_lexer = l; 
     parser_panic_mode = false;
     reset_diagnostics(); // Reset counters for this compilation
     next();
 
-    SourceLocation loc = {tok.line, tok.column};
+    // Initialize and push global scope
+    current_symtab = symtab_init();
+
+    SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
     AstNode *prog = ast_new(AST_PROGRAM, NULL, loc);
     AstNode *last_div = NULL;
     int has_proc = 0;
     int error_count_before = error_count;
 
     if (tok.kind == TOK_IDENTIFICATION) {
-        AstNode *div = parse_division(mode);
+        AstNode *div = parse_division();
         if (div) {
             prog->children = div;
             last_div = div;
@@ -724,7 +839,7 @@ AstNode *parse_program(Lexer *l, CompilerMode *mode, const char *source) {
 
     while (tok.kind != TOK_EOF && !parser_panic_mode) {
         if (is_division_start(tok.kind)) {
-             AstNode *div = parse_division(mode);
+             AstNode *div = parse_division();
              if (div) {
                 if (last_div) last_div->next = div;
                 else prog->children = div;
@@ -744,6 +859,8 @@ AstNode *parse_program(Lexer *l, CompilerMode *mode, const char *source) {
     if (!has_proc && error_count == error_count_before) { // Only report if no other errors prevented parsing PROCEDURE
         cobalt_error("Missing PROCEDURE DIVISION");
     }
-
+    
+    symtab_check_unused_symbols(current_symtab); // Check for unused symbols
+    symtab_free(current_symtab); // Free the symbol table
     return prog;
 }

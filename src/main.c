@@ -186,7 +186,7 @@ int main(int argc, char **argv) {
     char *source = read_file(input_file);
     Lexer lexer;
     lexer_init(&lexer, source, &mode, input_file);
-    AstNode *ast = parse_program(&lexer, &mode, source);
+    AstNode *ast = parse_program(&lexer);
 
     if (!ast) {
         free(source);
@@ -195,6 +195,13 @@ int main(int argc, char **argv) {
 
     SemaContext ctx = { .mode = &mode, .original_source = source };
     sema_basic_check(ast, &ctx);
+
+    // If there were any errors during parsing or semantic analysis, exit with a non-zero status
+    if (error_count > 0) {
+        ast_free(ast);
+        free(source);
+        return 1;
+    }
 
     if (dump_ast) {
         printf("AST dump:\n");

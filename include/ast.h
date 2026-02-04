@@ -44,7 +44,9 @@ typedef enum {
     AST_USAGE_TYPE_DISPLAY,
 } AstKind;
 
+
 typedef struct {
+    const char *filename; // File where the token/symbol is located
     int line;
     int column;
 } SourceLocation;

@@ -117,6 +117,7 @@ typedef struct {
     TokenKind kind;
     const char *lexeme;
     size_t length;
+    const char *filename; // File where the token/symbol is located
     int line;
     int column;
 } Token;
