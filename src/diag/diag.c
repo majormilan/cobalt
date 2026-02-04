@@ -4,9 +4,16 @@
 #include <stdarg.h>
 #include <string.h>
 
+// ANSI color codes
+#define CLR_RESET   "\x1b[0m"
+#define CLR_BOLD    "\x1b[1m"
+#define CLR_RED     "\x1b[31m"
+#define CLR_YELLOW  "\x1b[33m"
+#define CLR_CYAN    "\x1b[36m"
+
 extern char *current_filename;
 
-static void print_context(const char *source, int line, int col) {
+static void print_context(const char *source, int line, int col, const char *color) {
     if (!source) return;
 
     const char *line_start = source;
@@ -21,51 +28,53 @@ static void print_context(const char *source, int line, int col) {
 
     fprintf(stderr, "  %.*s\n", (int)(line_end - line_start), line_start);
 
-    fprintf(stderr, "  ");
+    fprintf(stderr, "  %s%s", CLR_BOLD, color);
     for (int j = 1; j < col; j++) {
         fputc(' ', stderr);
     }
-    fprintf(stderr, "^\n");
+    fprintf(stderr, "^" CLR_RESET "\n");
 }
 
 void cobalt_error(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    if (current_filename) fprintf(stderr, "%s: ", current_filename);
-    fprintf(stderr, "error: ");
+    if (current_filename) fprintf(stderr, CLR_BOLD "%s: " CLR_RESET, current_filename);
+    fprintf(stderr, CLR_BOLD CLR_RED "ERROR: " CLR_RESET CLR_BOLD);
     vfprintf(stderr, fmt, ap);
-    fprintf(stderr, "\n");
+    fprintf(stderr, CLR_RESET "\n");
     va_end(ap);
 }
 
 void cobalt_warn(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    if (current_filename) fprintf(stderr, "%s: ", current_filename);
-    fprintf(stderr, "warning: ");
+    if (current_filename) fprintf(stderr, CLR_BOLD "%s: " CLR_RESET, current_filename);
+    fprintf(stderr, CLR_BOLD CLR_YELLOW "WARNING: " CLR_RESET CLR_BOLD);
     vfprintf(stderr, fmt, ap);
-    fprintf(stderr, "\n");
+    fprintf(stderr, CLR_RESET "\n");
     va_end(ap);
 }
 
 void cobalt_error_loc(const char *source, int line, int col, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    if (current_filename) fprintf(stderr, "%s:", current_filename);
-    fprintf(stderr, "%d:%d: error: ", line, col);
+    if (current_filename) fprintf(stderr, CLR_BOLD "%s:", current_filename);
+    fprintf(stderr, "%d:%d: " CLR_RESET, line, col);
+    fprintf(stderr, CLR_BOLD CLR_RED "ERROR: " CLR_RESET CLR_BOLD);
     vfprintf(stderr, fmt, ap);
-    fprintf(stderr, "\n");
+    fprintf(stderr, CLR_RESET "\n");
     va_end(ap);
-    print_context(source, line, col);
+    print_context(source, line, col, CLR_RED);
 }
 
 void cobalt_warn_loc(const char *source, int line, int col, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    if (current_filename) fprintf(stderr, "%s:", current_filename);
-    fprintf(stderr, "%d:%d: warning: ", line, col);
+    if (current_filename) fprintf(stderr, CLR_BOLD "%s:", current_filename);
+    fprintf(stderr, "%d:%d: " CLR_RESET, line, col);
+    fprintf(stderr, CLR_BOLD CLR_YELLOW "WARNING: " CLR_RESET CLR_BOLD);
     vfprintf(stderr, fmt, ap);
-    fprintf(stderr, "\n");
+    fprintf(stderr, CLR_RESET "\n");
     va_end(ap);
-    print_context(source, line, col);
+    print_context(source, line, col, CLR_YELLOW);
 }
