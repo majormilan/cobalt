@@ -60,7 +60,33 @@ static void lower_node(IrProgram *ir, AstNode *node) {
     if (!node) return;
 
     if (node->kind == AST_PARAGRAPH) {
+        // Paragraphs are emitted as subroutines by lower_to_ir; this fallback
+        // inlines the body if lower_node is called directly (e.g. in stub paths).
         lower_block(ir, node->children);
+    } else if (node->kind == AST_STATEMENT_PERFORM) {
+        AstNode *target = node->children;
+        if (!target || target->kind != AST_IDENTIFIER) return;
+
+        if (!node->is_numeric) {
+            // Basic PERFORM: call the paragraph once
+            append_instr(ir, new_instr(IR_CALL_PARA, target->name, NULL, NULL,
+                                       0, 0, 0, 0, USAGE_DISPLAY));
+        } else {
+            // PERFORM n TIMES — target->next is the count node
+            AstNode *count = target->next;
+            if (!count) return;
+
+            if (count->kind == AST_LITERAL_NUMBER) {
+                int n = count->name ? atoi(count->name) : 0;
+                append_instr(ir, new_instr(IR_PERFORM_TIMES, target->name, NULL,
+                                           NULL, 0, n, 0, 0, USAGE_DISPLAY));
+            } else if (count->kind == AST_IDENTIFIER) {
+                VarInfo *cnt = find_var(count->name);
+                if (!cnt) { cobalt_warn("Variable '%s' not found for PERFORM TIMES count", count->name); return; }
+                append_instr(ir, new_instr(IR_PERFORM_TIMES, target->name, cnt->name,
+                                           NULL, cnt->size, 0, 0, 0, USAGE_DISPLAY));
+            }
+        }
     } else if (node->kind == AST_STATEMENT_IF) {
         // Stub: execute THEN block
         if (node->children && node->children->next) {
@@ -365,7 +391,44 @@ IrProgram *lower_to_ir(AstNode *program) {
     div = program->children;
     while (div) {
         if (div->kind == AST_DIVISION && strcasecmp(div->name, "PROCEDURE") == 0) {
-            lower_block(ir, div->children);
+            AstNode *child = div->children;
+
+            // Check whether the division contains any paragraph nodes
+            bool has_paras = false;
+            for (AstNode *n = child; n; n = n->next) {
+                if (n->kind == AST_PARAGRAPH) { has_paras = true; break; }
+            }
+
+            if (!has_paras) {
+                // No paragraphs: inline everything directly
+                lower_block(ir, child);
+            } else {
+                // Each paragraph becomes a subroutine.
+                // The main sequence calls them in source order so that sequential
+                // fall-through (Para1 → Para2 → Para3) still works correctly.
+                for (AstNode *n = child; n; n = n->next) {
+                    if (n->kind == AST_PARAGRAPH) {
+                        append_instr(ir, new_instr(IR_CALL_PARA, n->name, NULL, NULL,
+                                                   0, 0, 0, 0, USAGE_DISPLAY));
+                    } else {
+                        lower_node(ir, n); // top-level non-paragraph statement
+                    }
+                }
+                // Safety exit in case no paragraph reaches STOP RUN
+                append_instr(ir, new_instr(IR_CALL_EXIT, NULL, NULL, NULL,
+                                           0, 0, 0, 0, USAGE_DISPLAY));
+
+                // Emit each paragraph body as a labelled subroutine
+                for (AstNode *n = child; n; n = n->next) {
+                    if (n->kind == AST_PARAGRAPH) {
+                        append_instr(ir, new_instr(IR_LABEL, n->name, NULL, NULL,
+                                                   0, 0, 0, 0, USAGE_DISPLAY));
+                        lower_block(ir, n->children);
+                        append_instr(ir, new_instr(IR_RET, NULL, NULL, NULL,
+                                                   0, 0, 0, 0, USAGE_DISPLAY));
+                    }
+                }
+            }
         }
         div = div->next;
     }

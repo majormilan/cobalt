@@ -584,27 +584,56 @@ static AstNode *parse_statement(bool require_period) {
         next();
         AstNode *perf = ast_new(AST_STATEMENT_PERFORM, NULL, loc);
 
-        if (tok.kind == TOK_IDENT) {
-            char *para = tok_to_str();
-            AstNode *target = ast_new(AST_IDENTIFIER, para, (SourceLocation){current_lexer->filename, tok.line, tok.column});
-            // Resolve and validate PERFORM target
-            Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, para);
-            if (!resolved_sym) {
-                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared paragraph or section '%s' for PERFORM.", para);
-            } else {
-                symtab_mark_symbol_as_used(resolved_sym);
-                // target->symbol = resolved_sym;
-                if (resolved_sym->kind != SYM_PARAGRAPH && resolved_sym->kind != SYM_SECTION && resolved_sym->kind != SYM_PROGRAM) {
-                    cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "'%s' is not a paragraph, section, or program-id and cannot be PERFORMED.", para);
-                }
-            }
-            free(para);
-            perf->children = target;
-            next();
-        } else {
+        if (tok.kind != TOK_IDENT) {
             cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "PERFORM statement requires a paragraph name");
             synchronize();
             return NULL;
+        }
+
+        char *para = tok_to_str();
+        AstNode *target = ast_new(AST_IDENTIFIER, para, (SourceLocation){current_lexer->filename, tok.line, tok.column});
+        // Allow forward references: downgrade "not found" to a warning so forward
+        // PERFORMs (where the paragraph is declared later) still compile.
+        Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, para);
+        if (resolved_sym) {
+            symtab_mark_symbol_as_used(resolved_sym);
+            if (resolved_sym->kind != SYM_PARAGRAPH && resolved_sym->kind != SYM_SECTION && resolved_sym->kind != SYM_PROGRAM) {
+                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                                 "'%s' is not a paragraph, section, or program-id and cannot be PERFORMed.", para);
+            }
+        }
+        // (unresolved symbols are forward references; the IR will validate)
+        free(para);
+        perf->children = target;
+        next();
+
+        // Optional count TIMES: PERFORM para N TIMES  or  PERFORM para var TIMES
+        if (tok.kind == TOK_NUMBER || tok.kind == TOK_IDENT) {
+            char *count_val = tok_to_str();
+            bool count_is_num = (tok.kind == TOK_NUMBER);
+            next(); // consume count
+
+            if (tok.kind == TOK_TIMES) {
+                AstNode *count_node = ast_new(
+                    count_is_num ? AST_LITERAL_NUMBER : AST_IDENTIFIER,
+                    count_val, (SourceLocation){current_lexer->filename, tok.line, tok.column}
+                );
+                if (!count_is_num) {
+                    Symbol *cnt_sym = symtab_resolve_symbol(current_symtab, count_val);
+                    if (cnt_sym) symtab_mark_symbol_as_used(cnt_sym);
+                }
+                target->next = count_node;
+                perf->is_numeric = true; // flag: PERFORM TIMES form
+                next(); // consume TIMES
+            } else {
+                // Not TIMES — unsupported variant; treat as basic PERFORM and warn
+                cobalt_warn_loc(current_lexer->original_source, tok.line, tok.column,
+                                "Unsupported PERFORM variant (only TIMES supported); ignoring extra tokens");
+                free(count_val);
+                synchronize();
+                return perf;
+            }
+            free(count_val);
         }
 
         if (require_period) expect(TOK_PERIOD, ".");

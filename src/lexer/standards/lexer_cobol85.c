@@ -83,6 +83,8 @@ Token lexer_cobol85_keyword_or_ident(Lexer *l, const char *start, size_t len) {
     KW("SPACE",           TOK_SPACES);
     KW("COPY",            TOK_COPY);
     KW("CONTINUE",        TOK_CONTINUE);
+    KW("TIMES",           TOK_TIMES);
+    KW("THRU",            TOK_THROUGH);  // THRU is an alias for THROUGH
     #undef KW
 
     if (len == 1) {

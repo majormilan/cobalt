@@ -1,0 +1,12 @@
+Test 1 - Basic PERFORM:
+Hello!
+Test 2 - PERFORM literal TIMES:
+Hello!
+Hello!
+Hello!
+Test 3 - PERFORM var TIMES:
+Hello!
+Hello!
+Hello!
+Test 4 - PERFORM with side effect:
+50

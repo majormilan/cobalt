@@ -20,6 +20,10 @@ typedef enum {
     IR_CALL_MOVE_FILL,      // dest_var, fill_char, size, usage_type
     IR_CALL_ACCEPT,         // dest_var, size, decimal_places, usage_type
     IR_CALL_ADD_TO,         // dest_var += src; var_name=dest, lit_name=src label, size=dest_size, lit_len=src_size
+    IR_LABEL,               // paragraph label; var_name = label name
+    IR_CALL_PARA,           // call a paragraph; var_name = paragraph name
+    IR_RET,                 // return from paragraph subroutine
+    IR_PERFORM_TIMES,       // loop: var_name=para, lit_name=count-var (NULL→literal), size=literal-count, lit_len=var-size
     IR_CALL_EXIT            // no args
 } IrOpcode;
 

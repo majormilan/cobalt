@@ -226,6 +226,37 @@ runtime_move_numeric:
     leave
     ret
 
+global runtime_load_int
+
+; Convert a fixed-width ASCII digit buffer to a 64-bit integer.
+; rdi = buffer pointer (NOT null-terminated, exactly rsi bytes)
+; rsi = buffer size in bytes
+; Returns: rax = integer value
+runtime_load_int:
+    push rbp
+    mov rbp, rsp
+    push r12
+    push r13
+
+    mov r12, rdi        ; r12 = buffer ptr
+    mov r13, rsi        ; r13 = size
+    xor rax, rax        ; result = 0
+    xor r8, r8          ; index = 0
+.load_loop:
+    cmp r8, r13
+    jge .load_done
+    movzx rcx, byte [r12 + r8]
+    sub cl, '0'
+    imul rax, rax, 10
+    add rax, rcx
+    inc r8
+    jmp .load_loop
+.load_done:
+    pop r13
+    pop r12
+    leave
+    ret
+
 global runtime_add_to
 
 ; Add src into dest in-place (dest += src), both as fixed-width ASCII digit buffers.

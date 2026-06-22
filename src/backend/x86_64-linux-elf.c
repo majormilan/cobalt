@@ -39,6 +39,7 @@ static char *sanitize_label_name(const char *name) {
 
 void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple target) {
     (void)target;
+    int perform_counter = 0; // unique label suffix for PERFORM TIMES loops
 
     FILE *f = fopen(filename, "w");
     if (!f) {
@@ -58,6 +59,7 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
     fprintf(f, "extern runtime_display_var_string\n"); // New
     fprintf(f, "extern runtime_accept\n");             // New
     fprintf(f, "extern runtime_add_to\n");
+    fprintf(f, "extern runtime_load_int\n");
     fprintf(f, "extern runtime_exit\n");
     fprintf(f, "\n"); // Add a single newline for readability if preferred
 
@@ -163,6 +165,40 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
                 fprintf(f, "    lea rdx, [%s]\n", sanitized_lit_name);  // src ptr
                 fprintf(f, "    mov rcx, %d\n", i->lit_len);            // src_size
                 fprintf(f, "    call runtime_add_to\n\n");
+                break;
+            case IR_LABEL:
+                fprintf(f, "\n%s:\n", sanitized_var_name);
+                break;
+            case IR_CALL_PARA:
+                fprintf(f, "    call %s\n\n", sanitized_var_name);
+                break;
+            case IR_RET:
+                fprintf(f, "    ret\n\n");
+                break;
+            case IR_PERFORM_TIMES:
+                if (!sanitized_lit_name) {
+                    // Literal count: PERFORM para N TIMES
+                    fprintf(f, "    mov rbx, %d\n", i->size);
+                    fprintf(f, ".perform_%d:\n", perform_counter);
+                    fprintf(f, "    call %s\n", sanitized_var_name);
+                    fprintf(f, "    dec rbx\n");
+                    fprintf(f, "    jnz .perform_%d\n\n", perform_counter);
+                    perform_counter++;
+                } else {
+                    // Variable count: PERFORM para var TIMES
+                    fprintf(f, "    lea rdi, [%s]\n", sanitized_lit_name);
+                    fprintf(f, "    mov rsi, %d\n", i->lit_len);
+                    fprintf(f, "    call runtime_load_int\n");
+                    fprintf(f, "    mov rbx, rax\n");
+                    fprintf(f, "    test rbx, rbx\n");
+                    fprintf(f, "    jz .perform_%d_done\n", perform_counter);
+                    fprintf(f, ".perform_%d:\n", perform_counter);
+                    fprintf(f, "    call %s\n", sanitized_var_name);
+                    fprintf(f, "    dec rbx\n");
+                    fprintf(f, "    jnz .perform_%d\n", perform_counter);
+                    fprintf(f, ".perform_%d_done:\n\n", perform_counter);
+                    perform_counter++;
+                }
                 break;
             case IR_CALL_EXIT:
                 fprintf(f, "    call runtime_exit\n");
