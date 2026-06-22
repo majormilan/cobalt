@@ -99,6 +99,7 @@ typedef enum {
     TOK_COPY,
     TOK_CONTINUE,
     TOK_TIMES,
+    TOK_REMAINDER,
 
     // Operators
     TOK_GT,

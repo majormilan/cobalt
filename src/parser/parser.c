@@ -43,6 +43,9 @@ static void synchronize() {
             case TOK_STOP:
             case TOK_MOVE:
             case TOK_ADD:
+            case TOK_SUBTRACT:
+            case TOK_MULTIPLY:
+            case TOK_DIVIDE:
             case TOK_IF:
             case TOK_PERFORM:
             case TOK_ACCEPT:
@@ -89,6 +92,28 @@ static bool is_known_ident_para(const char *s) {
            strcasecmp(s, "DATE-COMPILED") == 0 ||
            strcasecmp(s, "INSTALLATION") == 0 ||
            strcasecmp(s, "SECURITY") == 0;
+}
+
+// Build an operand AST node (identifier or number literal) and resolve/mark
+// the symbol if it is an identifier. Returns NULL on allocation failure.
+static AstNode *make_operand_node(const char *val, TokenKind kind) {
+    SourceLocation op_loc = {current_lexer->filename, tok.line, tok.column};
+    AstNode *op = ast_new(
+        kind == TOK_NUMBER ? AST_LITERAL_NUMBER : AST_IDENTIFIER,
+        val, op_loc);
+    if (kind != TOK_NUMBER) {
+        Symbol *sym = symtab_resolve_symbol(current_symtab, val);
+        if (sym) symtab_mark_symbol_as_used(sym);
+        // (forward refs are silently allowed; IR will warn if var not found)
+    }
+    return op;
+}
+
+// Append node to a singly-linked list tracked by head/tail pointers.
+static void list_append(AstNode **head, AstNode **tail, AstNode *node) {
+    if (!*head) *head = node;
+    else (*tail)->next = node;
+    *tail = node;
 }
 
 static bool is_division_start(TokenKind kind) {
@@ -466,6 +491,214 @@ static AstNode *parse_statement(bool require_period) {
 
         if (require_period) expect(TOK_PERIOD, ".");
         return add;
+    }
+    // ─── SUBTRACT ────────────────────────────────────────────────────────────
+    // Format 1: SUBTRACT src+ FROM dest+ [ROUNDED]
+    // Format 2: SUBTRACT src+ FROM operand [ROUNDED] GIVING dest+ [ROUNDED]
+    // is_numeric=false → no GIVING;  is_numeric=true → GIVING
+    // decimal_places   → number of subtrahend (source) operands
+    // children: [sub1,...,subN, from_op1,...] or [sub1,...,subN, from_op, giving1,...]
+    else if (tok.kind == TOK_SUBTRACT) {
+        next();
+        AstNode *sub_stmt = ast_new(AST_STATEMENT_SUBTRACT, NULL, loc);
+        AstNode *ops_head = NULL, *ops_tail = NULL;
+        int num_src = 0;
+
+        while (tok.kind != TOK_FROM && tok.kind != TOK_PERIOD && tok.kind != TOK_EOF
+               && tok.kind != TOK_ELSE && tok.kind != TOK_END_IF && !parser_panic_mode) {
+            if (tok.kind == TOK_IDENT || tok.kind == TOK_NUMBER) {
+                char *val = tok_to_str();
+                list_append(&ops_head, &ops_tail, make_operand_node(val, tok.kind));
+                free(val);
+                num_src++;
+            }
+            next();
+        }
+        if (parser_panic_mode) return NULL;
+        if (tok.kind != TOK_FROM) {
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                             "Expected FROM in SUBTRACT statement.");
+            synchronize(); return NULL;
+        }
+        next(); // consume FROM
+        sub_stmt->decimal_places = num_src;
+        sub_stmt->children = ops_head;
+
+        // Collect FROM targets (and optional GIVING)
+        while (tok.kind == TOK_IDENT && !parser_panic_mode) {
+            char *val = tok_to_str();
+            list_append(&ops_head, &ops_tail, make_operand_node(val, tok.kind));
+            free(val);
+            next();
+            if (tok.kind == TOK_ROUNDED) next(); // skip ROUNDED
+            if (tok.kind == TOK_GIVING) break;   // stop collecting FROM targets
+        }
+
+        if (tok.kind == TOK_GIVING) {
+            next();
+            sub_stmt->is_numeric = true;
+            while (tok.kind == TOK_IDENT && !parser_panic_mode) {
+                char *val = tok_to_str();
+                list_append(&ops_head, &ops_tail, make_operand_node(val, tok.kind));
+                free(val);
+                next();
+                if (tok.kind == TOK_ROUNDED) next();
+            }
+        }
+
+        if (require_period) expect(TOK_PERIOD, ".");
+        return sub_stmt;
+    }
+    // ─── MULTIPLY ────────────────────────────────────────────────────────────
+    // Format 1: MULTIPLY factor BY dest+ [ROUNDED]
+    // Format 2: MULTIPLY factor BY factor2 GIVING dest+ [ROUNDED]
+    // is_numeric=false → no GIVING;  is_numeric=true → GIVING
+    // decimal_places=1 always (one factor before BY)
+    // children: [factor, dest1,...] or [factor1, factor2, giving1,...]
+    else if (tok.kind == TOK_MULTIPLY) {
+        next();
+        AstNode *mul_stmt = ast_new(AST_STATEMENT_MULTIPLY, NULL, loc);
+        AstNode *ops_head = NULL, *ops_tail = NULL;
+
+        if (tok.kind != TOK_IDENT && tok.kind != TOK_NUMBER) {
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                             "Expected operand after MULTIPLY."); synchronize(); return NULL;
+        }
+        char *val = tok_to_str();
+        list_append(&ops_head, &ops_tail, make_operand_node(val, tok.kind));
+        free(val); next();
+        mul_stmt->decimal_places = 1;
+        mul_stmt->children = ops_head;
+
+        if (tok.kind != TOK_BY) {
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                             "Expected BY in MULTIPLY statement."); synchronize(); return NULL;
+        }
+        next(); // consume BY
+
+        // Collect one or more targets (no GIVING) or one factor2 + GIVING
+        while (tok.kind == TOK_IDENT || tok.kind == TOK_NUMBER) {
+            char *v = tok_to_str();
+            list_append(&ops_head, &ops_tail, make_operand_node(v, tok.kind));
+            free(v); next();
+            if (tok.kind == TOK_ROUNDED) next();
+            if (tok.kind == TOK_GIVING) break;
+        }
+        if (tok.kind == TOK_GIVING) {
+            next();
+            mul_stmt->is_numeric = true;
+            while (tok.kind == TOK_IDENT && !parser_panic_mode) {
+                char *v = tok_to_str();
+                list_append(&ops_head, &ops_tail, make_operand_node(v, tok.kind));
+                free(v); next();
+                if (tok.kind == TOK_ROUNDED) next();
+            }
+        }
+
+        if (require_period) expect(TOK_PERIOD, ".");
+        return mul_stmt;
+    }
+    // ─── DIVIDE ──────────────────────────────────────────────────────────────
+    // Format 1: DIVIDE divisor INTO dest+ [ROUNDED]
+    // Format 2: DIVIDE divisor INTO dividend GIVING dest+ [REMAINDER r]
+    // Format 3: DIVIDE dividend BY divisor GIVING dest+ [REMAINDER r]
+    // name = "INTO" or "BY"
+    // is_numeric=false → no GIVING (INTO only);  is_numeric=true → GIVING
+    // is_signed=true   → REMAINDER clause present (last child is remainder var)
+    // decimal_places=1 (INTO) or 2 (BY) — number of operands before INTO/BY
+    // children (INTO, no GIVING): [divisor, target1,...]
+    // children (INTO, GIVING):    [divisor, dividend, giving1,..., [rem]]
+    // children (BY,  GIVING):     [dividend, divisor, giving1,..., [rem]]
+    else if (tok.kind == TOK_DIVIDE) {
+        next();
+        AstNode *div_stmt = ast_new(AST_STATEMENT_DIVIDE, NULL, loc);
+        AstNode *ops_head = NULL, *ops_tail = NULL;
+
+        if (tok.kind != TOK_IDENT && tok.kind != TOK_NUMBER) {
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                             "Expected operand after DIVIDE."); synchronize(); return NULL;
+        }
+        char *val = tok_to_str();
+        list_append(&ops_head, &ops_tail, make_operand_node(val, tok.kind));
+        free(val); next();
+        div_stmt->children = ops_head;
+
+        if (tok.kind == TOK_INTO) {
+            next();
+            div_stmt->name = strdup("INTO");
+            div_stmt->decimal_places = 1; // one divisor operand
+
+            // Collect targets (no GIVING) or one dividend then GIVING
+            while ((tok.kind == TOK_IDENT || tok.kind == TOK_NUMBER) && !parser_panic_mode) {
+                char *v = tok_to_str();
+                list_append(&ops_head, &ops_tail, make_operand_node(v, tok.kind));
+                free(v); next();
+                if (tok.kind == TOK_ROUNDED) next();
+                if (tok.kind == TOK_GIVING) break;
+            }
+            if (tok.kind == TOK_GIVING) {
+                next();
+                div_stmt->is_numeric = true;
+                while (tok.kind == TOK_IDENT && !parser_panic_mode) {
+                    char *v = tok_to_str();
+                    list_append(&ops_head, &ops_tail, make_operand_node(v, tok.kind));
+                    free(v); next();
+                    if (tok.kind == TOK_ROUNDED) next();
+                    if (tok.kind == TOK_REMAINDER) break;
+                }
+                if (tok.kind == TOK_REMAINDER) {
+                    next();
+                    if (tok.kind == TOK_IDENT) {
+                        char *v = tok_to_str();
+                        list_append(&ops_head, &ops_tail, make_operand_node(v, tok.kind));
+                        free(v); next();
+                        div_stmt->is_signed = true;
+                    }
+                }
+            }
+        } else if (tok.kind == TOK_BY) {
+            next();
+            div_stmt->name = strdup("BY");
+            div_stmt->decimal_places = 2; // dividend + divisor both before GIVING
+
+            // second operand (divisor)
+            if (tok.kind != TOK_IDENT && tok.kind != TOK_NUMBER) {
+                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                                 "Expected divisor after BY."); synchronize(); return NULL;
+            }
+            char *v = tok_to_str();
+            list_append(&ops_head, &ops_tail, make_operand_node(v, tok.kind));
+            free(v); next();
+
+            if (tok.kind != TOK_GIVING) {
+                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                                 "DIVIDE ... BY requires GIVING."); synchronize(); return NULL;
+            }
+            next();
+            div_stmt->is_numeric = true;
+            while (tok.kind == TOK_IDENT && !parser_panic_mode) {
+                char *v2 = tok_to_str();
+                list_append(&ops_head, &ops_tail, make_operand_node(v2, tok.kind));
+                free(v2); next();
+                if (tok.kind == TOK_ROUNDED) next();
+                if (tok.kind == TOK_REMAINDER) break;
+            }
+            if (tok.kind == TOK_REMAINDER) {
+                next();
+                if (tok.kind == TOK_IDENT) {
+                    char *v2 = tok_to_str();
+                    list_append(&ops_head, &ops_tail, make_operand_node(v2, tok.kind));
+                    free(v2); next();
+                    div_stmt->is_signed = true;
+                }
+            }
+        } else {
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                             "Expected INTO or BY in DIVIDE statement."); synchronize(); return NULL;
+        }
+
+        if (require_period) expect(TOK_PERIOD, ".");
+        return div_stmt;
     }
     else if (tok.kind == TOK_IF) {
         next();

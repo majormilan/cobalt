@@ -55,6 +55,155 @@ static VarInfo *find_var(const char *name) {
 }
 
 static void lower_block(IrProgram *ir, AstNode *block);
+static void emit_copy_to(IrProgram *ir, VarInfo *dest, AstNode *src, const char *lit_prefix);
+static void emit_op_from_src(IrProgram *ir, IrOpcode op, VarInfo *dest, AstNode *src, const char *lit_prefix);
+
+static void lower_arith_node(IrProgram *ir, AstNode *node) {
+    // ── SUBTRACT ─────────────────────────────────────────────────────────────
+    if (node->kind == AST_STATEMENT_SUBTRACT) {
+        int n_sub = node->decimal_places;
+        bool giving = node->is_numeric;
+
+        // Build subtrahends array
+        AstNode *subs[64]; int sub_cnt = 0;
+        AstNode *child = node->children;
+        for (int i = 0; i < n_sub && child; i++, child = child->next)
+            subs[sub_cnt++] = child;
+
+        if (!giving) {
+            // SUBTRACT a b FROM x y  →  x -= a+b, y -= a+b
+            while (child) {
+                VarInfo *dest = find_var(child->name);
+                if (dest) for (int i = 0; i < sub_cnt; i++)
+                    emit_op_from_src(ir, IR_CALL_SUB_FROM, dest, subs[i], "sublit");
+                else cobalt_warn("Variable '%s' not found for SUBTRACT target", child->name);
+                child = child->next;
+            }
+        } else {
+            // SUBTRACT a b FROM x GIVING z  →  z = x - a - b
+            AstNode *from_op = child;          // one FROM operand
+            if (!from_op) return;
+            AstNode *giving_start = from_op->next;
+            while (giving_start) {
+                VarInfo *dest = find_var(giving_start->name);
+                if (dest) {
+                    emit_copy_to(ir, dest, from_op, "sublit");
+                    for (int i = 0; i < sub_cnt; i++)
+                        emit_op_from_src(ir, IR_CALL_SUB_FROM, dest, subs[i], "sublit");
+                } else cobalt_warn("Variable '%s' not found for SUBTRACT GIVING", giving_start->name);
+                giving_start = giving_start->next;
+            }
+        }
+    }
+    // ── MULTIPLY ─────────────────────────────────────────────────────────────
+    else if (node->kind == AST_STATEMENT_MULTIPLY) {
+        bool giving = node->is_numeric;
+        AstNode *factor1 = node->children;
+        if (!factor1) return;
+        AstNode *rest = factor1->next;
+
+        if (!giving) {
+            // MULTIPLY a BY x y  →  x *= a, y *= a
+            while (rest) {
+                VarInfo *dest = find_var(rest->name);
+                if (dest) emit_op_from_src(ir, IR_CALL_MUL_BY, dest, factor1, "mullit");
+                else cobalt_warn("Variable '%s' not found for MULTIPLY target", rest->name);
+                rest = rest->next;
+            }
+        } else {
+            // MULTIPLY a BY b GIVING z  →  z = a * b
+            AstNode *factor2 = rest;
+            if (!factor2) return;
+            AstNode *giving_start = factor2->next;
+            while (giving_start) {
+                VarInfo *dest = find_var(giving_start->name);
+                if (dest) {
+                    emit_copy_to(ir, dest, factor1, "mullit");
+                    emit_op_from_src(ir, IR_CALL_MUL_BY, dest, factor2, "mullit");
+                } else cobalt_warn("Variable '%s' not found for MULTIPLY GIVING", giving_start->name);
+                giving_start = giving_start->next;
+            }
+        }
+    }
+    // ── DIVIDE ───────────────────────────────────────────────────────────────
+    else if (node->kind == AST_STATEMENT_DIVIDE) {
+        bool giving   = node->is_numeric;
+        bool has_rem  = node->is_signed;
+        bool is_by    = node->name && strcasecmp(node->name, "BY") == 0;
+        AstNode *child = node->children;
+
+        if (!giving && !is_by) {
+            // DIVIDE divisor INTO target+
+            AstNode *divisor = child;
+            AstNode *tgt = divisor ? divisor->next : NULL;
+            while (tgt) {
+                VarInfo *dest = find_var(tgt->name);
+                if (dest) emit_op_from_src(ir, IR_CALL_DIV_INTO, dest, divisor, "divlit");
+                else cobalt_warn("Variable '%s' not found for DIVIDE target", tgt->name);
+                tgt = tgt->next;
+            }
+        } else if (giving && !is_by) {
+            // DIVIDE divisor INTO dividend GIVING result+ [REMAINDER r]
+            AstNode *divisor  = child;
+            AstNode *dividend = child ? child->next : NULL;
+            if (!divisor || !dividend) return;
+
+            // Giving targets: skip last child if REMAINDER
+            AstNode *giving_cur = dividend->next;
+            // Count giving nodes to know which is last (remainder)
+            int giving_total = 0;
+            for (AstNode *n = giving_cur; n; n = n->next) giving_total++;
+            int giving_count = has_rem ? giving_total - 1 : giving_total;
+
+            int gi = 0;
+            for (AstNode *gn = giving_cur; gn && gi < giving_count; gn = gn->next, gi++) {
+                VarInfo *dest = find_var(gn->name);
+                if (dest) {
+                    emit_copy_to(ir, dest, dividend, "divlit");
+                    emit_op_from_src(ir, IR_CALL_DIV_INTO, dest, divisor, "divlit");
+                }
+            }
+            if (has_rem && giving_total > 0) {
+                // Walk to last child (remainder var)
+                AstNode *rem_node = giving_cur;
+                for (int k = 0; k + 1 < giving_total; k++) rem_node = rem_node->next;
+                VarInfo *rem = find_var(rem_node->name);
+                if (rem) {
+                    emit_copy_to(ir, rem, dividend, "divlit");
+                    emit_op_from_src(ir, IR_CALL_MOD_INTO, rem, divisor, "divlit");
+                }
+            }
+        } else if (giving && is_by) {
+            // DIVIDE dividend BY divisor GIVING result+ [REMAINDER r]
+            AstNode *dividend = child;
+            AstNode *divisor  = child ? child->next : NULL;
+            if (!dividend || !divisor) return;
+
+            AstNode *giving_cur = divisor->next;
+            int giving_total = 0;
+            for (AstNode *n = giving_cur; n; n = n->next) giving_total++;
+            int giving_count = has_rem ? giving_total - 1 : giving_total;
+
+            int gi = 0;
+            for (AstNode *gn = giving_cur; gn && gi < giving_count; gn = gn->next, gi++) {
+                VarInfo *dest = find_var(gn->name);
+                if (dest) {
+                    emit_copy_to(ir, dest, dividend, "divlit");
+                    emit_op_from_src(ir, IR_CALL_DIV_INTO, dest, divisor, "divlit");
+                }
+            }
+            if (has_rem && giving_total > 0) {
+                AstNode *rem_node = giving_cur;
+                for (int k = 0; k + 1 < giving_total; k++) rem_node = rem_node->next;
+                VarInfo *rem = find_var(rem_node->name);
+                if (rem) {
+                    emit_copy_to(ir, rem, dividend, "divlit");
+                    emit_op_from_src(ir, IR_CALL_MOD_INTO, rem, divisor, "divlit");
+                }
+            }
+        }
+    }
+}
 
 static void lower_node(IrProgram *ir, AstNode *node) {
     if (!node) return;
@@ -251,6 +400,10 @@ static void lower_node(IrProgram *ir, AstNode *node) {
                 }
             }
         }
+    } else if (node->kind == AST_STATEMENT_SUBTRACT ||
+               node->kind == AST_STATEMENT_MULTIPLY ||
+               node->kind == AST_STATEMENT_DIVIDE) {
+        lower_arith_node(ir, node);
     } else if (node->kind == AST_STATEMENT_STOP) {
         append_instr(ir, new_instr(IR_CALL_EXIT, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
     } else if (node->kind == AST_STATEMENT_ACCEPT) {
@@ -258,12 +411,75 @@ static void lower_node(IrProgram *ir, AstNode *node) {
         if (var_node && var_node->kind == AST_IDENTIFIER) {
             VarInfo *v = find_var(var_node->name);
             if (v) {
-                append_instr(ir, new_instr(IR_CALL_ACCEPT, v->name, NULL, NULL, 0, v->size, v->decimal_places, 0, v->usage_type));
+                char pad = v->is_numeric ? '0' : ' ';
+                append_instr(ir, new_instr(IR_CALL_ACCEPT, v->name, NULL, NULL, 0, v->size, v->decimal_places, pad, v->usage_type));
             } else {
                 cobalt_warn("Variable '%s' not found for ACCEPT", var_node->name);
             }
         } else {
             cobalt_warn("ACCEPT statement requires a variable", NULL);
+        }
+    }
+}
+
+// ── Arithmetic helpers ────────────────────────────────────────────────────────
+
+// Emit `IR_DATA_LIT` for a literal operand and return the label name (caller
+// must free). Returns NULL for identifier operands (use src->name directly).
+static char *emit_arith_src_lit(IrProgram *ir, AstNode *src, const char *prefix) {
+    if (src->kind != AST_LITERAL_NUMBER) return NULL;
+    char *lname = malloc(48);
+    sprintf(lname, "%s_%d", prefix, lit_counter++);
+    const char *content = src->name ? src->name : "0";
+    append_instr(ir, new_instr(IR_DATA_LIT, NULL, lname, content,
+                               (int)strlen(content), 0, 0, 0, USAGE_DISPLAY));
+    return lname; // caller frees
+}
+
+// Zero a dest variable, then copy src into it: dest = src.
+static void emit_copy_to(IrProgram *ir, VarInfo *dest, AstNode *src, const char *lit_prefix) {
+    append_instr(ir, new_instr(IR_CALL_MOVE_FILL, dest->name, NULL, NULL,
+                               0, dest->size, dest->decimal_places, '0', dest->usage_type));
+    if (src->kind == AST_IDENTIFIER) {
+        VarInfo *sv = find_var(src->name);
+        if (!sv) { cobalt_warn("Variable '%s' not found", src->name); return; }
+        append_instr(ir, new_instr(IR_CALL_ADD_TO, dest->name, sv->name,
+                                   NULL, sv->size, dest->size,
+                                   dest->decimal_places, 0, dest->usage_type));
+    } else {
+        char *lname = emit_arith_src_lit(ir, src, lit_prefix);
+        if (lname) {
+            append_instr(ir, new_instr(IR_CALL_ADD_TO, dest->name, lname,
+                                       NULL, (int)strlen(src->name ? src->name : "0"),
+                                       dest->size, dest->decimal_places, 0, dest->usage_type));
+            free(lname);
+        }
+    }
+}
+
+// Emit an in-place arithmetic op (ADD_TO/SUB_FROM/MUL_BY/DIV_INTO/MOD_INTO)
+// of dest op src. src can be a VarInfo name (src_var != NULL) or a literal
+// label (lit_name != NULL, lit_len = length).
+static void emit_inplace(IrProgram *ir, IrOpcode op, VarInfo *dest,
+                         const char *src_name, int src_size) {
+    append_instr(ir, new_instr(op, dest->name, src_name, NULL,
+                               src_size, dest->size,
+                               dest->decimal_places, 0, dest->usage_type));
+}
+
+// Apply `op` (SUB_FROM/MUL_BY/DIV_INTO/MOD_INTO) to dest using an AST source.
+static void emit_op_from_src(IrProgram *ir, IrOpcode op, VarInfo *dest,
+                              AstNode *src, const char *lit_prefix) {
+    if (src->kind == AST_IDENTIFIER) {
+        VarInfo *sv = find_var(src->name);
+        if (!sv) { cobalt_warn("Variable '%s' not found", src->name); return; }
+        emit_inplace(ir, op, dest, sv->name, sv->size);
+    } else {
+        char *lname = emit_arith_src_lit(ir, src, lit_prefix);
+        if (lname) {
+            emit_inplace(ir, op, dest, lname,
+                         (int)strlen(src->name ? src->name : "0"));
+            free(lname);
         }
     }
 }

@@ -342,6 +342,325 @@ runtime_add_to:
     leave
     ret
 
+; ── runtime_sub_from ──────────────────────────────────────────────────────────
+; dest -= src  (same signature as runtime_add_to)
+global runtime_sub_from
+runtime_sub_from:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov r12, rdi        ; r12 = dest ptr
+    mov r13, rsi        ; r13 = dest_size
+    mov r14, rdx        ; r14 = src ptr
+    mov r15, rcx        ; r15 = src_size
+
+    ; src → rbx
+    xor rbx, rbx
+    xor r8, r8
+.sub_src_loop:
+    cmp r8, r15
+    jge .sub_src_done
+    movzx rax, byte [r14 + r8]
+    sub al, '0'
+    imul rbx, rbx, 10
+    add rbx, rax
+    inc r8
+    jmp .sub_src_loop
+.sub_src_done:
+
+    ; dest → r9
+    xor r9, r9
+    xor r8, r8
+.sub_dst_loop:
+    cmp r8, r13
+    jge .sub_dst_done
+    movzx rax, byte [r12 + r8]
+    sub al, '0'
+    imul r9, r9, 10
+    add r9, rax
+    inc r8
+    jmp .sub_dst_loop
+.sub_dst_done:
+
+    ; result = dest - src (clamp to 0 if negative — unsigned semantics)
+    sub r9, rbx
+    jge .sub_pos
+    xor r9, r9
+.sub_pos:
+
+    ; write back
+    mov rdi, r12
+    mov al, '0'
+    mov rcx, r13
+    cld
+    rep stosb
+    mov rbx, r13
+    mov rax, r9
+    test rax, rax
+    jz .sub_store_done
+.sub_dig_loop:
+    dec rbx
+    xor rdx, rdx
+    mov rcx, 10
+    div rcx
+    add dl, '0'
+    mov [r12 + rbx], dl
+    test rax, rax
+    jz .sub_store_done
+    test rbx, rbx
+    jnz .sub_dig_loop
+.sub_store_done:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    leave
+    ret
+
+; ── runtime_mul_by ────────────────────────────────────────────────────────────
+; dest *= src  (same signature)
+global runtime_mul_by
+runtime_mul_by:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    mov r15, rcx
+
+    xor rbx, rbx
+    xor r8, r8
+.mul_src_loop:
+    cmp r8, r15
+    jge .mul_src_done
+    movzx rax, byte [r14 + r8]
+    sub al, '0'
+    imul rbx, rbx, 10
+    add rbx, rax
+    inc r8
+    jmp .mul_src_loop
+.mul_src_done:
+
+    xor r9, r9
+    xor r8, r8
+.mul_dst_loop:
+    cmp r8, r13
+    jge .mul_dst_done
+    movzx rax, byte [r12 + r8]
+    sub al, '0'
+    imul r9, r9, 10
+    add r9, rax
+    inc r8
+    jmp .mul_dst_loop
+.mul_dst_done:
+
+    imul r9, rbx            ; r9 = dest * src (overflow silently truncated)
+
+    mov rdi, r12
+    mov al, '0'
+    mov rcx, r13
+    cld
+    rep stosb
+    mov rbx, r13
+    mov rax, r9
+    test rax, rax
+    jz .mul_store_done
+.mul_dig_loop:
+    dec rbx
+    xor rdx, rdx
+    mov rcx, 10
+    div rcx
+    add dl, '0'
+    mov [r12 + rbx], dl
+    test rax, rax
+    jz .mul_store_done
+    test rbx, rbx
+    jnz .mul_dig_loop
+.mul_store_done:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    leave
+    ret
+
+; ── runtime_div_into ──────────────────────────────────────────────────────────
+; dest /= src  (integer division; dest unchanged if src == 0)
+global runtime_div_into
+runtime_div_into:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    mov r15, rcx
+
+    xor rbx, rbx
+    xor r8, r8
+.div_src_loop:
+    cmp r8, r15
+    jge .div_src_done
+    movzx rax, byte [r14 + r8]
+    sub al, '0'
+    imul rbx, rbx, 10
+    add rbx, rax
+    inc r8
+    jmp .div_src_loop
+.div_src_done:
+    test rbx, rbx
+    jz .div_done            ; division by zero: leave dest unchanged
+
+    xor r9, r9
+    xor r8, r8
+.div_dst_loop:
+    cmp r8, r13
+    jge .div_dst_done
+    movzx rax, byte [r12 + r8]
+    sub al, '0'
+    imul r9, r9, 10
+    add r9, rax
+    inc r8
+    jmp .div_dst_loop
+.div_dst_done:
+
+    mov rax, r9
+    xor rdx, rdx
+    div rbx                 ; rax = quotient, rdx = remainder
+    mov r9, rax             ; save quotient NOW before al is clobbered
+
+    mov rdi, r12
+    mov al, '0'
+    mov rcx, r13
+    cld
+    rep stosb
+    mov rbx, r13
+    test r9, r9
+    jz .div_store_done
+.div_dig_loop:
+    dec rbx
+    mov rax, r9
+    xor rdx, rdx
+    mov rcx, 10
+    div rcx
+    mov r9, rax
+    add dl, '0'
+    mov [r12 + rbx], dl
+    test r9, r9
+    jz .div_store_done
+    test rbx, rbx
+    jnz .div_dig_loop
+.div_store_done:
+.div_done:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    leave
+    ret
+
+; ── runtime_mod_into ──────────────────────────────────────────────────────────
+; dest %= src  (remainder; dest unchanged if src == 0)
+global runtime_mod_into
+runtime_mod_into:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov r12, rdi
+    mov r13, rsi
+    mov r14, rdx
+    mov r15, rcx
+
+    xor rbx, rbx
+    xor r8, r8
+.mod_src_loop:
+    cmp r8, r15
+    jge .mod_src_done
+    movzx rax, byte [r14 + r8]
+    sub al, '0'
+    imul rbx, rbx, 10
+    add rbx, rax
+    inc r8
+    jmp .mod_src_loop
+.mod_src_done:
+    test rbx, rbx
+    jz .mod_done
+
+    xor r9, r9
+    xor r8, r8
+.mod_dst_loop:
+    cmp r8, r13
+    jge .mod_dst_done
+    movzx rax, byte [r12 + r8]
+    sub al, '0'
+    imul r9, r9, 10
+    add r9, rax
+    inc r8
+    jmp .mod_dst_loop
+.mod_dst_done:
+
+    mov rax, r9
+    xor rdx, rdx
+    div rbx                 ; rdx = remainder
+
+    ; Store the remainder value in r9 for digit extraction
+    mov r9, rdx
+
+    mov rdi, r12
+    mov al, '0'
+    mov rcx, r13
+    cld
+    rep stosb
+    mov rbx, r13
+    test r9, r9
+    jz .mod_store_done
+.mod_dig_loop:
+    dec rbx
+    mov rax, r9
+    xor rdx, rdx
+    mov rcx, 10
+    div rcx
+    mov r9, rax             ; r9 = quotient
+    add dl, '0'
+    mov [r12 + rbx], dl
+    test r9, r9
+    jz .mod_store_done
+    test rbx, rbx
+    jnz .mod_dig_loop
+.mod_store_done:
+.mod_done:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    leave
+    ret
+
 runtime_exit:
     mov rax, 60
     xor rdi, rdi
@@ -419,71 +738,104 @@ runtime_move_fill:
 
 global runtime_accept
 
+; Read one line from stdin into dest_var, padding to field size.
+; Reads one byte at a time so it never consumes bytes beyond the \n.
+; Skips \r to handle Windows-style line endings gracefully.
+; If the user types more than 'size' characters, excess chars are discarded
+; until \n is reached.
+;
 ; rdi = dest_var (pointer)
-; rsi = size
-; rdx = decimal_places
-; rcx = usage_type
+; rsi = size     (field size in bytes)
+; rdx = decimal_places (unused for reading)
+; rcx = usage_type     (unused for reading)
+; r8  = pad_char ('0' for numeric fields, ' ' for alphanumeric)
 runtime_accept:
     push rbp
     mov rbp, rsp
-    ; Save incoming arguments onto the stack
-    push rdi                            ; [rbp-8] = dest_var
-    push rsi                            ; [rbp-16] = size
-    push rdx                            ; [rbp-24] = decimal_places
-    push rcx                            ; [rbp-32] = usage_type
+    sub rsp, 8          ; [rbp-8] = 1-byte scratch for single-byte reads (+7 bytes padding for alignment)
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
 
-    ; Read from stdin (fd 0)
-    mov rax, 0                          ; sys_read
-    mov rdi, 0                          ; stdin
-    mov rsi, [rbp-8]                    ; dest_var (from stack)
-    mov rdx, [rbp-16]                   ; size (from stack)
+    mov r12, rdi        ; r12 = dest_var
+    mov r13, rsi        ; r13 = field size
+    mov r14b, r8b       ; r14b = pad_char
+    xor r15, r15        ; r15 = bytes stored so far
+
+.read_loop:
+    mov rax, 0          ; sys_read
+    mov rdi, 0          ; stdin
+    lea rsi, [rbp-8]    ; scratch byte
+    mov rdx, 1
     syscall
 
-    ; After sys_read, rax contains number of bytes read
-    ; For simplicity, we assume the user presses ENTER, so we need to
-    ; null-terminate the input or strip the newline.
-    ; For ACCEPT, COBOL typically doesn't expect null termination, but fills exactly 'size' chars.
-    ; Any remaining space in 'dest_var' should probably be padded.
-    ; We need to handle this padding in a more sophisticated runtime.
-    ; For now, let's just make sure it reads up to size, and potentially pads if less is read.
+    test rax, rax
+    jle .pad_remaining  ; EOF or error: stop reading
 
-    ; Let rbx = actual bytes read (from rax)
-    ; Let r10 = original size
-    ; Let r11 = dest_var
-    mov rbx, rax                        ; rbx = bytes read
-    mov r10, [rbp-16]                   ; r10 = original size
-    mov r11, [rbp-8]                    ; r11 = dest_var
+    movzx rbx, byte [rbp-8]
 
-    ; If actual bytes read is less than size, fill the rest with spaces (alphanumeric) or zeros (numeric)
-    cmp rbx, r10
-    jge .no_padding                     ; If read >= size, no padding needed
+    cmp bl, 10          ; \n
+    je .pad_remaining
 
-    ; Determine pad character based on usage_type
-    mov r12d, [rbp-32]                  ; r12 = usage_type
-    cmp r12d, 1                         ; USAGE_COMP (1)
-    je .pad_zeros                       ; If COMP, pad with '0'
-    mov al, ' '                         ; Else (DISPLAY), pad with ' '
-    jmp .do_padding
-.pad_zeros:
+    cmp bl, 13          ; \r — skip (handle Windows/mixed line endings)
+    je .read_loop
+
+    cmp r15, r13        ; field already full?
+    jge .read_loop      ; discard extra chars, keep draining until \n
+
+    mov [r12 + r15], bl
+    inc r15
+    jmp .read_loop
+
+.pad_remaining:
+    ; Numeric fields: right-align input, pad left with '0'
+    ; Alphanumeric: left-align, pad right with ' '
+    cmp r14b, '0'
+    je .right_align_numeric
+
+    ; Alphanumeric path: pad [r15..r13) with ' '
+    cmp r15, r13
+    jge .accept_done
+    lea rdi, [r12 + r15]
+    mov al, ' '
+    mov rcx, r13
+    sub rcx, r15
+    cld
+    rep stosb
+    jmp .accept_done
+
+.right_align_numeric:
+    cmp r15, r13
+    jge .accept_done        ; field exactly filled, already in place
+    ; Shift bytes [r12 .. r12+r15) right to [r12+r13-r15 .. r12+r13)
+    ; Use backward copy (std) to handle overlap safely.
+    ; dst last byte = r12 + r13 - 1
+    ; src last byte = r12 + r15 - 1
+    mov rdi, r12
+    add rdi, r13
+    dec rdi
+    mov rsi, r12
+    add rsi, r15
+    dec rsi
+    mov rcx, r15
+    std
+    rep movsb
+    cld
+    ; Fill [r12 .. r12+r13-r15) with '0'
+    mov rdi, r12
     mov al, '0'
-.do_padding:
-    mov rdi, r11                        ; dest_var
-    add rdi, rbx                        ; start padding after bytes read
-    mov rcx, r10                        ; total size
-    sub rcx, rbx                        ; remaining size to pad
-    cld                                 ; clear direction flag
-    rep stosb                           ; fill remaining with pad char
+    mov rcx, r13
+    sub rcx, r15
+    rep stosb
 
-.no_padding:
-    ; For numeric ACCEPT, COBOL might convert string digits to internal format (e.g., COMP).
-    ; For now, we assume direct character input for DISPLAY and raw bytes for COMP.
-    ; This conversion logic will be handled later.
-
-    ; Restore registers and clean stack
-    pop rcx                             ; restore rcx (usage_type)
-    pop rdx                             ; restore rdx (decimal_places)
-    pop rsi                             ; restore rsi (size)
-    pop rdi                             ; restore rdi (dest_var)
+.accept_done:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
     leave
     ret
 

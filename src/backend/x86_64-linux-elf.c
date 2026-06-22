@@ -59,6 +59,10 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
     fprintf(f, "extern runtime_display_var_string\n"); // New
     fprintf(f, "extern runtime_accept\n");             // New
     fprintf(f, "extern runtime_add_to\n");
+    fprintf(f, "extern runtime_sub_from\n");
+    fprintf(f, "extern runtime_mul_by\n");
+    fprintf(f, "extern runtime_div_into\n");
+    fprintf(f, "extern runtime_mod_into\n");
     fprintf(f, "extern runtime_load_int\n");
     fprintf(f, "extern runtime_exit\n");
     fprintf(f, "\n"); // Add a single newline for readability if preferred
@@ -152,19 +156,48 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
                 fprintf(f, "    mov rcx, %d\n", i->usage_type); // usage_type
                 fprintf(f, "    call runtime_move_fill\n\n");
                 break;
-            case IR_CALL_ACCEPT: // New
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name); // var_name
+            case IR_CALL_ACCEPT:
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name); // dest_var
                 fprintf(f, "    mov rsi, %d\n", i->size);               // size
                 fprintf(f, "    mov rdx, %d\n", i->decimal_places);     // decimal_places
                 fprintf(f, "    mov rcx, %d\n", i->usage_type);         // usage_type
+                fprintf(f, "    mov r8, %d\n", (int)(unsigned char)i->pad_char); // pad_char
                 fprintf(f, "    call runtime_accept\n");
                 break;
             case IR_CALL_ADD_TO:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);  // dest ptr
-                fprintf(f, "    mov rsi, %d\n", i->size);               // dest_size
-                fprintf(f, "    lea rdx, [%s]\n", sanitized_lit_name);  // src ptr
-                fprintf(f, "    mov rcx, %d\n", i->lit_len);            // src_size
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
+                fprintf(f, "    mov rsi, %d\n", i->size);
+                fprintf(f, "    lea rdx, [%s]\n", sanitized_lit_name);
+                fprintf(f, "    mov rcx, %d\n", i->lit_len);
                 fprintf(f, "    call runtime_add_to\n\n");
+                break;
+            case IR_CALL_SUB_FROM:
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
+                fprintf(f, "    mov rsi, %d\n", i->size);
+                fprintf(f, "    lea rdx, [%s]\n", sanitized_lit_name);
+                fprintf(f, "    mov rcx, %d\n", i->lit_len);
+                fprintf(f, "    call runtime_sub_from\n\n");
+                break;
+            case IR_CALL_MUL_BY:
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
+                fprintf(f, "    mov rsi, %d\n", i->size);
+                fprintf(f, "    lea rdx, [%s]\n", sanitized_lit_name);
+                fprintf(f, "    mov rcx, %d\n", i->lit_len);
+                fprintf(f, "    call runtime_mul_by\n\n");
+                break;
+            case IR_CALL_DIV_INTO:
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
+                fprintf(f, "    mov rsi, %d\n", i->size);
+                fprintf(f, "    lea rdx, [%s]\n", sanitized_lit_name);
+                fprintf(f, "    mov rcx, %d\n", i->lit_len);
+                fprintf(f, "    call runtime_div_into\n\n");
+                break;
+            case IR_CALL_MOD_INTO:
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
+                fprintf(f, "    mov rsi, %d\n", i->size);
+                fprintf(f, "    lea rdx, [%s]\n", sanitized_lit_name);
+                fprintf(f, "    mov rcx, %d\n", i->lit_len);
+                fprintf(f, "    call runtime_mod_into\n\n");
                 break;
             case IR_LABEL:
                 fprintf(f, "\n%s:\n", sanitized_var_name);
