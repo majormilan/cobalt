@@ -19,6 +19,7 @@ typedef enum {
     IR_CALL_DISPLAY_FILL,   // pad_char, size, decimal_places, usage_type
     IR_CALL_MOVE_FILL,      // dest_var, fill_char, size, usage_type
     IR_CALL_ACCEPT,         // dest_var, size, decimal_places, usage_type
+    IR_CALL_ADD_TO,         // dest_var += src; var_name=dest, lit_name=src label, size=dest_size, lit_len=src_size
     IR_CALL_EXIT            // no args
 } IrOpcode;
 

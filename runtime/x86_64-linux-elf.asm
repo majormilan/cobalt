@@ -226,6 +226,91 @@ runtime_move_numeric:
     leave
     ret
 
+global runtime_add_to
+
+; Add src into dest in-place (dest += src), both as fixed-width ASCII digit buffers.
+; rdi = dest_ptr  (ASCII digits, dest_size bytes, NOT null-terminated)
+; rsi = dest_size
+; rdx = src_ptr   (ASCII digits, src_size bytes, NOT null-terminated)
+; rcx = src_size
+runtime_add_to:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov r12, rdi        ; r12 = dest ptr
+    mov r13, rsi        ; r13 = dest_size
+    mov r14, rdx        ; r14 = src ptr
+    mov r15, rcx        ; r15 = src_size
+
+    ; Convert src ASCII -> integer in rbx
+    xor rbx, rbx
+    xor r8, r8
+.src_to_int:
+    cmp r8, r15
+    jge .src_int_done
+    movzx rax, byte [r14 + r8]
+    sub al, '0'
+    imul rbx, rbx, 10
+    add rbx, rax
+    inc r8
+    jmp .src_to_int
+.src_int_done:
+
+    ; Convert dest ASCII -> integer in r9
+    xor r9, r9
+    xor r8, r8
+.dst_to_int:
+    cmp r8, r13
+    jge .dst_int_done
+    movzx rax, byte [r12 + r8]
+    sub al, '0'
+    imul r9, r9, 10
+    add r9, rax
+    inc r8
+    jmp .dst_to_int
+.dst_int_done:
+
+    ; sum = dest + src
+    add r9, rbx
+
+    ; Fill dest with '0'  (rdi and rcx are caller-saved, OK to clobber)
+    mov rdi, r12
+    mov al, '0'
+    mov rcx, r13
+    cld
+    rep stosb
+
+    ; Write sum back as ASCII right-aligned in dest (r9 = sum, r12 = dest, r13 = size)
+    mov rbx, r13        ; rbx = position, starts at dest_size and goes left
+    mov rax, r9
+    test rax, rax
+    jz .store_done      ; zero -> dest already filled with '0'
+.digits_loop:
+    dec rbx
+    xor rdx, rdx
+    mov rcx, 10
+    div rcx             ; rax = quotient, rdx = remainder digit
+    add dl, '0'
+    mov [r12 + rbx], dl
+    test rax, rax
+    jz .store_done
+    test rbx, rbx
+    jnz .digits_loop    ; if rbx == 0 and rax != 0, overflow: truncate silently
+.store_done:
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    leave
+    ret
+
 runtime_exit:
     mov rax, 60
     xor rdi, rdi

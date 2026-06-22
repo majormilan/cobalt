@@ -132,6 +132,68 @@ static void lower_node(IrProgram *ir, AstNode *node) {
                 append_instr(ir, new_instr(IR_CALL_MOVE_FILL, dest->name, NULL, NULL, 0, v->size, v->decimal_places, fill_char, v->usage_type));
             }
         }
+    } else if (node->kind == AST_STATEMENT_ADD) {
+        // is_numeric encodes form: false = TO (dest += sources), true = GIVING (dest = sum of sources)
+        bool is_giving = node->is_numeric;
+        int num_sources = node->decimal_places;
+
+        // Split children into sources (first num_sources) and targets (the rest)
+        AstNode *sources[64];
+        int src_count = 0;
+        AstNode *child = node->children;
+        for (int si = 0; si < num_sources && child; si++, child = child->next)
+            sources[src_count++] = child;
+
+        AstNode *targets[64];
+        int tgt_count = 0;
+        while (child && tgt_count < 64) {
+            targets[tgt_count++] = child;
+            child = child->next;
+        }
+
+        for (int ti = 0; ti < tgt_count; ti++) {
+            AstNode *tgt = targets[ti];
+            if (tgt->kind != AST_IDENTIFIER) continue;
+            VarInfo *dest_var = find_var(tgt->name);
+            if (!dest_var) {
+                cobalt_warn("Variable '%s' not found for ADD target", tgt->name);
+                continue;
+            }
+
+            // GIVING form: zero out destination before adding
+            if (is_giving) {
+                append_instr(ir, new_instr(IR_CALL_MOVE_FILL, dest_var->name, NULL, NULL,
+                                           0, dest_var->size, dest_var->decimal_places,
+                                           '0', dest_var->usage_type));
+            }
+
+            // Add each source into the destination
+            for (int si = 0; si < src_count; si++) {
+                AstNode *src = sources[si];
+                if (src->kind == AST_IDENTIFIER) {
+                    VarInfo *src_var = find_var(src->name);
+                    if (!src_var) {
+                        cobalt_warn("Variable '%s' not found for ADD source", src->name);
+                        continue;
+                    }
+                    append_instr(ir, new_instr(IR_CALL_ADD_TO,
+                                               dest_var->name, src_var->name,
+                                               NULL, src_var->size, dest_var->size,
+                                               dest_var->decimal_places, 0, dest_var->usage_type));
+                } else if (src->kind == AST_LITERAL_NUMBER) {
+                    char lit_name_buf[32];
+                    sprintf(lit_name_buf, "addlit_%d", lit_counter++);
+                    const char *content = src->name ? src->name : "0";
+                    int len = (int)strlen(content);
+                    append_instr(ir, new_instr(IR_DATA_LIT, NULL, lit_name_buf, content,
+                                               len, 0, 0, 0, USAGE_DISPLAY));
+                    append_instr(ir, new_instr(IR_CALL_ADD_TO,
+                                               dest_var->name, lit_name_buf,
+                                               NULL, len, dest_var->size,
+                                               dest_var->decimal_places, 0, dest_var->usage_type));
+                }
+            }
+        }
     } else if (node->kind == AST_STATEMENT_STOP) {
         append_instr(ir, new_instr(IR_CALL_EXIT, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
     } else if (node->kind == AST_STATEMENT_ACCEPT) {
@@ -196,7 +258,7 @@ IrProgram *lower_to_ir(AstNode *program) {
 
                             // Find VALUE clause
                             AstNode *val_node = decl->children;
-                            while(val_node && val_node->kind != AST_STRING_LITERAL && val_node->kind != AST_LITERAL_NUMBER && val_node->kind != AST_IDENTIFIER) {
+                            while(val_node && val_node->kind != AST_STRING_LITERAL && val_node->kind != AST_LITERAL_NUMBER && val_node->kind != AST_IDENTIFIER && val_node->kind != AST_FIGURATIVE_CONSTANT) {
                                 val_node = val_node->next;
                             }
 
@@ -263,7 +325,8 @@ IrProgram *lower_to_ir(AstNode *program) {
             free(v->init_content);
             v->init_content = NULL;
         } else if (v->pad_char) {
-            // No IR instruction to emit for just padding, backend will handle by default
+            append_instr(ir, new_instr(IR_CALL_MOVE_FILL, v->name, NULL, NULL,
+                                       0, v->size, v->decimal_places, v->pad_char, v->usage_type));
         }
     }
 

@@ -77,7 +77,10 @@ Token lexer_cobol85_keyword_or_ident(Lexer *l, const char *start, size_t len) {
     KW("YYYYMMDD",        TOK_YYYYMMDD);
     KW("YYDDD",           TOK_YYDDD);
     KW("ZEROS",           TOK_ZEROS);
+    KW("ZERO",            TOK_ZEROS);
+    KW("ZEROES",          TOK_ZEROS);
     KW("SPACES",          TOK_SPACES);
+    KW("SPACE",           TOK_SPACES);
     KW("COPY",            TOK_COPY); // Add COPY keyword
     #undef KW
 

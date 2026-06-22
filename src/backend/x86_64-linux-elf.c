@@ -57,6 +57,7 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
     fprintf(f, "extern runtime_move_fill\n");    // New
     fprintf(f, "extern runtime_display_var_string\n"); // New
     fprintf(f, "extern runtime_accept\n");             // New
+    fprintf(f, "extern runtime_add_to\n");
     fprintf(f, "extern runtime_exit\n");
     fprintf(f, "\n"); // Add a single newline for readability if preferred
 
@@ -155,6 +156,13 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
                 fprintf(f, "    mov rdx, %d\n", i->decimal_places);     // decimal_places
                 fprintf(f, "    mov rcx, %d\n", i->usage_type);         // usage_type
                 fprintf(f, "    call runtime_accept\n");
+                break;
+            case IR_CALL_ADD_TO:
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);  // dest ptr
+                fprintf(f, "    mov rsi, %d\n", i->size);               // dest_size
+                fprintf(f, "    lea rdx, [%s]\n", sanitized_lit_name);  // src ptr
+                fprintf(f, "    mov rcx, %d\n", i->lit_len);            // src_size
+                fprintf(f, "    call runtime_add_to\n\n");
                 break;
             case IR_CALL_EXIT:
                 fprintf(f, "    call runtime_exit\n");

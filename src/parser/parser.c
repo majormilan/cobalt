@@ -385,9 +385,11 @@ static AstNode *parse_statement(bool require_period) {
         next();
         AstNode *add = ast_new(AST_STATEMENT_ADD, NULL, loc);
 
-        AstNode *sources = NULL;
-        AstNode *last_src = NULL;
+        AstNode *ops_head = NULL;
+        AstNode *ops_tail = NULL;
+        int num_sources = 0;
 
+        // Collect source operands (before TO or GIVING)
         while (tok.kind != TOK_TO && tok.kind != TOK_GIVING && tok.kind != TOK_PERIOD && tok.kind != TOK_EOF &&
                tok.kind != TOK_ELSE && tok.kind != TOK_END_IF && !parser_panic_mode) {
             if (tok.kind == TOK_IDENT || tok.kind == TOK_NUMBER) {
@@ -402,66 +404,60 @@ static AstNode *parse_statement(bool require_period) {
                         cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", val);
                     } else {
                         symtab_mark_symbol_as_used(resolved_sym);
-                        // op->symbol = resolved_sym;
                     }
                 }
                 free(val);
-                if (!sources) sources = op;
-                else last_src->next = op;
-                last_src = op;
+                if (!ops_head) ops_head = op;
+                else ops_tail->next = op;
+                ops_tail = op;
+                num_sources++;
             }
             next();
         }
         if (parser_panic_mode) return NULL;
 
-        add->children = sources;
-
+        // is_numeric encodes the form: false = TO, true = GIVING
         if (tok.kind == TOK_TO) {
-            next();
-            AstNode *dest = NULL;
-            if (tok.kind == TOK_IDENT) {
-                char *val = tok_to_str();
-                dest = ast_new(AST_IDENTIFIER, val, (SourceLocation){current_lexer->filename, tok.line, tok.column}); // Re-allocate for AST node
-                // Resolve and mark TO target as used
-                Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, val);
-                if (!resolved_sym) {
-                    cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", val);
-                } else {
-                    symtab_mark_symbol_as_used(resolved_sym);
-                    // dest->symbol = resolved_sym;
-                }
-                free(val);
-                next();
+            add->is_numeric = false;
+        } else if (tok.kind == TOK_GIVING) {
+            add->is_numeric = true;
+        } else {
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                             "Expected TO or GIVING in ADD statement.");
+            synchronize();
+            return NULL;
+        }
+        // decimal_places stores the number of source operands
+        add->decimal_places = num_sources;
+        add->children = ops_head;
+        next(); // consume TO or GIVING
+
+        // Collect one or more target identifiers
+        bool found_target = false;
+        while (tok.kind == TOK_IDENT && !parser_panic_mode) {
+            char *val = tok_to_str();
+            AstNode *tgt = ast_new(AST_IDENTIFIER, val,
+                                   (SourceLocation){current_lexer->filename, tok.line, tok.column});
+            Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, val);
+            if (!resolved_sym) {
+                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                                 "Undeclared identifier '%s'.", val);
             } else {
-                synchronize(); // Missing target for ADD TO
-                return NULL;
+                symtab_mark_symbol_as_used(resolved_sym);
             }
-            if (last_src) last_src->next = dest;
-            else if (sources) sources->next = dest;
-            last_src = dest;
+            free(val);
+            if (!ops_head) { ops_head = ops_tail = tgt; add->children = ops_head; }
+            else { ops_tail->next = tgt; ops_tail = tgt; }
+            found_target = true;
+            next();
+            if (tok.kind == TOK_ROUNDED) next(); // consume ROUNDED (not yet implemented)
         }
 
-        if (tok.kind == TOK_GIVING) {
-            next();
-            AstNode *giving = NULL;
-            if (tok.kind == TOK_IDENT) {
-                char *val = tok_to_str();
-                giving = ast_new(AST_IDENTIFIER, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
-                // Resolve and mark GIVING target as used
-                Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, val);
-                if (!resolved_sym) {
-                    cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", val);
-                } else {
-                    symtab_mark_symbol_as_used(resolved_sym);
-                    // giving->symbol = resolved_sym;
-                }
-                free(val);
-                next();
-            } else {
-                synchronize(); // Missing target for ADD GIVING
-                return NULL;
-            }
-            if (last_src) last_src->next = giving;
+        if (!found_target) {
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                             "Expected at least one target identifier in ADD statement.");
+            synchronize();
+            return NULL;
         }
 
         if (require_period) expect(TOK_PERIOD, ".");
