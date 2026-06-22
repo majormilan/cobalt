@@ -96,7 +96,8 @@ typedef enum {
     TOK_YYDDD,
     TOK_ZEROS,
     TOK_SPACES,
-    TOK_COPY, // Add TOK_COPY for the COPY command
+    TOK_COPY,
+    TOK_CONTINUE,
 
     // Operators
     TOK_GT,

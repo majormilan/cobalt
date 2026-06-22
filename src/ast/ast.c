@@ -60,6 +60,7 @@ void ast_dump(AstNode *node, FILE *out, int indent) {
         case AST_STATEMENT_IF:              kind_name = "IF"; break;
         case AST_STATEMENT_PERFORM:         kind_name = "PERFORM"; break;
         case AST_STATEMENT_ACCEPT:          kind_name = "ACCEPT"; break;
+        case AST_STATEMENT_CONTINUE:        kind_name = "CONTINUE"; break;
         case AST_IDENTIFICATION_PARAGRAPH:  kind_name = "ID-PARAGRAPH"; break;
         case AST_CONDITION:                 kind_name = "CONDITION"; break;
         case AST_PIC_CLAUSE:                kind_name = "PIC"; break;

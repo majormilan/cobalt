@@ -2,6 +2,7 @@
 
 CC = gcc
 CFLAGS = -Wall -Wextra -g -Iinclude  # Debug build; add -O2 for release
+DEPFLAGS = -MMD -MP                    # Auto-generate .d dependency files
 LDFLAGS =  # Add libs later, e.g., -lm
 
 SRCDIR = src
@@ -11,6 +12,7 @@ OBJDIR = obj
 # Find all .c files
 SOURCES = $(shell find $(SRCDIR) -name '*.c')
 OBJECTS = $(SOURCES:$(SRCDIR)/%.c=$(OBJDIR)/%.o)
+DEPS    = $(OBJECTS:.o=.d)
 
 EXEC = $(BINDIR)/cobalt
 
@@ -21,7 +23,10 @@ $(EXEC): $(OBJECTS) | $(BINDIR)
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
 	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+# Include auto-generated dependency files (silently ignore if missing)
+-include $(DEPS)
 
 $(BINDIR):
 	mkdir -p $(BINDIR)

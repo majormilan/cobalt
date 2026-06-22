@@ -81,7 +81,8 @@ Token lexer_cobol85_keyword_or_ident(Lexer *l, const char *start, size_t len) {
     KW("ZEROES",          TOK_ZEROS);
     KW("SPACES",          TOK_SPACES);
     KW("SPACE",           TOK_SPACES);
-    KW("COPY",            TOK_COPY); // Add COPY keyword
+    KW("COPY",            TOK_COPY);
+    KW("CONTINUE",        TOK_CONTINUE);
     #undef KW
 
     if (len == 1) {

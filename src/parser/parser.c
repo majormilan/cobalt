@@ -46,6 +46,7 @@ static void synchronize() {
             case TOK_IF:
             case TOK_PERFORM:
             case TOK_ACCEPT:
+            case TOK_CONTINUE:
                 parser_panic_mode = false; // Reset panic mode
                 return; 
             default:
@@ -359,23 +360,26 @@ static AstNode *parse_statement(bool require_period) {
         expect(TOK_TO, "TO");
         if (parser_panic_mode) return NULL;
 
-        if (tok.kind == TOK_IDENT) {
+        // Collect one or more target identifiers
+        if (tok.kind != TOK_IDENT) {
+            synchronize();
+            return NULL;
+        }
+        AstNode *tgt_tail = move->children; // currently points to src; we'll extend it
+        while (tok.kind == TOK_IDENT && !parser_panic_mode) {
             char *target = tok_to_str();
-            AstNode *tgt = ast_new(AST_IDENTIFIER, target, (SourceLocation){current_lexer->filename, tok.line, tok.column});
-            // Resolve and mark target as used
+            AstNode *tgt = ast_new(AST_IDENTIFIER, target,
+                                   (SourceLocation){current_lexer->filename, tok.line, tok.column});
             Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, target);
             if (!resolved_sym) {
                 cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", target);
             } else {
                 symtab_mark_symbol_as_used(resolved_sym);
-                // tgt->symbol = resolved_sym;
             }
             free(target);
-            move->children->next = tgt;
+            tgt_tail->next = tgt;
+            tgt_tail = tgt;
             next();
-        } else {
-            synchronize(); // Missing target for MOVE
-            return NULL;
         }
 
         if (require_period) expect(TOK_PERIOD, ".");
@@ -632,6 +636,11 @@ static AstNode *parse_statement(bool require_period) {
 
         if (require_period) expect(TOK_PERIOD, ".");
         return accept_stmt;
+    }
+    else if (tok.kind == TOK_CONTINUE) {
+        next();
+        if (require_period) expect(TOK_PERIOD, ".");
+        return ast_new(AST_STATEMENT_CONTINUE, NULL, loc);
     }
 
     if (tok.kind != TOK_EOF) {

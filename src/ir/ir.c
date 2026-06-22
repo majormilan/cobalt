@@ -108,29 +108,60 @@ static void lower_node(IrProgram *ir, AstNode *node) {
             arg = arg->next;
         }
         append_instr(ir, new_instr(IR_EMIT_NEWLINE, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+    } else if (node->kind == AST_STATEMENT_CONTINUE) {
+        // No-op: CONTINUE does nothing
     } else if (node->kind == AST_STATEMENT_MOVE) {
         AstNode *src = node->children;
         AstNode *dest = src ? src->next : NULL;
-        if (src && dest && dest->kind == AST_IDENTIFIER) {
+        if (!src || !dest) return;
+
+        // For literal sources, emit the data section entry once and reuse the label
+        char lit_name[32];
+        int src_lit_len = 0;
+        bool src_is_lit = (src->kind == AST_STRING_LITERAL || src->kind == AST_LITERAL_NUMBER);
+        if (src_is_lit) {
+            const char *content = src->name ? src->name : "";
+            src_lit_len = (int)strlen(content);
+            sprintf(lit_name, "lit_%d", lit_counter++);
+            append_instr(ir, new_instr(IR_DATA_LIT, NULL, lit_name, content,
+                                       src_lit_len, 0, 0, 0, USAGE_DISPLAY));
+        }
+
+        // For variable sources, look up once
+        VarInfo *src_var = NULL;
+        if (src->kind == AST_IDENTIFIER) {
+            src_var = find_var(src->name);
+            if (!src_var) cobalt_warn("Variable '%s' not found for MOVE source", src->name);
+        }
+
+        // Emit a move for each destination
+        while (dest && dest->kind == AST_IDENTIFIER) {
             VarInfo *v = find_var(dest->name);
-            if (v && (src->kind == AST_STRING_LITERAL || src->kind == AST_LITERAL_NUMBER)) {
-                const char *content = src->name;
-                int len = strlen(content);
-                if (len > v->size) len = v->size;
-                char lit_name[32];
-                sprintf(lit_name, "lit_%d", lit_counter++);
-                append_instr(ir, new_instr(IR_DATA_LIT, NULL, lit_name, content, len, 0, 0, 0, USAGE_DISPLAY));
-                IrOpcode move_op = v->is_numeric ? IR_CALL_MOVE_NUM : IR_CALL_MOVE_ALPHA;
-                append_instr(ir, new_instr(move_op, dest->name, lit_name, NULL, len, v->size, v->decimal_places, 0, v->usage_type));
-            } else if (v && src->kind == AST_FIGURATIVE_CONSTANT) {
-                char fill_char = 0;
-                if (strcasecmp(src->name, "ZEROS") == 0 || strcasecmp(src->name, "ZERO") == 0) {
-                    fill_char = '0';
-                } else if (strcasecmp(src->name, "SPACES") == 0 || strcasecmp(src->name, "SPACE") == 0) {
-                    fill_char = ' ';
-                }
-                append_instr(ir, new_instr(IR_CALL_MOVE_FILL, dest->name, NULL, NULL, 0, v->size, v->decimal_places, fill_char, v->usage_type));
+            if (!v) {
+                cobalt_warn("Variable '%s' not found for MOVE target", dest->name);
+                dest = dest->next;
+                continue;
             }
+            if (src_is_lit) {
+                int use_len = src_lit_len > v->size ? v->size : src_lit_len;
+                IrOpcode op = v->is_numeric ? IR_CALL_MOVE_NUM : IR_CALL_MOVE_ALPHA;
+                append_instr(ir, new_instr(op, dest->name, lit_name, NULL,
+                                           use_len, v->size, v->decimal_places, 0, v->usage_type));
+            } else if (src->kind == AST_FIGURATIVE_CONSTANT) {
+                char fill_char = 0;
+                if (strcasecmp(src->name, "ZEROS") == 0 || strcasecmp(src->name, "ZERO") == 0)
+                    fill_char = '0';
+                else if (strcasecmp(src->name, "SPACES") == 0 || strcasecmp(src->name, "SPACE") == 0)
+                    fill_char = ' ';
+                append_instr(ir, new_instr(IR_CALL_MOVE_FILL, dest->name, NULL, NULL,
+                                           0, v->size, v->decimal_places, fill_char, v->usage_type));
+            } else if (src->kind == AST_IDENTIFIER && src_var) {
+                // Variable-to-variable: reuse move opcodes — lit_name = src var label (BSS)
+                IrOpcode op = v->is_numeric ? IR_CALL_MOVE_NUM : IR_CALL_MOVE_ALPHA;
+                append_instr(ir, new_instr(op, dest->name, src_var->name, NULL,
+                                           src_var->size, v->size, v->decimal_places, 0, v->usage_type));
+            }
+            dest = dest->next;
         }
     } else if (node->kind == AST_STATEMENT_ADD) {
         // is_numeric encodes form: false = TO (dest += sources), true = GIVING (dest = sum of sources)
