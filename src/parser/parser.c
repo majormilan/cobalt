@@ -780,33 +780,35 @@ static AstNode *parse_statement(bool require_period) {
         if (parser_panic_mode) return NULL;
 
         if (then_block) {
-            cond->next = then_block;
-        }
+            AstNode *then_node = ast_new(AST_THEN_BLOCK, NULL, loc);
+            then_node->children = then_block;
+            cond->next = then_node;
 
-        if (tok.kind == TOK_ELSE) {
-            next();
-            AstNode *else_block = NULL;
-            AstNode *last_else = NULL;
-            while (tok.kind != TOK_END_IF && tok.kind != TOK_EOF && !parser_panic_mode) { 
-                AstNode *stmt = parse_statement(false);
-                if (stmt) {
-                    if (!else_block) else_block = stmt;
-                    else last_else->next = stmt;
-                    last_else = stmt;
-                } else {
-                    next(); // Skip unknown token in statement block
+            if (tok.kind == TOK_ELSE) {
+                next();
+                AstNode *else_block = NULL;
+                AstNode *last_else = NULL;
+                while (tok.kind != TOK_END_IF && tok.kind != TOK_EOF && !parser_panic_mode) { 
+                    AstNode *stmt = parse_statement(false);
+                    if (stmt) {
+                        if (!else_block) else_block = stmt;
+                        else last_else->next = stmt;
+                        last_else = stmt;
+                    } else {
+                        next();
+                    }
                 }
-            }
-            if (parser_panic_mode) return NULL;
+                if (parser_panic_mode) return NULL;
 
-            if (else_block && then_block) { // Attach else block after then block
-                AstNode *temp = then_block;
-                while (temp && temp->next) temp = temp->next;
-                if (temp) temp->next = else_block;
-            } else if (!then_block && else_block) {
-                // Only an ELSE block (valid in some COBOL contexts)
-                cond->next = else_block;
+                AstNode *else_node = ast_new(AST_ELSE_BLOCK, NULL, loc);
+                else_node->children = else_block;
+                then_node->next = else_node;
             }
+        } else if (tok.kind == TOK_ELSE) {
+            // THEN block was empty; still parse and discard the ELSE block
+            next();
+            while (tok.kind != TOK_END_IF && tok.kind != TOK_EOF && !parser_panic_mode)
+                next();
         }
 
         expect(TOK_END_IF, "END-IF");

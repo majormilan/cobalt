@@ -67,6 +67,8 @@ void ast_dump(AstNode *node, FILE *out, int indent) {
         case AST_USAGE_CLAUSE:              kind_name = "USAGE"; break;
         case AST_USAGE_TYPE_COMP:           kind_name = "USAGE-COMP"; break;
         case AST_USAGE_TYPE_DISPLAY:        kind_name = "USAGE-DISPLAY"; break;
+        case AST_THEN_BLOCK:                kind_name = "THEN-BLOCK"; break;
+        case AST_ELSE_BLOCK:                kind_name = "ELSE-BLOCK"; break;
         default:                            kind_name = "UNKNOWN"; break;
     }
 

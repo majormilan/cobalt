@@ -43,6 +43,8 @@ typedef enum {
     AST_USAGE_CLAUSE,
     AST_USAGE_TYPE_COMP,
     AST_USAGE_TYPE_DISPLAY,
+    AST_THEN_BLOCK,   // wrapper for THEN-branch statements inside AST_STATEMENT_IF
+    AST_ELSE_BLOCK,   // wrapper for ELSE-branch statements inside AST_STATEMENT_IF
 } AstKind;
 
 

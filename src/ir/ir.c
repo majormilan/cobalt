@@ -21,6 +21,7 @@ typedef struct {
 static VarInfo vars[128];
 static int num_vars = 0;
 static int lit_counter = 0;
+static int if_counter = 0;
 
 static IrInstr *new_instr(IrOpcode op, const char *var_name, const char *lit_name,
                           const char *content, int lit_len, int size, int decimal_places, char pad_char, AstUsageType usage_type) {
@@ -45,6 +46,32 @@ static void append_instr(IrProgram *ir, IrInstr *i) {
         ir->tail->next = i;
         ir->tail = i;
     }
+}
+
+static IrInstr *new_jump_instr(const char *target) {
+    IrInstr *i = calloc(1, sizeof(IrInstr));
+    if (!i) return NULL;
+    i->op = IR_JUMP;
+    i->jump_target = target ? strdup(target) : NULL;
+    return i;
+}
+
+static IrInstr *new_cmp_jump_instr(
+        const char *left_name, int left_size, bool left_is_lit,
+        const char *right_name, int right_size, bool right_is_lit,
+        const char *op, const char *target) {
+    IrInstr *i = calloc(1, sizeof(IrInstr));
+    if (!i) return NULL;
+    i->op             = IR_CMP_JUMP_IF_FALSE;
+    i->var_name       = left_name  ? strdup(left_name)  : NULL;
+    i->size           = left_size;
+    i->left_is_literal  = left_is_lit;
+    i->lit_name       = right_name ? strdup(right_name) : NULL;
+    i->lit_len        = right_size;
+    i->right_is_literal = right_is_lit;
+    i->cmp_op         = op     ? strdup(op)     : NULL;
+    i->jump_target    = target ? strdup(target) : NULL;
+    return i;
 }
 
 static VarInfo *find_var(const char *name) {
@@ -237,10 +264,66 @@ static void lower_node(IrProgram *ir, AstNode *node) {
             }
         }
     } else if (node->kind == AST_STATEMENT_IF) {
-        // Stub: execute THEN block
-        if (node->children && node->children->next) {
-            lower_block(ir, node->children->next);
+        AstNode *cond      = node->children;                          // AST_CONDITION
+        AstNode *then_blk  = cond  ? cond->next  : NULL;             // AST_THEN_BLOCK
+        AstNode *else_blk  = then_blk ? then_blk->next : NULL;       // AST_ELSE_BLOCK (optional)
+
+        char else_lbl[32], end_lbl[32];
+        int idx = if_counter++;
+        snprintf(else_lbl, sizeof(else_lbl), "if_else_%d", idx);
+        snprintf(end_lbl,  sizeof(end_lbl),  "if_end_%d",  idx);
+        bool has_else = (else_blk && else_blk->kind == AST_ELSE_BLOCK);
+        const char *false_target = has_else ? else_lbl : end_lbl;
+
+        // Emit comparison and conditional branch
+        if (cond && cond->kind == AST_CONDITION && cond->children) {
+            AstNode *left  = cond->children;
+            AstNode *right = left ? left->next : NULL;
+            const char *op = cond->text ? cond->text : "=";
+
+            const char *left_name = NULL;
+            int left_size = 0;
+            bool left_is_lit = false;
+            if (left->kind == AST_IDENTIFIER) {
+                VarInfo *lv = find_var(left->name);
+                if (lv) { left_name = lv->name; left_size = lv->size; }
+                else cobalt_warn("Variable '%s' not found in IF condition", left->name);
+            } else if (left->kind == AST_LITERAL_NUMBER) {
+                left_name = left->name;
+                left_is_lit = true;
+            }
+
+            const char *right_name = NULL;
+            int right_size = 0;
+            bool right_is_lit = false;
+            if (right && right->kind == AST_IDENTIFIER) {
+                VarInfo *rv = find_var(right->name);
+                if (rv) { right_name = rv->name; right_size = rv->size; }
+                else cobalt_warn("Variable '%s' not found in IF condition", right->name);
+            } else if (right && right->kind == AST_LITERAL_NUMBER) {
+                right_name = right->name;
+                right_is_lit = true;
+            }
+
+            if (left_name && right_name) {
+                append_instr(ir, new_cmp_jump_instr(
+                    left_name,  left_size,  left_is_lit,
+                    right_name, right_size, right_is_lit,
+                    op, false_target));
+            }
         }
+
+        // THEN body
+        if (then_blk) lower_block(ir, then_blk->children);
+
+        if (has_else) {
+            append_instr(ir, new_jump_instr(end_lbl));
+            append_instr(ir, new_instr(IR_LABEL, else_lbl, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+            lower_block(ir, else_blk->children);
+        }
+
+        // End label — always emitted so forward code can continue
+        append_instr(ir, new_instr(IR_LABEL, end_lbl, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
     } else if (node->kind == AST_STATEMENT_DISPLAY) {
         AstNode *arg = node->children;
         while (arg) {
@@ -498,6 +581,7 @@ IrProgram *lower_to_ir(AstNode *program) {
 
     num_vars = 0;
     lit_counter = 0;
+    if_counter = 0;
 
     AstNode *div = program->children;
     while (div) {
@@ -660,6 +744,8 @@ void ir_free(IrProgram *ir) {
         free((void*)i->var_name);
         free((void*)i->lit_name);
         free((void*)i->content);
+        free((void*)i->cmp_op);
+        free((void*)i->jump_target);
         free(i);
         i = next;
     }

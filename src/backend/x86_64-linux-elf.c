@@ -236,6 +236,41 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
             case IR_CALL_EXIT:
                 fprintf(f, "    call runtime_exit\n");
                 break;
+            case IR_JUMP:
+                fprintf(f, "    jmp %s\n\n", i->jump_target ? i->jump_target : "");
+                break;
+            case IR_CMP_JUMP_IF_FALSE: {
+                // Load left operand into r11
+                if (i->left_is_literal) {
+                    fprintf(f, "    mov r11, %s\n", i->var_name ? i->var_name : "0");
+                } else if (sanitized_var_name) {
+                    fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
+                    fprintf(f, "    mov rsi, %d\n", i->size);
+                    fprintf(f, "    call runtime_load_int\n");
+                    fprintf(f, "    mov r11, rax\n");
+                }
+                // Load right operand into rax
+                if (i->right_is_literal) {
+                    fprintf(f, "    mov rax, %s\n", i->lit_name ? i->lit_name : "0");
+                } else if (sanitized_lit_name) {
+                    fprintf(f, "    lea rdi, [%s]\n", sanitized_lit_name);
+                    fprintf(f, "    mov rsi, %d\n", i->lit_len);
+                    fprintf(f, "    call runtime_load_int\n");
+                }
+                fprintf(f, "    cmp r11, rax\n");
+                // Emit the INVERTED conditional jump (we jump when condition is FALSE)
+                const char *jmp_instr = "jne"; // default: "=" inverted
+                if (i->cmp_op) {
+                    if      (strcmp(i->cmp_op, "=")  == 0) jmp_instr = "jne";
+                    else if (strcmp(i->cmp_op, "<>") == 0) jmp_instr = "je";
+                    else if (strcmp(i->cmp_op, ">")  == 0) jmp_instr = "jle";
+                    else if (strcmp(i->cmp_op, "<")  == 0) jmp_instr = "jge";
+                    else if (strcmp(i->cmp_op, ">=") == 0) jmp_instr = "jl";
+                    else if (strcmp(i->cmp_op, "<=") == 0) jmp_instr = "jg";
+                }
+                fprintf(f, "    %s %s\n\n", jmp_instr, i->jump_target ? i->jump_target : "");
+                break;
+            }
             default:
                 // Handle other IR opcodes if necessary, or do nothing for IR_DATA_VAR/IR_DATA_LIT as they are handled in .bss/.data sections
                 break;

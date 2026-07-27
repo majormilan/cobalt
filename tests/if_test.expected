@@ -1,0 +1,8 @@
+Test 1 PASS: Adult
+Test 2 PASS: High Score
+Test 3 PASS: Not Zero
+Test 4 PASS: Age > Min
+Test 5 PASS: Min < Age
+Test 6 PASS: Age <> Score
+Test 7 PASS: Continued after false IF
+Test 8 PASS: Min <= 18
