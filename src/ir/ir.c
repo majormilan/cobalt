@@ -18,7 +18,7 @@ typedef struct {
     int init_len;
 } VarInfo;
 
-static VarInfo vars[128];
+static VarInfo vars[512];
 static int num_vars = 0;
 static int lit_counter = 0;
 static int if_counter = 0;
@@ -79,6 +79,161 @@ static VarInfo *find_var(const char *name) {
         if (strcasecmp(vars[i].name, name) == 0) return &vars[i];
     }
     return NULL;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// Return the opposite of a comparison operator (used by PERFORM UNTIL).
+static const char *negate_op(const char *op) {
+    if (!op)              return "<>";
+    if (!strcmp(op, "="))  return "<>";
+    if (!strcmp(op, "<>")) return "=";
+    if (!strcmp(op, ">"))  return "<=";
+    if (!strcmp(op, "<"))  return ">=";
+    if (!strcmp(op, ">=")) return "<";
+    if (!strcmp(op, "<=")) return ">";
+    return op;
+}
+
+// Resolve an AST operand node (IDENTIFIER or LITERAL_NUMBER) for a condition.
+// Fills name, size, is_literal; returns false on error.
+static bool resolve_cond_operand(AstNode *node,
+                                 const char **out_name, int *out_size, bool *out_is_lit) {
+    if (!node) return false;
+    if (node->kind == AST_IDENTIFIER) {
+        VarInfo *v = find_var(node->name);
+        if (!v) { cobalt_warn("Variable '%s' not found in condition", node->name); return false; }
+        *out_name   = v->name;
+        *out_size   = v->size;
+        *out_is_lit = false;
+        return true;
+    }
+    if (node->kind == AST_LITERAL_NUMBER) {
+        *out_name   = node->name;
+        *out_size   = 0;
+        *out_is_lit = true;
+        return true;
+    }
+    return false;
+}
+
+// Emit a conditional jump for an AST_CONDITION node.
+// If negate=false → jump to target when condition is FALSE  (used by IF).
+// If negate=true  → jump to target when condition is TRUE   (used by PERFORM UNTIL).
+static void emit_cond_jump(IrProgram *ir, AstNode *cond,
+                           const char *target, bool negate) {
+    if (!cond || cond->kind != AST_CONDITION || !cond->children) return;
+    AstNode *left_node  = cond->children;
+    AstNode *right_node = left_node ? left_node->next : NULL;
+    const char *op = cond->text ? cond->text : "=";
+    if (negate) op = negate_op(op);
+
+    const char *ln = NULL; int ls = 0; bool ll = false;
+    const char *rn = NULL; int rs = 0; bool rl = false;
+    if (!resolve_cond_operand(left_node,  &ln, &ls, &ll)) return;
+    if (!resolve_cond_operand(right_node, &rn, &rs, &rl)) return;
+
+    append_instr(ir, new_cmp_jump_instr(ln, ls, ll, rn, rs, rl, op, target));
+}
+
+// Allocate a numeric display temporary variable (in .bss, zeroed).
+// Returns the variable name (stable heap pointer), or NULL on error.
+static const char *alloc_temp_var(IrProgram *ir, int size, int decimals) {
+    if (num_vars >= 512) {
+        cobalt_error("Internal variable table full (512 limit)");
+        return NULL;
+    }
+    char name[32];
+    snprintf(name, sizeof(name), "cexpr_%d", lit_counter++);
+    VarInfo *v = &vars[num_vars++];
+    memset(v, 0, sizeof(VarInfo));
+    v->name          = strdup(name);
+    v->size          = size > 0 ? size : 18;
+    v->decimal_places = decimals >= 0 ? decimals : 0;
+    v->is_numeric    = true;
+    v->usage_type    = USAGE_DISPLAY;
+    v->pad_char      = '0';
+    append_instr(ir, new_instr(IR_DATA_VAR, v->name, NULL, NULL,
+                               0, v->size, v->decimal_places, 0, USAGE_DISPLAY));
+    append_instr(ir, new_instr(IR_CALL_MOVE_FILL, v->name, NULL, NULL,
+                               0, v->size, v->decimal_places, '0', USAGE_DISPLAY));
+    return v->name;
+}
+
+// Evaluate an arithmetic expression AST node.
+// Returns the name of the variable holding the result (may be an existing var
+// for simple identifier leaves — do NOT modify it in-place).
+// hint_size / hint_decimals: desired size for temporaries.
+static const char *lower_expr(IrProgram *ir, AstNode *expr,
+                              int hint_size, int hint_decimals);
+
+static const char *lower_expr(IrProgram *ir, AstNode *expr,
+                              int hint_size, int hint_decimals) {
+    if (!expr) return NULL;
+
+    // Leaf: existing variable — return its name directly (read-only reference)
+    if (expr->kind == AST_IDENTIFIER) {
+        VarInfo *v = find_var(expr->name);
+        if (!v) { cobalt_warn("Variable '%s' not found in COMPUTE expression", expr->name); return NULL; }
+        return v->name;
+    }
+
+    // Leaf: numeric literal — create a temp and load the value into it
+    if (expr->kind == AST_LITERAL_NUMBER) {
+        const char *tmp = alloc_temp_var(ir, hint_size, hint_decimals);
+        if (!tmp) return NULL;
+        VarInfo *tv = find_var(tmp);
+        char lit_lbl[32];
+        snprintf(lit_lbl, sizeof(lit_lbl), "clit_%d", lit_counter++);
+        const char *content = expr->name ? expr->name : "0";
+        int len = (int)strlen(content);
+        append_instr(ir, new_instr(IR_DATA_LIT, NULL, lit_lbl, content, len, 0, 0, 0, USAGE_DISPLAY));
+        // temp already zeroed; add literal into it
+        append_instr(ir, new_instr(IR_CALL_ADD_TO, tv->name, lit_lbl, NULL,
+                                   len, tv->size, tv->decimal_places, 0, tv->usage_type));
+        return tv->name;
+    }
+
+    // Binary operation: evaluate both sub-expressions, then combine into a temp
+    AstNode *left  = expr->children;
+    AstNode *right = left ? left->next : NULL;
+    if (!left || !right) return NULL;
+
+    const char *left_name  = lower_expr(ir, left,  hint_size, hint_decimals);
+    const char *right_name = lower_expr(ir, right, hint_size, hint_decimals);
+    if (!left_name || !right_name) return NULL;
+
+    // Re-lookup after potential alloc_temp_var calls (safe: names are heap strings)
+    VarInfo *lv = find_var(left_name);
+    VarInfo *rv = find_var(right_name);
+    if (!lv || !rv) return NULL;
+
+    int res_size = (lv->size > rv->size) ? lv->size : rv->size;
+    int res_dec  = (lv->decimal_places > rv->decimal_places)
+                   ? lv->decimal_places : rv->decimal_places;
+    if (res_size <= 0) res_size = hint_size > 0 ? hint_size : 18;
+
+    const char *res_name = alloc_temp_var(ir, res_size, res_dec);
+    if (!res_name) return NULL;
+    VarInfo *res = find_var(res_name);
+    if (!res) return NULL;
+
+    // result = copy of left  (temp is already zeroed, so just add lv)
+    append_instr(ir, new_instr(IR_CALL_ADD_TO, res->name, lv->name, NULL,
+                               lv->size, res->size, res->decimal_places, 0, res->usage_type));
+
+    // result op= right
+    IrOpcode op_code;
+    switch (expr->kind) {
+        case AST_EXPR_ADD: op_code = IR_CALL_ADD_TO;    break;
+        case AST_EXPR_SUB: op_code = IR_CALL_SUB_FROM;  break;
+        case AST_EXPR_MUL: op_code = IR_CALL_MUL_BY;    break;
+        case AST_EXPR_DIV: op_code = IR_CALL_DIV_INTO;  break;
+        default: return res->name;
+    }
+    append_instr(ir, new_instr(op_code, res->name, rv->name, NULL,
+                               rv->size, res->size, res->decimal_places, 0, res->usage_type));
+    return res->name;
 }
 
 static void lower_block(IrProgram *ir, AstNode *block);
@@ -243,7 +398,28 @@ static void lower_node(IrProgram *ir, AstNode *node) {
         AstNode *target = node->children;
         if (!target || target->kind != AST_IDENTIFIER) return;
 
-        if (!node->is_numeric) {
+        if (node->name && strcasecmp(node->name, "UNTIL") == 0) {
+            // PERFORM para UNTIL condition
+            AstNode *cond = target->next; // AST_CONDITION
+
+            char loop_lbl[32], done_lbl[32];
+            int idx = if_counter++;
+            snprintf(loop_lbl, sizeof(loop_lbl), "perf_until_%d", idx);
+            snprintf(done_lbl, sizeof(done_lbl), "perf_done_%d",  idx);
+
+            append_instr(ir, new_instr(IR_LABEL, loop_lbl, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+
+            // Jump to done when condition is TRUE (negate=true fires on TRUE)
+            emit_cond_jump(ir, cond, done_lbl, true);
+
+            // Execute the paragraph, then loop back
+            append_instr(ir, new_instr(IR_CALL_PARA, target->name, NULL, NULL,
+                                       0, 0, 0, 0, USAGE_DISPLAY));
+            append_instr(ir, new_jump_instr(loop_lbl));
+
+            append_instr(ir, new_instr(IR_LABEL, done_lbl, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+
+        } else if (!node->is_numeric) {
             // Basic PERFORM: call the paragraph once
             append_instr(ir, new_instr(IR_CALL_PARA, target->name, NULL, NULL,
                                        0, 0, 0, 0, USAGE_DISPLAY));
@@ -263,57 +439,42 @@ static void lower_node(IrProgram *ir, AstNode *node) {
                                            NULL, cnt->size, 0, 0, 0, USAGE_DISPLAY));
             }
         }
+    } else if (node->kind == AST_STATEMENT_COMPUTE) {
+        AstNode *dest_node = node->children;
+        AstNode *expr_node = dest_node ? dest_node->next : NULL;
+        if (!dest_node || !expr_node) return;
+
+        VarInfo *dest = find_var(dest_node->name);
+        if (!dest) {
+            cobalt_warn("Variable '%s' not found for COMPUTE", dest_node->name);
+            return;
+        }
+
+        const char *result_name = lower_expr(ir, expr_node, dest->size, dest->decimal_places);
+        if (!result_name) return;
+
+        VarInfo *result = find_var(result_name);
+        if (!result) return;
+
+        // dest = result  (zero dest, then add result into it)
+        append_instr(ir, new_instr(IR_CALL_MOVE_FILL, dest->name, NULL, NULL,
+                                   0, dest->size, dest->decimal_places, '0', dest->usage_type));
+        append_instr(ir, new_instr(IR_CALL_ADD_TO, dest->name, result->name, NULL,
+                                   result->size, dest->size, dest->decimal_places, 0, dest->usage_type));
     } else if (node->kind == AST_STATEMENT_IF) {
-        AstNode *cond      = node->children;                          // AST_CONDITION
-        AstNode *then_blk  = cond  ? cond->next  : NULL;             // AST_THEN_BLOCK
-        AstNode *else_blk  = then_blk ? then_blk->next : NULL;       // AST_ELSE_BLOCK (optional)
+        AstNode *cond      = node->children;
+        AstNode *then_blk  = cond  ? cond->next  : NULL;
+        AstNode *else_blk  = then_blk ? then_blk->next : NULL;
 
         char else_lbl[32], end_lbl[32];
         int idx = if_counter++;
         snprintf(else_lbl, sizeof(else_lbl), "if_else_%d", idx);
         snprintf(end_lbl,  sizeof(end_lbl),  "if_end_%d",  idx);
         bool has_else = (else_blk && else_blk->kind == AST_ELSE_BLOCK);
-        const char *false_target = has_else ? else_lbl : end_lbl;
 
-        // Emit comparison and conditional branch
-        if (cond && cond->kind == AST_CONDITION && cond->children) {
-            AstNode *left  = cond->children;
-            AstNode *right = left ? left->next : NULL;
-            const char *op = cond->text ? cond->text : "=";
+        // Jump to else/end when condition is FALSE
+        emit_cond_jump(ir, cond, has_else ? else_lbl : end_lbl, false);
 
-            const char *left_name = NULL;
-            int left_size = 0;
-            bool left_is_lit = false;
-            if (left->kind == AST_IDENTIFIER) {
-                VarInfo *lv = find_var(left->name);
-                if (lv) { left_name = lv->name; left_size = lv->size; }
-                else cobalt_warn("Variable '%s' not found in IF condition", left->name);
-            } else if (left->kind == AST_LITERAL_NUMBER) {
-                left_name = left->name;
-                left_is_lit = true;
-            }
-
-            const char *right_name = NULL;
-            int right_size = 0;
-            bool right_is_lit = false;
-            if (right && right->kind == AST_IDENTIFIER) {
-                VarInfo *rv = find_var(right->name);
-                if (rv) { right_name = rv->name; right_size = rv->size; }
-                else cobalt_warn("Variable '%s' not found in IF condition", right->name);
-            } else if (right && right->kind == AST_LITERAL_NUMBER) {
-                right_name = right->name;
-                right_is_lit = true;
-            }
-
-            if (left_name && right_name) {
-                append_instr(ir, new_cmp_jump_instr(
-                    left_name,  left_size,  left_is_lit,
-                    right_name, right_size, right_is_lit,
-                    op, false_target));
-            }
-        }
-
-        // THEN body
         if (then_blk) lower_block(ir, then_blk->children);
 
         if (has_else) {
@@ -322,7 +483,6 @@ static void lower_node(IrProgram *ir, AstNode *node) {
             lower_block(ir, else_blk->children);
         }
 
-        // End label — always emitted so forward code can continue
         append_instr(ir, new_instr(IR_LABEL, end_lbl, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
     } else if (node->kind == AST_STATEMENT_DISPLAY) {
         AstNode *arg = node->children;

@@ -38,8 +38,21 @@ $(OBJDIR):
 clean:
 	rm -rf $(OBJDIR) $(BINDIR)
 
-test:
-	@echo "Running tests..."  # Add actual test commands later, e.g., run tests/*.cbl
-	# For now, test with a sample: $(EXEC) -i tests/hello.cbl -o /dev/null
+test: $(EXEC)
+	@echo "Running tests..."
+	@passed=0; failed=0; \
+	for cbl in tests/*.cbl; do \
+		base=$$(basename $$cbl .cbl); \
+		if [ -f "tests/$$base.expected" ]; then \
+			if bash test_runner.sh $$cbl > /dev/null 2>&1; then \
+				echo "  PASS  $$base"; passed=$$((passed+1)); \
+			else \
+				echo "  FAIL  $$base"; failed=$$((failed+1)); \
+			fi; \
+		fi; \
+	done; \
+	echo ""; \
+	echo "Results: $$passed passed, $$failed failed"; \
+	[ $$failed -eq 0 ]
 
 .PHONY: all clean test

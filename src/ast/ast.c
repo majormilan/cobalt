@@ -69,6 +69,10 @@ void ast_dump(AstNode *node, FILE *out, int indent) {
         case AST_USAGE_TYPE_DISPLAY:        kind_name = "USAGE-DISPLAY"; break;
         case AST_THEN_BLOCK:                kind_name = "THEN-BLOCK"; break;
         case AST_ELSE_BLOCK:                kind_name = "ELSE-BLOCK"; break;
+        case AST_EXPR_ADD:                  kind_name = "EXPR-ADD"; break;
+        case AST_EXPR_SUB:                  kind_name = "EXPR-SUB"; break;
+        case AST_EXPR_MUL:                  kind_name = "EXPR-MUL"; break;
+        case AST_EXPR_DIV:                  kind_name = "EXPR-DIV"; break;
         default:                            kind_name = "UNKNOWN"; break;
     }
 

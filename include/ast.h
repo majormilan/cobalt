@@ -45,6 +45,12 @@ typedef enum {
     AST_USAGE_TYPE_DISPLAY,
     AST_THEN_BLOCK,   // wrapper for THEN-branch statements inside AST_STATEMENT_IF
     AST_ELSE_BLOCK,   // wrapper for ELSE-branch statements inside AST_STATEMENT_IF
+    // Arithmetic expression nodes (used by COMPUTE)
+    // children[0] = left operand, children[0]->next = right operand
+    AST_EXPR_ADD,
+    AST_EXPR_SUB,
+    AST_EXPR_MUL,
+    AST_EXPR_DIV,
 } AstKind;
 
 

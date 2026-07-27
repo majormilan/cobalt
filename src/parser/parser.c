@@ -299,6 +299,95 @@ static AstNode *parse_var_decl(void) {
 
 static AstNode *parse_statement(bool require_period);
 
+// Forward declarations for recursive-descent expression parser (used by COMPUTE)
+static AstNode *parse_expr(void);
+static AstNode *parse_term(void);
+static AstNode *parse_factor(void);
+
+static AstNode *parse_factor(void) {
+    SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
+
+    if (tok.kind == TOK_LPAREN) {
+        next();
+        AstNode *inner = parse_expr();
+        if (tok.kind == TOK_RPAREN) next();
+        return inner;
+    }
+
+    // Unary minus on a numeric literal: the lexer already folds -5 into TOK_NUMBER "-5"
+    // so we only need to handle '-' before '(' or an identifier here.
+    if (tok.kind == TOK_MINUS) {
+        next();
+        AstNode *operand = parse_factor();
+        if (operand && operand->kind == AST_LITERAL_NUMBER && operand->name) {
+            char *neg = malloc(strlen(operand->name) + 2);
+            sprintf(neg, "-%s", operand->name);
+            free(operand->name);
+            operand->name = neg;
+        } else if (operand) {
+            cobalt_warn_loc(current_lexer->original_source, loc.line, loc.column,
+                            "Unary minus on non-literal not supported in COMPUTE; result may be wrong");
+        }
+        return operand;
+    }
+
+    if (tok.kind == TOK_NUMBER) {
+        char *val = tok_to_str();
+        AstNode *node = ast_new(AST_LITERAL_NUMBER, val, loc);
+        free(val);
+        next();
+        return node;
+    }
+
+    if (tok.kind == TOK_IDENT) {
+        char *name = tok_to_str();
+        AstNode *node = ast_new(AST_IDENTIFIER, name, loc);
+        Symbol *sym = symtab_resolve_symbol(current_symtab, name);
+        if (sym) symtab_mark_symbol_as_used(sym);
+        else cobalt_error_loc(current_lexer->original_source, loc.line, loc.column,
+                              "Undeclared identifier '%s' in expression", name);
+        free(name);
+        next();
+        return node;
+    }
+
+    return NULL;
+}
+
+// Multiplication / division: left-to-right, higher precedence than +/-
+static AstNode *parse_term(void) {
+    AstNode *left = parse_factor();
+
+    while (tok.kind == TOK_MUL || tok.kind == TOK_DIV) {
+        AstKind op = (tok.kind == TOK_MUL) ? AST_EXPR_MUL : AST_EXPR_DIV;
+        SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
+        next();
+        AstNode *right = parse_factor();
+        AstNode *node = ast_new(op, NULL, loc);
+        node->children = left;
+        if (left) left->next = right;
+        left = node;
+    }
+    return left;
+}
+
+// Addition / subtraction: left-to-right, lowest precedence
+static AstNode *parse_expr(void) {
+    AstNode *left = parse_term();
+
+    while (tok.kind == TOK_PLUS || tok.kind == TOK_MINUS) {
+        AstKind op = (tok.kind == TOK_PLUS) ? AST_EXPR_ADD : AST_EXPR_SUB;
+        SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
+        next();
+        AstNode *right = parse_term();
+        AstNode *node = ast_new(op, NULL, loc);
+        node->children = left;
+        if (left) left->next = right;
+        left = node;
+    }
+    return left;
+}
+
 static AstNode *parse_statement(bool require_period) {
     if (parser_panic_mode) return NULL; // Don't try to parse statements if in panic mode
 
@@ -843,7 +932,72 @@ static AstNode *parse_statement(bool require_period) {
         next();
 
         // Optional count TIMES: PERFORM para N TIMES  or  PERFORM para var TIMES
-        if (tok.kind == TOK_NUMBER || tok.kind == TOK_IDENT) {
+        if (tok.kind == TOK_UNTIL) {
+            // PERFORM para UNTIL condition
+            next(); // consume UNTIL
+            perf->name = strdup("UNTIL");
+
+            AstNode *cond = ast_new(AST_CONDITION, NULL, loc);
+
+            // Left operand
+            if (tok.kind == TOK_IDENT || tok.kind == TOK_NUMBER) {
+                char *left_val = tok_to_str();
+                AstNode *left_node = ast_new(
+                    tok.kind == TOK_NUMBER ? AST_LITERAL_NUMBER : AST_IDENTIFIER,
+                    left_val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
+                if (tok.kind == TOK_IDENT) {
+                    Symbol *s = symtab_resolve_symbol(current_symtab, left_val);
+                    if (s) symtab_mark_symbol_as_used(s);
+                }
+                free(left_val);
+                cond->children = left_node;
+                next();
+            } else {
+                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                                 "PERFORM UNTIL: expected left operand");
+                synchronize();
+                return NULL;
+            }
+
+            // Comparison operator
+            const char *op = NULL;
+            if      (tok.kind == TOK_GT) { op = ">";  next(); }
+            else if (tok.kind == TOK_LT) { op = "<";  next(); }
+            else if (tok.kind == TOK_GE) { op = ">="; next(); }
+            else if (tok.kind == TOK_LE) { op = "<="; next(); }
+            else if (tok.kind == TOK_EQ) { op = "=";  next(); }
+            else if (tok.kind == TOK_NE) { op = "<>"; next(); }
+            else {
+                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                                 "PERFORM UNTIL: expected comparison operator");
+                synchronize();
+                return NULL;
+            }
+            cond->text = strdup(op);
+
+            // Right operand
+            if (tok.kind == TOK_IDENT || tok.kind == TOK_NUMBER) {
+                char *right_val = tok_to_str();
+                AstNode *right_node = ast_new(
+                    tok.kind == TOK_NUMBER ? AST_LITERAL_NUMBER : AST_IDENTIFIER,
+                    right_val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
+                if (tok.kind == TOK_IDENT) {
+                    Symbol *s = symtab_resolve_symbol(current_symtab, right_val);
+                    if (s) symtab_mark_symbol_as_used(s);
+                }
+                free(right_val);
+                cond->children->next = right_node;
+                next();
+            } else {
+                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                                 "PERFORM UNTIL: expected right operand");
+                synchronize();
+                return NULL;
+            }
+
+            target->next = cond;
+
+        } else if (tok.kind == TOK_NUMBER || tok.kind == TOK_IDENT) {
             char *count_val = tok_to_str();
             bool count_is_num = (tok.kind == TOK_NUMBER);
             next(); // consume count
@@ -861,9 +1015,8 @@ static AstNode *parse_statement(bool require_period) {
                 perf->is_numeric = true; // flag: PERFORM TIMES form
                 next(); // consume TIMES
             } else {
-                // Not TIMES — unsupported variant; treat as basic PERFORM and warn
                 cobalt_warn_loc(current_lexer->original_source, tok.line, tok.column,
-                                "Unsupported PERFORM variant (only TIMES supported); ignoring extra tokens");
+                                "Unsupported PERFORM variant; ignoring extra tokens");
                 free(count_val);
                 synchronize();
                 return perf;
@@ -905,6 +1058,53 @@ static AstNode *parse_statement(bool require_period) {
         next();
         if (require_period) expect(TOK_PERIOD, ".");
         return ast_new(AST_STATEMENT_CONTINUE, NULL, loc);
+    }
+    else if (tok.kind == TOK_COMPUTE) {
+        next();
+        AstNode *compute = ast_new(AST_STATEMENT_COMPUTE, NULL, loc);
+
+        // Destination variable
+        if (tok.kind != TOK_IDENT) {
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                             "COMPUTE: expected destination variable");
+            synchronize();
+            return NULL;
+        }
+        char *dest_name = tok_to_str();
+        AstNode *dest = ast_new(AST_IDENTIFIER, dest_name, (SourceLocation){current_lexer->filename, tok.line, tok.column});
+        Symbol *dest_sym = symtab_resolve_symbol(current_symtab, dest_name);
+        if (dest_sym) symtab_mark_symbol_as_used(dest_sym);
+        else cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                              "Undeclared identifier '%s'", dest_name);
+        free(dest_name);
+        compute->children = dest;
+        next();
+
+        // Optional ROUNDED — skip it silently
+        if (tok.kind == TOK_ROUNDED) next();
+
+        // Expect '='
+        if (tok.kind != TOK_EQ) {
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                             "COMPUTE: expected '=' after destination, got '%.*s'",
+                             (int)tok.length, tok.lexeme);
+            synchronize();
+            return NULL;
+        }
+        next();
+
+        // Parse the arithmetic expression
+        AstNode *expr = parse_expr();
+        if (!expr) {
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                             "COMPUTE: expected arithmetic expression");
+            synchronize();
+            return NULL;
+        }
+        dest->next = expr;
+
+        if (require_period) expect(TOK_PERIOD, ".");
+        return compute;
     }
 
     if (tok.kind != TOK_EOF) {

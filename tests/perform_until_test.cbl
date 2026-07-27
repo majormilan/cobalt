@@ -1,0 +1,23 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. PERFORM-UNTIL-TEST.
+
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  WS-COUNT PIC 99 VALUE 0.
+       01  WS-SUM   PIC 999 VALUE 0.
+
+       PROCEDURE DIVISION.
+       MAIN.
+           PERFORM ADD-ONE UNTIL WS-COUNT >= 5.
+           DISPLAY WS-COUNT.
+           DISPLAY WS-SUM.
+           PERFORM RESET-CTR UNTIL WS-COUNT = 0.
+           DISPLAY WS-COUNT.
+           STOP RUN.
+
+       ADD-ONE.
+           ADD 1 TO WS-COUNT.
+           ADD WS-COUNT TO WS-SUM.
+
+       RESET-CTR.
+           SUBTRACT 1 FROM WS-COUNT.
