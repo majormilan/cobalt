@@ -164,6 +164,31 @@ Token lexer_cobol85_keyword_or_ident(Lexer *l, const char *start, size_t len) {
     KW("UP",              TOK_UP);
     KW("DOWN",            TOK_DOWN);
     KW("INDEX",           TOK_INDEX);
+    KW("SELECT",          TOK_SELECT);
+    KW("ASSIGN",          TOK_ASSIGN);
+    KW("OPTIONAL",        TOK_OPTIONAL);
+    KW("ORGANIZATION",    TOK_ORGANIZATION);
+    KW("SEQUENTIAL",      TOK_SEQUENTIAL);
+    KW("LINE",            TOK_LINE);
+    KW("ACCESS",          TOK_ACCESS);
+    KW("MODE",            TOK_MODE);
+    KW("STATUS",          TOK_STATUS);
+    KW("FD",              TOK_FD);
+    KW("SD",              TOK_SD);
+    KW("RECORD",          TOK_RECORD);
+    KW("REWRITE",         TOK_REWRITE);
+    KW("END-READ",        TOK_END_READ);
+    KW("END-WRITE",       TOK_END_WRITE);
+    KW("END-REWRITE",     TOK_END_REWRITE);
+    KW("ADVANCING",       TOK_ADVANCING);
+    KW("LINES",           TOK_LINES);
+    KW("PAGE",            TOK_PAGE);
+    KW("END-OF-PAGE",     TOK_END_OF_PAGE);
+    KW("EOP",             TOK_END_OF_PAGE);
+    KW("LINAGE",          TOK_LINAGE);
+    KW("RELATIVE",        TOK_RELATIVE);
+    KW("RANDOM",          TOK_RANDOM);
+    KW("DYNAMIC",         TOK_DYNAMIC);
     #undef KW
 
     return make_token_public(l, TOK_IDENT, start, len);

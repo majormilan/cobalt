@@ -69,10 +69,11 @@ if [ $? -ne 0 ]; then
 fi
 
 # 4. Run and capture output
+# (in the build directory, so files the program creates stay there)
 if [ -f "$INPUT_FILE" ]; then
-    OUTPUT=$(timeout "$TEST_TIMEOUT" "$BIN_FILE" < "$INPUT_FILE")
+    OUTPUT=$(cd "$BUILD_DIR" && timeout "$TEST_TIMEOUT" "./$BASENAME" < "$OLDPWD/$INPUT_FILE")
 else
-    OUTPUT=$(timeout "$TEST_TIMEOUT" "$BIN_FILE" < /dev/null)
+    OUTPUT=$(cd "$BUILD_DIR" && timeout "$TEST_TIMEOUT" "./$BASENAME" < /dev/null)
 fi
 if [ $? -eq 124 ]; then
     echo "Error: $BIN_FILE did not finish within ${TEST_TIMEOUT}s"

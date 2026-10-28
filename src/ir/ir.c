@@ -41,6 +41,7 @@ typedef struct {
     bool is_cond;           // level-88 condition-name
     AstNode *cond_values;   // condition-name: literals (THRU upper bound in extra)
     AstNode *decl;
+    int file;               // record description of this file (FD), or -1
 } VarInfo;
 
 #define MAX_VARS 4096
@@ -51,6 +52,20 @@ static int num_records = 0;
 static int lit_counter = 0;
 static int if_counter = 0;
 static int addr_slots = 0;  // address/length slots used so far
+
+// Files (SELECT + FD)
+typedef struct {
+    const char *name;
+    AstNode *select;
+    int first_record;       // first 01 record description (its record is the area)
+    int largest_record;     // the longest 01 record description
+} FileInfo;
+
+#define FILE_LINE     1     // runtime FCB flags (runtime/ABI.md section 7)
+#define FILE_OPTIONAL 2
+
+static FileInfo files[64];
+static int num_files = 0;
 
 // Procedures (sections and paragraphs) in source order
 typedef struct {
@@ -156,7 +171,7 @@ static VarInfo *new_var(const char *name) {
     VarInfo *v = &vars[num_vars++];
     memset(v, 0, sizeof(VarInfo));
     v->name = strdup(name);
-    v->parent = v->first_child = v->next_sibling = v->redefines = v->first_index = -1;
+    v->parent = v->first_child = v->next_sibling = v->redefines = v->first_index = v->file = -1;
     return v;
 }
 
@@ -197,16 +212,57 @@ static int find_redefined(const char *name, int parent, int before) {
     return -1;
 }
 
+static VarInfo *find_item(const AstNode *ref, bool report);
+
 static void build_data(IrProgram *ir, AstNode *program) {
     int stack[64];
     int depth = 0;
     int last_item = -1;     // data item that level-88 entries belong to
 
+    // Files named in FILE-CONTROL
+    num_files = 0;
+    for (AstNode *div = program->children; div; div = div->next) {
+        if (div->kind != AST_DIVISION || strcasecmp(div->name, "ENVIRONMENT") != 0) continue;
+        for (AstNode *sel = div->children; sel; sel = sel->next) {
+            if (sel->kind != AST_SELECT || num_files >= 64) continue;
+            files[num_files++] = (FileInfo){ sel->name, sel, -1, -1 };
+        }
+    }
+
+    // Record descriptions: WORKING-STORAGE entries, and the entries of every
+    // FD in the FILE SECTION (decl_file tells which file, or -1)
+    AstNode *decls[MAX_VARS];
+    int decl_file[MAX_VARS];
+    int ndecls = 0;
     for (AstNode *div = program->children; div; div = div->next) {
         if (div->kind != AST_DIVISION || strcasecmp(div->name, "DATA") != 0) continue;
         for (AstNode *sec = div->children; sec; sec = sec->next) {
             if (sec->kind != AST_SECTION) continue;
-            for (AstNode *decl = sec->children; decl; decl = decl->next) {
+            for (AstNode *entry = sec->children; entry; entry = entry->next) {
+                if (entry->kind == AST_FILE_DECL) {
+                    int f = -1;
+                    for (int k = 0; k < num_files; k++)
+                        if (strcasecmp(files[k].name, entry->name) == 0) f = k;
+                    if (f < 0)
+                        cobalt_error_loc(NULL, entry->loc.line, entry->loc.column,
+                                         "FD '%s' has no SELECT", entry->name);
+                    for (AstNode *d = entry->children; d && ndecls < MAX_VARS; d = d->next) {
+                        decls[ndecls] = d;
+                        decl_file[ndecls++] = f;
+                    }
+                } else if (ndecls < MAX_VARS) {
+                    decls[ndecls] = entry;
+                    decl_file[ndecls++] = -1;
+                }
+            }
+        }
+    }
+
+    {
+        {
+            for (int di = 0; di < ndecls; di++) {
+                AstNode *decl = decls[di];
+                int file = decl_file[di];
                 if (decl->kind != AST_VAR_DECL) continue;
                 int level = decl->text ? atoi(decl->text) : 1;
 
@@ -253,6 +309,15 @@ static void build_data(IrProgram *ir, AstNode *program) {
 
                 if (level == 1 || level == 77) {
                     depth = 0;
+                    if (file >= 0) {
+                        // Every record description of a file shares its record area
+                        v->file = file;
+                        if (level == 77)
+                            cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
+                                             "Level 77 is not allowed in an FD");
+                        if (files[file].first_record < 0) files[file].first_record = idx;
+                        else v->redefines = files[file].first_record;
+                    }
                 } else {
                     while (depth > 0 && vars[stack[depth - 1]].level >= level) depth--;
                     if (depth == 0) {
@@ -333,6 +398,39 @@ static void build_data(IrProgram *ir, AstNode *program) {
         snprintf(label, sizeof(label), "%%r%d", r);
         append_instr(ir, new_instr(IR_DATA_VAR, label, NULL, NULL, 0,
                                    record_size[r] > 0 ? record_size[r] : 1, 0, 0, USAGE_DISPLAY));
+    }
+
+    // File control blocks
+    for (int f = 0; f < num_files; f++) {
+        FileInfo *fi = &files[f];
+        if (fi->first_record < 0) {
+            cobalt_error_loc(NULL, fi->select->loc.line, fi->select->loc.column,
+                             "File '%s' has no FD with a record description", fi->name);
+            continue;
+        }
+        fi->largest_record = fi->first_record;
+        for (int i = 0; i < num_vars; i++)
+            if (vars[i].file == f && vars[i].parent < 0 && vars[i].size > vars[fi->largest_record].size)
+                fi->largest_record = i;
+        char fcb[16], name_lit[32];
+        snprintf(fcb, sizeof(fcb), "%%f%d", f);
+        emit_data_lit(ir, "fname", fi->select->text, name_lit, sizeof(name_lit));
+        IrInstr *d = new_instr(IR_DATA_FILE, fcb, name_lit, NULL, 0,
+                               record_size[vars[fi->first_record].record], 0, 0, USAGE_DISPLAY);
+        d->flags = (fi->select->decimal_places == 1 ? FILE_LINE : 0) |
+                   (fi->select->is_signed ? FILE_OPTIONAL : 0);
+        if (fi->select->extra) {
+            VarInfo *st = find_item(fi->select->extra, true);
+            if (st && (st->is_numeric || st->size != 2))
+                cobalt_error_loc(NULL, fi->select->extra->loc.line, fi->select->extra->loc.column,
+                                 "FILE STATUS item '%s' must be a two-character alphanumeric item", st->name);
+            else if (st) {
+                char label[48];
+                snprintf(label, sizeof(label), "%%r%d+%d", st->record, st->offset);
+                d->content = strdup(label);
+            }
+        }
+        append_instr(ir, d);
     }
 }
 
@@ -1541,6 +1639,138 @@ static void lower_search(IrProgram *ir, AstNode *node) {
     ast_free(index);
 }
 
+// ── Files ────────────────────────────────────────────────────────────────────
+
+static int find_file(const AstNode *ref) {
+    for (int f = 0; f < num_files; f++)
+        if (strcasecmp(files[f].name, ref->name) == 0) return f;
+    cobalt_error_loc(NULL, ref->loc.line, ref->loc.column, "'%s' is not a file", ref->name);
+    return -1;
+}
+
+static IrInstr *emit_file_op(IrProgram *ir, IrOpcode op, int file) {
+    IrInstr *i = emit(ir, op);
+    char fcb[16];
+    snprintf(fcb, sizeof(fcb), "%%f%d", file);
+    i->var_name = strdup(fcb);
+    return i;
+}
+
+static void emit_io_jump(IrProgram *ir, int low, int high, const char *target) {
+    IrInstr *j = emit(ir, IR_IO_JUMP);
+    j->imm = low;
+    j->size = high;
+    j->jump_target = strdup(target);
+}
+
+// Branches after an I-O statement: on_error runs for statuses low..high (AT
+// END), not_on_error for a successful status (00-09)
+static void lower_io_phrases(IrProgram *ir, AstNode *stmt, int low, int high) {
+    if (!stmt->on_error && !stmt->not_on_error) return;
+    char exc_lbl[32], end_lbl[32];
+    new_label(exc_lbl, sizeof(exc_lbl), "io_exception");
+    new_label(end_lbl, sizeof(end_lbl), "io_end");
+    emit_io_jump(ir, low, high, exc_lbl);
+    emit_io_jump(ir, 10, 99, end_lbl);      // other errors run neither phrase
+    lower_block(ir, stmt->not_on_error);
+    emit_jump(ir, IR_JUMP, end_lbl);
+    emit_label(ir, exc_lbl);
+    lower_block(ir, stmt->on_error);
+    emit_label(ir, end_lbl);
+}
+
+// The file a record name belongs to, and the record's field
+static int record_file(IrProgram *ir, AstNode *rec, FieldRef *f) {
+    VarInfo *v = find_item(rec, true);
+    if (!v) return -1;
+    if (v->file < 0 || v->parent >= 0) {
+        cobalt_error_loc(NULL, rec->loc.line, rec->loc.column, "'%s' is not a record of a file", rec->name);
+        return -1;
+    }
+    return resolve_ref(ir, rec, f) ? v->file : -1;
+}
+
+static void lower_file_statement(IrProgram *ir, AstNode *node) {
+    switch (node->kind) {
+        case AST_STATEMENT_OPEN:
+        case AST_STATEMENT_CLOSE:
+            for (AstNode *fn = node->children; fn; fn = fn->next) {
+                int f = find_file(fn);
+                if (f < 0) continue;
+                IrInstr *i = emit_file_op(ir, node->kind == AST_STATEMENT_OPEN ? IR_FILE_OPEN : IR_FILE_CLOSE, f);
+                i->imm = fn->decimal_places;
+            }
+            break;
+        case AST_STATEMENT_READ: {
+            int f = find_file(node->extra);
+            if (f < 0) return;
+            char area[48];
+            snprintf(area, sizeof(area), "%%r%d+0", vars[files[f].first_record].record);
+            IrInstr *r = emit_file_op(ir, IR_FILE_READ, f);
+            r->lit_name = strdup(area);
+            if (node->loop) {
+                // READ ... INTO: the record is moved after a successful read
+                char skip[32];
+                new_label(skip, sizeof(skip), "read_into_skip");
+                emit_io_jump(ir, 10, 99, skip);
+                AstNode *rec = item_ref(files[f].largest_record, node->loc);
+                emit(ir, IR_SIZE_ERR_CLEAR);
+                lower_move(ir, rec, node->loop, "");
+                ast_free(rec);
+                emit_label(ir, skip);
+            }
+            lower_io_phrases(ir, node, 10, 19);
+            break;
+        }
+        case AST_STATEMENT_WRITE:
+        case AST_STATEMENT_REWRITE: {
+            if (node->loop) {
+                // FROM: move the source to the record first
+                char lit[32] = {0};
+                if (node->loop->kind == AST_STRING_LITERAL || node->loop->kind == AST_LITERAL_NUMBER)
+                    emit_data_lit(ir, "lit", node->loop->name, lit, sizeof(lit));
+                emit(ir, IR_SIZE_ERR_CLEAR);
+                lower_move(ir, node->loop, node->extra, lit);
+            }
+            FieldRef rf;
+            int f = record_file(ir, node->extra, &rf);
+            if (f < 0) return;
+            if (node->kind == AST_STATEMENT_REWRITE) {
+                IrInstr *w = emit_file_op(ir, IR_FILE_REWRITE, f);
+                w->lit_name = strdup(rf.label);
+                w->size = rf.size;
+                break;
+            }
+            int mode = 0;                   // runtime ADV_* modes
+            bool on_stack = false;
+            long long lines = 0;
+            if (node->name) {
+                bool before = strcmp(node->name, "BEFORE") == 0;
+                AstNode *count = node->children;
+                if (count->kind == AST_BOOL_LITERAL) {
+                    mode = before ? 3 : 4;  // PAGE
+                } else {
+                    mode = before ? 1 : 2;
+                    if (!is_int_literal(count, &lines)) {
+                        if (!num_expr_valid(count)) return;
+                        push_int(ir, count);
+                        on_stack = true;
+                    }
+                }
+            }
+            IrInstr *w = emit_file_op(ir, IR_FILE_WRITE, f);
+            w->lit_name = strdup(rf.label);
+            w->size = rf.size;
+            w->imm = mode;
+            w->flags = on_stack ? 1 : 0;
+            w->digits = (int)lines;
+            break;
+        }
+        default:
+            break;
+    }
+}
+
 static void lower_display(IrProgram *ir, AstNode *node) {
     for (AstNode *arg = node->children; arg; arg = arg->next) {
         const char *content = arg->name ? arg->name : "";
@@ -1635,6 +1865,13 @@ static void lower_node(IrProgram *ir, AstNode *node) {
             break;
         case AST_STATEMENT_SEARCH:
             lower_search(ir, node);
+            break;
+        case AST_STATEMENT_OPEN:
+        case AST_STATEMENT_CLOSE:
+        case AST_STATEMENT_READ:
+        case AST_STATEMENT_WRITE:
+        case AST_STATEMENT_REWRITE:
+            lower_file_statement(ir, node);
             break;
         case AST_STATEMENT_EXIT:        // marks the end of a procedure; does nothing
         case AST_STATEMENT_CONTINUE:

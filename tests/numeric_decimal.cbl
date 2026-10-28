@@ -7,7 +7,7 @@
        01 R  PIC 9(7)V99 VALUE 0.
        01 T  PIC 999 VALUE 0.
        01 D  PIC 9V9(4) VALUE 0.
-       01 SD PIC S99V99 VALUE -1.05.
+       01 SDV PIC S99V99 VALUE -1.05.
        PROCEDURE DIVISION.
        MAIN-PARA.
            DISPLAY "P=" P.
@@ -21,10 +21,10 @@
            DISPLAY "D=" D.
            MOVE 12345.678 TO P.
            DISPLAY "P=" P.
-           SUBTRACT SD FROM Q.
+           SUBTRACT SDV FROM Q.
            DISPLAY "Q=" Q.
-           MOVE 0.05 TO SD.
-           DISPLAY "SD=" SD.
-           MOVE SD TO Q.
+           MOVE 0.05 TO SDV.
+           DISPLAY "SDV=" SDV.
+           MOVE SDV TO Q.
            DISPLAY "Q=" Q.
            STOP RUN.

@@ -38,8 +38,10 @@ typedef enum {
     AST_IDENTIFICATION_PARAGRAPH,
     AST_LITERAL_NUMBER,     // numeric literal
     AST_FIGURATIVE_CONSTANT, // e.g., ZEROS, SPACES
-    AST_FILE_DECL,          // FD/SD
-    AST_SELECT,
+    AST_FILE_DECL,          // FD: name = file; children = record description entries
+    AST_SELECT,             // SELECT: name = file; text = ASSIGN name; is_numeric =
+                            //   ASSIGN literal; is_signed = OPTIONAL; decimal_places =
+                            //   1 for LINE SEQUENTIAL; extra = FILE STATUS item
     AST_CONDITION,
     AST_PIC_CLAUSE,
     AST_USAGE_CLAUSE,
@@ -82,6 +84,13 @@ typedef enum {
     AST_JUSTIFIED,          // JUSTIFIED RIGHT
     AST_REFMOD,             // reference modification: children: start, [length]
     AST_STATEMENT_INITIALIZE, // children: identifiers
+    AST_STATEMENT_OPEN,     // children: files, each with decimal_places = open mode
+    AST_STATEMENT_CLOSE,    // children: files
+    AST_STATEMENT_READ,     // extra: file; loop: INTO identifier;
+                            //   on_error: AT END; not_on_error: NOT AT END
+    AST_STATEMENT_WRITE,    // extra: record; loop: FROM identifier; name: BEFORE or
+                            //   AFTER; children: line count, or PAGE (bool literal)
+    AST_STATEMENT_REWRITE,  // extra: record; loop: FROM identifier
     AST_STATEMENT_SEARCH,   // name: "ALL" for SEARCH ALL; extra: table identifier;
                             //   loop: VARYING identifier; on_error: AT END statements;
                             //   children: AST_WHEN nodes

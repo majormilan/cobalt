@@ -5,7 +5,8 @@
 # Prints one line per program and a summary. A program counts as compiled
 # when cobalt, nasm and ld all succeed. Run results come from the
 # "TESTS WERE EXECUTED SUCCESSFULLY" / "TEST(S) FAILED" lines of the
-# program's report.log.
+# program's report.log, or for monitor programs that DISPLAY their results,
+# from PASS / FAIL in their output.
 
 MODULE=${1:-NC}
 TARGET=${TARGET:-x86_64-linux-elf}
@@ -40,6 +41,16 @@ for cbl in "$SRC"/$MODULE*.CBL; do
         p=$(echo "$ok" | awk '{print $1+0}')
         passed=$((passed + ${p:-0})); failed=$((failed + ${bad:-0}))
         printf "%-8s RAN           %s, %s failed\n" "$name" "$ok" "${bad:-?}"
+    elif grep -q "END OF TEST" "$dir/run.log"; then
+        # Monitor ("M") programs DISPLAY their results instead of writing a report
+        ran=$((ran+1))
+        if grep -q "FAIL\*" "$dir/run.log" || ! grep -q "PASS" "$dir/run.log"; then
+            failed=$((failed+1))
+            printf "%-8s RAN (DISPLAY) see %s/run.log\n" "$name" "$dir"
+        else
+            passed=$((passed+1))
+            printf "%-8s RAN (DISPLAY) PASS\n" "$name"
+        fi
     else
         printf "%-8s NO-REPORT     (program ran but wrote no report.log)\n" "$name"
     fi

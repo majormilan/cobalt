@@ -120,6 +120,13 @@ positions in the PICTURE.
 | `runtime_move_numeric` | `dest, src_digits, src_len, dest_size, usage` | Right-justified digit copy, zero padded, for an alphanumeric source moved to an unsigned integer DISPLAY field. Requires `src_len <= dest_size`. |
 | `runtime_move_fill` | `dest, char, size, usage` | Fills a field with `char`. |
 | `runtime_replicate` | `ptr, size, count` | Copies the first `size` bytes at `ptr` over the following `count - 1` occurrences (INITIALIZE of a table). |
+| `runtime_move_pattern` | `ptr, size, pattern, pattern_len` | Fills a field with a pattern repeated (MOVE ALL "literal"). |
+| `runtime_compare_pattern` | `ptr, len, pattern, pattern_len` | Compares a field with a pattern repeated. Returns -1, 0 or 1. |
+| `runtime_file_open` | `fcb, mode` | OPEN (section 7). Returns the status code. |
+| `runtime_file_close` | `fcb` | CLOSE. Returns the status code. |
+| `runtime_file_read` | `fcb, area` | READ the next record into the record area. Returns the status code. |
+| `runtime_file_write` | `fcb, record, length, adv_mode, adv_lines` | WRITE, with ADVANCING (section 7). Returns the status code. |
+| `runtime_file_rewrite` | `fcb, record, length` | REWRITE the record last read. Returns the status code. |
 | `runtime_accept` | `dest, size, decimals, usage, pad_char` | Reads one line from stdin. `pad_char` `'0'`: right-justify and zero pad; otherwise left-justify and space pad. Excess input is discarded, `\r` is ignored, EOF ends the line. |
 | `runtime_accept_numeric` | `ptr, size, digits, scale, usage, flags` | Reads one line and stores it as a number: optional spaces, optional sign, digits and an optional point; the first other character ends the number; extra decimals are dropped. |
 | `runtime_num_load` | `ptr, size, usage, flags` | Returns the field's value as an unscaled signed integer in `RET0`. |
@@ -144,9 +151,16 @@ never calls them. The `cobrt_` prefix keeps them apart from COBOL names.
 | `cobrt_os_write` | `fd, buf, len` | bytes written, or negative on error |
 | `cobrt_os_read` | `fd, buf, len` | bytes read, 0 at EOF, negative on error |
 | `cobrt_os_exit` | `status` | does not return |
+| `cobrt_os_open` | `path, mode` | handle, or `OS_ERR_NOT_FOUND` (-1) / `OS_ERR_OTHER` (-2) |
+| `cobrt_os_close` | `handle` | 0, or negative on error |
+| `cobrt_os_seek` | `handle, offset` | new position (offset relative to the current one), or negative |
 
-File descriptors are 0 (stdin) and 1 (stdout), exposed as `COBRT_STDIN` and
-`COBRT_STDOUT`. An OS layer without numeric descriptors maps them to its own
+`cobrt_os_open` modes are OS independent: `OS_OPEN_READ` (0, existing file),
+`OS_OPEN_WRITE` (1, create or truncate), `OS_OPEN_READWRITE` (2, existing),
+`OS_OPEN_APPEND` (3, create if missing) and `OS_OPEN_RW_CREATE` (4).
+
+File descriptors are 0 (stdin), 1 (stdout) and 2 (stderr), exposed as
+`COBRT_STDIN`, `COBRT_STDOUT` and `COBRT_STDERR`. An OS layer without numeric descriptors maps them to its own
 handles.
 
 ## 5. Data layout
@@ -267,3 +281,58 @@ PERFORM counts go through a single representation:
   `ADD a b TO x` stores `x + a + b` into `x`, `DIVIDE a INTO b GIVING q
   REMAINDER r` stores `b / a` into `q` and then `b - q * a` into `r`.
 - Exponentiation (`**`) supports integer literal exponents from 0 to 18.
+
+## 7. Sequential files [implemented]
+
+Every file named in a SELECT has a 64-byte file control block (FCB) in the
+program's `.data`, labelled `F_<n>`, that generated code passes to the file
+routines:
+
+| Offset | Field | Contents |
+|---|---|---|
+| 0 | handle | OS handle while the file is open |
+| 8 | mode | 0 closed, 1 INPUT, 2 OUTPUT, 3 I-O, 4 EXTEND |
+| 16 | size | record area size (the longest record description) |
+| 24 | flags | 1 LINE SEQUENTIAL, 2 OPTIONAL |
+| 32 | name | NUL-terminated file name (from ASSIGN) |
+| 40 | status | address of the 2-character FILE STATUS item, or 0 |
+| 48 | state | runtime state bits (AT END reached, last READ succeeded, text line open, OPTIONAL file absent) |
+| 56 | reserved | |
+
+All record descriptions of one FD share one record area. Each file routine
+returns the I-O status code and stores it as two digits in the FILE STATUS
+item, if there is one. A status of 30 or more on a file without a FILE STATUS
+item ends the run with a message on stderr and exit status 1.
+
+| Status | Meaning |
+|---|---|
+| 00 | success |
+| 05 | OPEN of an OPTIONAL file that does not exist |
+| 10 | AT END |
+| 30 | other I-O error |
+| 35 | OPEN INPUT / I-O of a file that does not exist |
+| 41 | OPEN of an open file |
+| 42 | CLOSE of a file that is not open |
+| 43 | REWRITE without a successful READ |
+| 46 | READ after AT END |
+| 47 | READ of a file not open INPUT or I-O |
+| 48 | WRITE to a file not open OUTPUT or EXTEND |
+| 49 | REWRITE of a file not open I-O |
+
+**File formats.** ORGANIZATION SEQUENTIAL (record sequential, the default)
+files hold fixed-length records of the record area size with no separators;
+a short last record reads space padded. LINE SEQUENTIAL files, and any file
+written with ADVANCING, are text: each record is written without trailing
+spaces and ends with a newline; READ fills the record area from one line and
+pads it with spaces.
+
+**ADVANCING** follows printer semantics on text: `AFTER n` moves down `n`
+lines and then prints (the line stays open), `BEFORE n` prints and then moves
+down `n` lines, `PAGE` writes a form feed. WRITE without ADVANCING is
+`BEFORE 1`. A printer would overprint when `BEFORE` follows `AFTER` on the
+same line; in a text file the record starts a new line instead. CLOSE ends an
+open line.
+
+Not yet supported: RELATIVE and INDEXED organization, ACCESS RANDOM and
+DYNAMIC, LINAGE, SD and SORT/MERGE, USE declaratives, and ASSIGN to a data
+item.

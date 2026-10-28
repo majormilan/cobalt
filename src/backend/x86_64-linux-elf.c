@@ -29,8 +29,9 @@ static char *sanitize_label_name(const char *name) {
         return sanitized;
     }
     if (name[0] == '%') {
-        // Record storage: "%r3+12" becomes "D_3+12"
-        sprintf(sanitized, "D_%s", name + 2);
+        // Record storage "%r3+12" becomes "D_3+12"; a file control block
+        // "%f2" becomes "F_2"
+        sprintf(sanitized, "%c_%s", name[1] == 'f' ? 'F' : 'D', name + 2);
         return sanitized;
     }
     *d++ = 'c';
@@ -142,6 +143,7 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
     for (i = ir->head; i; i = i->next)
         if (i->op == IR_ADDR_SET && i->imm + 1 > num_slots) num_slots = (int)i->imm + 1;
     for (int k = 0; k < num_slots; k++) fprintf(f, "A_%d: resq 1\nN_%d: resq 1\n", k, k);
+    fprintf(f, "cobrt_io_status: resq 1\n");
     fprintf(f, "cobrt_tgt_err: resb 1\n");
     fprintf(f, "cobrt_stmt_err: resb 1\n");
     fprintf(f, "\n");
@@ -156,6 +158,18 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
             free(sanitized_name);
         }
         i = i->next;
+    }
+    // File control blocks (runtime/ABI.md section 7)
+    for (i = ir->head; i; i = i->next) {
+        if (i->op != IR_DATA_FILE) continue;
+        char *fcb = sanitize_label_name(i->var_name);
+        char *name = sanitize_label_name(i->lit_name);
+        char *status = i->content ? sanitize_label_name(i->content) : NULL;
+        fprintf(f, "align 8\n%s: dq 0, 0, %d, %d, %s, %s, 0, 0\n",
+                fcb, i->size, i->flags, name, status ? status : "0");
+        free(fcb);
+        free(name);
+        free(status);
     }
     fprintf(f, "\n");
 
@@ -417,6 +431,45 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 fprintf(f, "    mov rsi, %d\n", i->size);
                 fprintf(f, "    mov rdx, %lld\n", i->imm);
                 fprintf(f, "    call runtime_replicate\n");
+                break;
+            case IR_FILE_OPEN:
+            case IR_FILE_CLOSE:
+                emit_addr(f, "rdi", i->var_name);
+                fprintf(f, "    mov rsi, %lld\n", i->imm);
+                fprintf(f, "    call runtime_file_%s\n", i->op == IR_FILE_OPEN ? "open" : "close");
+                fprintf(f, "    mov [rel cobrt_io_status], rax\n\n");
+                break;
+            case IR_FILE_READ:
+                emit_addr(f, "rdi", i->var_name);
+                emit_addr(f, "rsi", i->lit_name);
+                fprintf(f, "    call runtime_file_read\n");
+                fprintf(f, "    mov [rel cobrt_io_status], rax\n\n");
+                break;
+            case IR_FILE_WRITE:
+                if (i->flags) emit_pop(f, "r8");
+                else fprintf(f, "    mov r8, %d\n", i->digits);
+                emit_addr(f, "rdi", i->var_name);
+                emit_addr(f, "rsi", i->lit_name);
+                emit_size(f, "rdx", i->size);
+                fprintf(f, "    mov rcx, %lld\n", i->imm);
+                fprintf(f, "    call runtime_file_write\n");
+                fprintf(f, "    mov [rel cobrt_io_status], rax\n\n");
+                break;
+            case IR_FILE_REWRITE:
+                emit_addr(f, "rdi", i->var_name);
+                emit_addr(f, "rsi", i->lit_name);
+                emit_size(f, "rdx", i->size);
+                fprintf(f, "    call runtime_file_rewrite\n");
+                fprintf(f, "    mov [rel cobrt_io_status], rax\n\n");
+                break;
+            case IR_IO_JUMP:
+                fprintf(f, "    mov rax, [rel cobrt_io_status]\n");
+                fprintf(f, "    cmp rax, %lld\n", i->imm);
+                fprintf(f, "    jl L_io_%d\n", store_counter);
+                fprintf(f, "    cmp rax, %d\n", i->size);
+                fprintf(f, "    jle %s\n", sanitized_jump);
+                fprintf(f, "L_io_%d:\n", store_counter);
+                store_counter++;
                 break;
             case IR_SIZE_ERR_CLEAR:
                 fprintf(f, "    mov byte [rel cobrt_tgt_err], 0\n");

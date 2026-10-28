@@ -69,6 +69,19 @@ typedef enum {
     IR_LEN_SET,             // pop v; N_<imm> = v
     IR_CALL_REPLICATE,      // copy the first size bytes of var_name over the
                             //   following imm - 1 occurrences
+    // Sequential files (runtime/ABI.md section 7). var_name is the file
+    // control block "%f<n>"; every call leaves the status code where
+    // IR_IO_JUMP can test it.
+    IR_DATA_FILE,           // file control block var_name: lit_name = file name literal,
+                            //   size = record area size, flags = FILE_* flags,
+                            //   content = FILE STATUS item (or NULL)
+    IR_FILE_OPEN,           // imm = OPEN mode (1 INPUT, 2 OUTPUT, 3 I-O, 4 EXTEND)
+    IR_FILE_CLOSE,
+    IR_FILE_READ,           // into the record area lit_name
+    IR_FILE_WRITE,          // record lit_name, size bytes; imm = advancing mode;
+                            //   lines = digits, or popped from the numeric stack if flags
+    IR_FILE_REWRITE,        // record lit_name, size bytes
+    IR_IO_JUMP,             // jump to jump_target if imm <= status <= size
     IR_SIZE_ERR_CLEAR,      // start of a statement that stores numeric results
     IR_JUMP_IF_NO_SIZE_ERR, // jump to jump_target if no size error since the clear
 } IrOpcode;

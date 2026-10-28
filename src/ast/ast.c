@@ -131,6 +131,13 @@ void ast_dump(AstNode *node, FILE *out, int indent) {
         case AST_REFMOD:                    kind_name = "REFMOD"; break;
         case AST_STATEMENT_INITIALIZE:      kind_name = "INITIALIZE"; break;
         case AST_STATEMENT_SEARCH:          kind_name = "SEARCH"; break;
+        case AST_STATEMENT_OPEN:            kind_name = "OPEN"; break;
+        case AST_STATEMENT_CLOSE:           kind_name = "CLOSE"; break;
+        case AST_STATEMENT_READ:            kind_name = "READ"; break;
+        case AST_STATEMENT_WRITE:           kind_name = "WRITE"; break;
+        case AST_STATEMENT_REWRITE:         kind_name = "REWRITE"; break;
+        case AST_SELECT:                    kind_name = "SELECT"; break;
+        case AST_FILE_DECL:                 kind_name = "FD"; break;
         default:                            kind_name = "UNKNOWN"; break;
     }
 
