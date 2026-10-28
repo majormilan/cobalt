@@ -112,8 +112,7 @@ positions in the PICTURE.
 | `runtime_init` | `entry_sp` | Called once at program start with the stack pointer at program entry (the OS layer finds the environment there). |
 | `runtime_exit` | none | Ends the program with status 0. Does not return. |
 | `runtime_display_string` | `ptr` (NUL-terminated) | Writes a literal to stdout. |
-| `runtime_display_numeric` | `ptr, size, scale, usage, flags` | Writes a numeric field: no leading zeros (one zero before the point), all `scale` decimals, a leading `-` when negative. |
-| `runtime_display_var_string` | `ptr, size, usage` | Writes an alphanumeric field as is (`size` bytes). |
+| `runtime_display_var_string` | `ptr, size, usage` | Writes a field as stored (`size` bytes). DISPLAY uses it for every item: a numeric DISPLAY item shows its stored characters (all digit positions, an overpunched or separate sign, no decimal point); a binary or packed item is first stored as the DISPLAY item of the same PICTURE (sign overpunched on the last digit). |
 | `runtime_display_fill` | `char, size, usage` | Writes `size` copies of `char` (figurative constants). |
 | `runtime_display_newline` | none | Ends the DISPLAY line. |
 | `runtime_move_alphanum` | `dest, src, src_len, dest_size, justified` | Left-justified copy, space padded, truncated on the right. With `justified` non-zero (JUSTIFIED RIGHT): right-justified, space padded on the left, truncated on the left. |

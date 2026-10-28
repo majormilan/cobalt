@@ -6,7 +6,6 @@
 RUNTIME_ROUTINE(runtime_init)
 RUNTIME_ROUTINE(runtime_exit)
 RUNTIME_ROUTINE(runtime_display_string)
-RUNTIME_ROUTINE(runtime_display_numeric)
 RUNTIME_ROUTINE(runtime_display_var_string)
 RUNTIME_ROUTINE(runtime_display_fill)
 RUNTIME_ROUTINE(runtime_display_newline)

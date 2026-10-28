@@ -18,7 +18,6 @@ typedef enum {
     IR_DATA_LIT,            // lit_name, content
     IR_CALL_INIT,           // no args (runtime_init)
     IR_CALL_DISPLAY_STR,    // lit_name
-    IR_CALL_DISPLAY_NUM,    // var_name, size, decimal_places (scale), usage_type, flags
     IR_CALL_DISPLAY_VAR_STR, // var_name, size, usage_type
     IR_EMIT_NEWLINE,        // no args (for DISPLAY statement newline)
     IR_CALL_MOVE_ALPHA,     // dest var_name, src lit_name, lit_len = src length, size = dest size;

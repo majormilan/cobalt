@@ -3078,13 +3078,25 @@ static void lower_display(IrProgram *ir, AstNode *node) {
         } else if (arg->kind == AST_IDENTIFIER) {
             FieldRef f;
             if (!resolve_ref(ir, arg, &f)) continue;
-            if (f.var->is_numeric && !f.refmod) {
-                IrInstr *d = new_instr(IR_CALL_DISPLAY_NUM, f.label, NULL, NULL, 0, f.var->size,
-                                       f.var->decimal_places > 0 ? f.var->decimal_places : 0, 0,
-                                       f.var->usage_type);
-                d->flags = var_flags(f.var);
-                append_instr(ir, d);
+            if (f.var->is_numeric && !f.refmod && f.var->usage_type != USAGE_DISPLAY) {
+                // A binary or packed item shows as the DISPLAY item of the same
+                // PICTURE would: its digits, a signed one with the sign
+                // overpunched on the last digit
+                static VarInfo zoned;
+                memset(&zoned, 0, sizeof(zoned));
+                zoned.usage_type = USAGE_DISPLAY;
+                zoned.is_numeric = true;
+                zoned.is_signed = f.var->is_signed;
+                zoned.digits = zoned.size = f.var->digits > 0 && f.var->digits <= 18 ? f.var->digits : 18;
+                FieldRef z = { .var = &zoned, .size = zoned.size };
+                snprintf(z.label, sizeof(z.label), "$numtext");
+                emit(ir, IR_SIZE_ERR_CLEAR);
+                emit_load(ir, &f);
+                emit_store(ir, &z, false);
+                append_instr(ir, new_instr(IR_CALL_DISPLAY_VAR_STR, z.label, NULL, NULL, 0, z.size, 0, 0, USAGE_DISPLAY));
             } else {
+                // Everything else (numeric DISPLAY items included) shows its
+                // stored characters
                 append_instr(ir, new_instr(IR_CALL_DISPLAY_VAR_STR, f.label, NULL, NULL, 0, f.size, 0, 0, USAGE_DISPLAY));
             }
         }

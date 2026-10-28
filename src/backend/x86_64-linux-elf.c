@@ -227,14 +227,6 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 emit_addr(f, "rdi", i->lit_name);
                 fprintf(f, "    call runtime_display_string\n");
                 break;
-            case IR_CALL_DISPLAY_NUM:
-                emit_addr(f, "rdi", i->var_name);
-                emit_size(f, "rsi", i->size);
-                fprintf(f, "    mov rdx, %d\n", i->decimal_places);
-                fprintf(f, "    mov rcx, %d\n", i->usage_type);
-                fprintf(f, "    mov r8, %d\n", i->flags);
-                fprintf(f, "    call runtime_display_numeric\n");
-                break;
             case IR_CALL_DISPLAY_FILL:
                 fprintf(f, "    mov rdi, %d\n", i->pad_char);
                 emit_size(f, "rsi", i->size);

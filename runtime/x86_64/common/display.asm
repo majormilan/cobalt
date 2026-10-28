@@ -1,12 +1,11 @@
 ; runtime/x86_64/common/display.asm
-; DISPLAY support: literals, numeric and alphanumeric fields, fills, newline.
+; DISPLAY support: literals, fields (as stored), fills, newline.
 
 %include "runtime.inc"
 
 section .text
 
 global runtime_display_string
-global runtime_display_numeric
 global runtime_display_var_string
 global runtime_display_fill
 global runtime_display_newline
@@ -33,68 +32,6 @@ runtime_display_string:
     mov ARG0, COBRT_STDOUT
     call cobrt_os_write
 
-    leave
-    ret
-
-; ARG0 = field ptr, ARG1 = size, ARG2 = scale (digits after the implied point)
-; ARG3 = usage, ARG4 = flags
-; Writes the value without leading zeros (one zero before the point), with a
-; leading '-' when negative.
-runtime_display_numeric:
-    push rbp
-    mov rbp, rsp
-    push r12
-    push r13
-    sub rsp, 48                         ; text buffer [rbp-64, rbp-16)
-
-    mov r12, ARG2                       ; scale
-    mov rax, ARG3
-    mov r10, ARG4
-    mov ARG2, rax                       ; usage
-    mov ARG3, r10                       ; flags
-    call runtime_num_load
-    mov r13, rax                        ; value
-
-    lea rdi, [rbp-16]                   ; fill the buffer from the right
-    test rax, rax
-    jns .abs
-    neg rax
-.abs:
-    mov r8, 10
-    xor ecx, ecx                        ; digits written
-.digit_loop:
-    cmp rcx, r12
-    jne .digit
-    test rcx, rcx
-    jz .digit
-    dec rdi
-    mov byte [rdi], '.'
-.digit:
-    xor edx, edx
-    div r8
-    add dl, '0'
-    dec rdi
-    mov [rdi], dl
-    inc rcx
-    test rax, rax
-    jnz .digit_loop
-    cmp rcx, r12
-    jbe .digit_loop                     ; at least one digit before the point
-
-    test r13, r13
-    jns .print
-    dec rdi
-    mov byte [rdi], '-'
-.print:
-    lea rax, [rbp-16]
-    sub rax, rdi
-    mov ARG2, rax                       ; length
-    mov ARG1, rdi                       ; text
-    mov ARG0, COBRT_STDOUT
-    call cobrt_os_write
-
-    mov r12, [rbp-8]
-    mov r13, [rbp-16]
     leave
     ret
 

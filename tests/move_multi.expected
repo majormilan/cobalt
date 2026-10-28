@@ -1,11 +1,11 @@
 Test 1 - MOVE literal to 3 targets:
-A=42
-B=42
-C=42
+A=042
+B=042
+C=042
 Test 2 - MOVE ZERO to 3 targets:
-A=0
-B=0
-C=0
+A=000
+B=000
+C=000
 Test 3 - MOVE var to 2 targets:
-A=77
-B=77
+A=077
+B=077
