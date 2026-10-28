@@ -1,74 +1,83 @@
 #!/bin/bash
 
 # COBOL E2E Test Runner
-# Usage: ./test_runner.sh <cbl_file>
+# Usage: [TARGET=<triple>] ./test_runner.sh <cbl_file>
+#
+# Build artifacts go to obj/test/<triple>/ and are kept for inspection.
+# If tests/<name>.input exists it is fed to the program on stdin,
+# otherwise stdin is empty (so ACCEPT never blocks).
 
 if [ "$#" -ne 1 ]; then
-    echo "Usage: $0 <cbl_file>"
+    echo "Usage: [TARGET=<triple>] $0 <cbl_file>"
     exit 1
 fi
 
+TARGET=${TARGET:-x86_64-linux-elf}
+
+case "$TARGET" in
+    x86_64-linux-elf) NASM_FMT=elf64 ;;
+    *)
+        echo "Error: Unsupported TARGET '$TARGET'"
+        exit 1
+        ;;
+esac
+
 CBL_FILE=$1
 BASENAME=$(basename "$CBL_FILE" .cbl)
-ASM_FILE="${BASENAME}.asm"
-OBJ_FILE="${BASENAME}.o"
-RUNTIME_OBJ="runtime.o"
-BIN_FILE="./${BASENAME}_bin"
+BUILD_DIR="obj/test/$TARGET"
+ASM_FILE="$BUILD_DIR/${BASENAME}.asm"
+OBJ_FILE="$BUILD_DIR/${BASENAME}.o"
+BIN_FILE="$BUILD_DIR/${BASENAME}"
+RUNTIME_LIB="obj/runtime/$TARGET/libcobrt.a"
+INPUT_FILE="tests/${BASENAME}.input"
+EXPECTED_FILE="tests/${BASENAME}.expected"
 
-echo "Testing $CBL_FILE..."
+echo "Testing $CBL_FILE ($TARGET)..."
+
+if [ ! -f "$RUNTIME_LIB" ]; then
+    echo "Error: $RUNTIME_LIB not found, run 'make runtime TARGET=$TARGET'"
+    exit 1
+fi
+
+mkdir -p "$BUILD_DIR"
 
 # 1. Compile COBOL to Assembly
-./bin/cobalt -i "$CBL_FILE" -o "$ASM_FILE" > /dev/null
+./bin/cobalt -t "$TARGET" -i "$CBL_FILE" -o "$ASM_FILE" > /dev/null
 if [ $? -ne 0 ]; then
     echo "Error: Compilation failed for $CBL_FILE"
     exit 1
 fi
 
 # 2. Assemble Assembly to Object
-nasm -f elf64 "$ASM_FILE" -o "$OBJ_FILE"
+nasm -f "$NASM_FMT" "$ASM_FILE" -o "$OBJ_FILE"
 if [ $? -ne 0 ]; then
     echo "Error: Assembly failed for $ASM_FILE"
     exit 1
 fi
 
-# 3. Ensure Runtime Object exists
-if [ ! -f "$RUNTIME_OBJ" ]; then
-    nasm -f elf64 "runtime/x86_64-linux-elf.asm" -o "$RUNTIME_OBJ"
-fi
-
-# 4. Link
-ld "$OBJ_FILE" "$RUNTIME_OBJ" -o "$BIN_FILE"
+# 3. Link against the target runtime
+ld "$OBJ_FILE" "$RUNTIME_LIB" -o "$BIN_FILE"
 if [ $? -ne 0 ]; then
     echo "Error: Linking failed"
     exit 1
 fi
 
-# 5. Run and capture output
-OUTPUT=$($BIN_FILE)
+# 4. Run and capture output
+if [ -f "$INPUT_FILE" ]; then
+    OUTPUT=$("$BIN_FILE" < "$INPUT_FILE")
+else
+    OUTPUT=$("$BIN_FILE" < /dev/null)
+fi
 
-# 6. Verify Output
-EXPECTED_FILE="tests/${BASENAME}.expected"
-
+# 5. Verify Output
 if [ -f "$EXPECTED_FILE" ]; then
-    echo "$OUTPUT" > "${BASENAME}.actual"
-    # Using diff with -w to ignore whitespace issues for now, if necessary. 
-    # Let's start strict and see.
-    diff -u "$EXPECTED_FILE" "${BASENAME}.actual" > "${BASENAME}.diff"
-    
-    if [ $? -eq 0 ]; then
+    if diff -u "$EXPECTED_FILE" <(echo "$OUTPUT"); then
         echo "Test Passed!"
-        rm "${BASENAME}.actual" "${BASENAME}.diff"
     else
-        echo "Test Failed! Differences:"
-        cat "${BASENAME}.diff"
-        rm "${BASENAME}.actual" "${BASENAME}.diff"
-        rm "$ASM_FILE" "$OBJ_FILE" "$BIN_FILE"
+        echo "Test Failed!"
         exit 1
     fi
 else
     echo "No expected output file found at $EXPECTED_FILE. Output:"
     echo "$OUTPUT"
 fi
-
-# Cleanup
-rm "$ASM_FILE" "$OBJ_FILE" "$BIN_FILE"

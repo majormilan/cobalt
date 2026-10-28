@@ -1,0 +1,2 @@
+Fails to compile: "ADD a TO b GIVING c" (COBOL 2002 form) is rejected, and
+PIC 9(5)V99 decimal arithmetic is not implemented yet (roadmap Phase 1).

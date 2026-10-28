@@ -1,0 +1,22 @@
+/* runtime/routines.def
+ * The runtime contract: every routine generated code may call.
+ * Each target runtime under runtime/<arch>/ must export all of these.
+ * Usage: #define RUNTIME_ROUTINE(name) ... then #include "routines.def"
+ */
+RUNTIME_ROUTINE(runtime_init)
+RUNTIME_ROUTINE(runtime_exit)
+RUNTIME_ROUTINE(runtime_display_string)
+RUNTIME_ROUTINE(runtime_display_numeric)
+RUNTIME_ROUTINE(runtime_display_var_string)
+RUNTIME_ROUTINE(runtime_display_fill)
+RUNTIME_ROUTINE(runtime_display_newline)
+RUNTIME_ROUTINE(runtime_move_alphanum)
+RUNTIME_ROUTINE(runtime_move_numeric)
+RUNTIME_ROUTINE(runtime_move_fill)
+RUNTIME_ROUTINE(runtime_accept)
+RUNTIME_ROUTINE(runtime_load_int)
+RUNTIME_ROUTINE(runtime_add_to)
+RUNTIME_ROUTINE(runtime_sub_from)
+RUNTIME_ROUTINE(runtime_mul_by)
+RUNTIME_ROUTINE(runtime_div_into)
+RUNTIME_ROUTINE(runtime_mod_into)

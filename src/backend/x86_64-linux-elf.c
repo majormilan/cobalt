@@ -57,6 +57,7 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
     fprintf(f, "extern runtime_display_fill\n"); // New
     fprintf(f, "extern runtime_move_fill\n");    // New
     fprintf(f, "extern runtime_display_var_string\n"); // New
+    fprintf(f, "extern runtime_display_newline\n");
     fprintf(f, "extern runtime_accept\n");             // New
     fprintf(f, "extern runtime_add_to\n");
     fprintf(f, "extern runtime_sub_from\n");
@@ -91,7 +92,6 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
         }
         i = i->next;
     }
-    fprintf(f, "newline: db 10, 0\n");
     fprintf(f, "\n");
 
     fprintf(f, "section .text\n");
@@ -133,11 +133,7 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
                 fprintf(f, "    call runtime_display_var_string\n");
                 break;
             case IR_EMIT_NEWLINE:
-                fprintf(f, "    mov rax, 1\n"); // syscall number for write
-                fprintf(f, "    mov rdi, 1\n"); // file descriptor 1 (stdout)
-                fprintf(f, "    lea rsi, [rel newline]\n"); // address of newline character
-                fprintf(f, "    mov rdx, 1\n"); // length of string
-                fprintf(f, "    syscall\n\n");
+                fprintf(f, "    call runtime_display_newline\n\n");
                 break;
             case IR_CALL_MOVE_ALPHA:
             case IR_CALL_MOVE_NUM:

@@ -1,0 +1,3 @@
+USAGE COMP fields are allocated as binary (4 bytes for 9(5)) but stored and
+displayed as ASCII digits, so 12345 shows as 1234. Fix with real binary COMP
+(roadmap Phase 3).
