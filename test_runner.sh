@@ -7,6 +7,7 @@
 # If tests/<name>.input exists it is fed to the program on stdin,
 # otherwise stdin is empty (so ACCEPT never blocks).
 # A program running longer than TEST_TIMEOUT seconds (default 10) fails.
+# If tests/<name>.flags exists, its contents are extra compiler options.
 
 if [ "$#" -ne 1 ]; then
     echo "Usage: [TARGET=<triple>] $0 <cbl_file>"
@@ -33,6 +34,9 @@ BIN_FILE="$BUILD_DIR/${BASENAME}"
 RUNTIME_LIB="obj/runtime/$TARGET/libcobrt.a"
 INPUT_FILE="tests/${BASENAME}.input"
 EXPECTED_FILE="tests/${BASENAME}.expected"
+FLAGS_FILE="tests/${BASENAME}.flags"
+FLAGS=""
+[ -f "$FLAGS_FILE" ] && FLAGS=$(cat "$FLAGS_FILE")
 
 echo "Testing $CBL_FILE ($TARGET)..."
 
@@ -44,7 +48,7 @@ fi
 mkdir -p "$BUILD_DIR"
 
 # 1. Compile COBOL to Assembly
-./bin/cobalt -t "$TARGET" -i "$CBL_FILE" -o "$ASM_FILE" > /dev/null
+./bin/cobalt -t "$TARGET" $FLAGS -i "$CBL_FILE" -o "$ASM_FILE" > /dev/null
 if [ $? -ne 0 ]; then
     echo "Error: Compilation failed for $CBL_FILE"
     exit 1

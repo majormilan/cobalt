@@ -118,9 +118,14 @@ static const char *emit_data_lit(IrProgram *ir, const char *prefix, const char *
     return buf;
 }
 
-// Character of a figurative constant, or -1 if n is not one
+#define FIG_PATTERN (-2)   // ALL with a literal of several characters
+
+// Character of a figurative constant, FIG_PATTERN for ALL "multi-char", or
+// -1 if n is not a figurative constant
 static int figurative_char(const AstNode *n) {
     if (n->kind != AST_FIGURATIVE_CONSTANT || !n->name) return -1;
+    if (strcasecmp(n->name, "ALL") == 0)
+        return (n->text && strlen(n->text) == 1) ? (unsigned char)n->text[0] : FIG_PATTERN;
     if (strncasecmp(n->name, "ZERO", 4) == 0)       return '0';
     if (strncasecmp(n->name, "SPACE", 5) == 0)      return ' ';
     if (strncasecmp(n->name, "HIGH-VALUE", 10) == 0) return 0xFF;
@@ -232,7 +237,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
                 v->level = level;
                 v->decl = decl;
                 v->is_filler = strcasecmp(decl->name, "FILLER") == 0;
-                v->is_group = !has_clause(decl, AST_PIC_CLAUSE);
+                v->is_group = !has_clause(decl, AST_PIC_CLAUSE) && !decl->is_numeric;
                 v->justified = has_clause(decl, AST_JUSTIFIED);
                 // sema.c has already populated the semantic fields
                 v->size = (int)decl->data_size;
@@ -989,11 +994,11 @@ static void emit_relation_false_jump(IrProgram *ir, AstNode *left, AstNode *righ
             emit_rescale(ir, s - sr, false);
             jump = emit(ir, IR_NUM_CMP_JUMP_IF_FALSE);
         }
-    } else if (fl >= 0 || fr >= 0) {
-        if (fl >= 0 && fr >= 0) {
+    } else if (fl != -1 || fr != -1) {
+        if (fl != -1 && fr != -1) {
             cobalt_error_loc(NULL, left->loc.line, left->loc.column, "Two figurative constants cannot be compared");
         } else {
-            if (fl >= 0) {
+            if (fl != -1) {
                 AstNode *t = left; left = right; right = t;
                 fr = fl;
                 op = mirror_op(op);
@@ -1003,7 +1008,14 @@ static void emit_relation_false_jump(IrProgram *ir, AstNode *left, AstNode *righ
                 jump = emit(ir, IR_FILL_CMP_JUMP_IF_FALSE);
                 jump->var_name = strdup(f.label);
                 jump->size = f.size;
-                jump->pad_char = (char)fr;
+                if (fr == FIG_PATTERN) {
+                    char lit[32];
+                    emit_data_lit(ir, "patlit", right->text, lit, sizeof(lit));
+                    jump->lit_name = strdup(lit);
+                    jump->lit_len = (int)strlen(right->text);
+                } else {
+                    jump->pad_char = (char)fr;
+                }
             }
         }
     } else {
@@ -1185,6 +1197,19 @@ static void emit_fill(IrProgram *ir, const FieldRef *dest, int ch) {
                                (char)ch, USAGE_DISPLAY));
 }
 
+// Fill a field with a figurative constant (character or ALL "pattern")
+static void emit_fill_figurative(IrProgram *ir, const FieldRef *dest, const AstNode *fig) {
+    int ch = figurative_char(fig);
+    if (ch != FIG_PATTERN) {
+        emit_fill(ir, dest, ch);
+        return;
+    }
+    char lit[32];
+    emit_data_lit(ir, "patlit", fig->text, lit, sizeof(lit));
+    append_instr(ir, new_instr(IR_CALL_MOVE_FILL, dest->label, lit, NULL,
+                               (int)strlen(fig->text), dest->size, 0, 0, USAGE_DISPLAY));
+}
+
 // MOVE src TO dest (one receiver). Receiver subscripts are evaluated just
 // before the data is moved.
 static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const char *src_lit) {
@@ -1193,7 +1218,7 @@ static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const ch
     bool dest_numeric = dv->is_numeric && !dest_node->loop && !dv->is_cond;
 
     int fig = figurative_char(src);
-    if (fig >= 0) {
+    if (fig != -1) {
         if (dest_numeric && fig != '0') {
             cobalt_error_loc(NULL, src->loc.line, src->loc.column,
                              "%s cannot be moved to numeric '%s'", src->name, dv->name);
@@ -1206,7 +1231,7 @@ static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const ch
             emit_store(ir, &dest, false);
         } else {
             if (!resolve_ref(ir, dest_node, &dest)) return;
-            emit_fill(ir, &dest, fig);
+            emit_fill_figurative(ir, &dest, src);
         }
         return;
     }
@@ -1523,6 +1548,10 @@ static void lower_display(IrProgram *ir, AstNode *node) {
             char lit_name[32];
             emit_data_lit(ir, "lit", content, lit_name, sizeof(lit_name));
             append_instr(ir, new_instr(IR_CALL_DISPLAY_STR, NULL, lit_name, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+        } else if (arg->kind == AST_FIGURATIVE_CONSTANT && figurative_char(arg) == FIG_PATTERN) {
+            char lit_name[32];
+            emit_data_lit(ir, "lit", arg->text, lit_name, sizeof(lit_name));
+            append_instr(ir, new_instr(IR_CALL_DISPLAY_STR, NULL, lit_name, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
         } else if (arg->kind == AST_FIGURATIVE_CONSTANT) {
             char pad_char = (char)figurative_char(arg);
             append_instr(ir, new_instr(IR_CALL_DISPLAY_FILL, NULL, NULL, NULL, 0, 1, 0, pad_char, USAGE_DISPLAY));
@@ -1682,12 +1711,12 @@ static void lower_initial_value(IrProgram *ir, int idx) {
     ast_free(ref);
     bool numeric = v->is_numeric;
     int fig = figurative_char(val);
-    if (fig >= 0) {
+    if (fig != -1) {
         if (numeric) {
             emit_num(ir, IR_NUM_CONST, 0, 0);
             emit_store(ir, &f, false);
         } else {
-            emit_fill(ir, &f, fig);
+            emit_fill_figurative(ir, &f, val);
         }
     } else if (val->kind == AST_LITERAL_NUMBER && numeric) {
         if (!num_expr_valid(val)) return;

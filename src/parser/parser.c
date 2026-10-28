@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>  // for strcasecmp
+#include <ctype.h>
 
 static Token tok;
 static Lexer *current_lexer; // Temporary global lexer for parser functions
@@ -70,6 +71,22 @@ static char *tok_to_str(void) {
     if (s) {
         strncpy(s, tok.lexeme, tok.length);
         s[tok.length] = '\0';
+    }
+    return s;
+}
+
+// Text of the current token; for a nonnumeric literal the doubled delimiter
+// ("" or '') inside it stands for one delimiter character
+static char *tok_value(void) {
+    char *s = tok_to_str();
+    if (s && tok.kind == TOK_STRING) {
+        char q = tok.lexeme[-1];
+        char *d = s;
+        for (const char *p = s; *p; p++) {
+            *d++ = *p;
+            if (*p == q && p[1] == q) p++;
+        }
+        *d = '\0';
     }
     return s;
 }
@@ -189,6 +206,7 @@ static AstNode *parse_identification_paragraph(void) {
 }
 
 static AstNode *parse_rel_operand(void);
+static AstNode *parse_all_literal(void);
 static void arith_error(const char *msg);
 
 // Map a usage keyword to its usage type; returns false if tok is not one
@@ -254,7 +272,8 @@ static AstNode *parse_var_decl(void) {
         }
         next();
         if (tok.kind == TOK_IS) next();
-        while (tok.kind == TOK_STRING || tok.kind == TOK_NUMBER || is_figurative(tok.kind)) {
+        while (tok.kind == TOK_STRING || tok.kind == TOK_NUMBER || is_figurative(tok.kind) ||
+               tok.kind == TOK_ALL) {
             AstNode *lo = parse_rel_operand();
             if (tok.kind == TOK_THROUGH) {
                 next();
@@ -302,10 +321,20 @@ static AstNode *parse_var_decl(void) {
             }
             free(pic);
             next();
-        } else if (tok.kind == TOK_USAGE || usage_from_token(tok.kind, &usage)) {
+        } else if (tok.kind == TOK_USAGE || tok.kind == TOK_INDEX || usage_from_token(tok.kind, &usage)) {
             if (tok.kind == TOK_USAGE) {
                 next();
                 if (tok.kind == TOK_IS) next();
+            }
+            if (tok.kind == TOK_INDEX) {
+                // USAGE INDEX: an occurrence number, stored like an index-name
+                AstNode *usage_clause = ast_new(AST_USAGE_CLAUSE, "INDEX", cl_loc);
+                usage_clause->usage_type = USAGE_COMP5;
+                append_child(var, &tail, usage_clause);
+                next();
+                continue;
+            }
+            {
                 if (!usage_from_token(tok.kind, &usage)) {
                     cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
                                      "Unsupported USAGE '%.*s'", (int)tok.length, tok.lexeme);
@@ -322,7 +351,7 @@ static AstNode *parse_var_decl(void) {
         } else if (tok.kind == TOK_VALUE) {
             next();
             if (tok.kind == TOK_IS) next();
-            char *val = tok_to_str();
+            char *val = tok_value();
             AstNode *val_node = NULL;
             SourceLocation val_loc = {current_lexer->filename, tok.line, tok.column};
             if (tok.kind == TOK_STRING) {
@@ -331,6 +360,12 @@ static AstNode *parse_var_decl(void) {
                 val_node = ast_new(AST_LITERAL_NUMBER, val, val_loc);
             } else if (is_figurative(tok.kind)) {
                 val_node = ast_new(AST_FIGURATIVE_CONSTANT, val, val_loc);
+            } else if (tok.kind == TOK_ALL) {
+                free(val);
+                val_node = parse_all_literal();
+                if (!val_node) { ast_free(var); return NULL; }
+                append_child(var, &tail, val_node);
+                continue;
             } else {
                 cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Expected literal or figurative constant after VALUE, got '%.*s'", (int)tok.length, tok.lexeme);
                 free(val);
@@ -476,16 +511,39 @@ static AstNode *parse_identifier(void) {
     return id;
 }
 
+// ALL literal (a figurative constant repeating the literal) or ALL followed
+// by a figurative constant (the same constant). Assumes tok is ALL.
+static AstNode *parse_all_literal(void) {
+    SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
+    next();
+    if (tok.kind != TOK_STRING && !is_figurative(tok.kind)) {
+        arith_error("Expected a literal after ALL");
+        return NULL;
+    }
+    char *val = tok_value();
+    AstNode *node;
+    if (tok.kind == TOK_STRING) {
+        node = ast_new(AST_FIGURATIVE_CONSTANT, "ALL", loc);
+        node->text = val;
+    } else {
+        node = ast_new(AST_FIGURATIVE_CONSTANT, val, loc);
+        free(val);
+    }
+    next();
+    return node;
+}
+
 // Identifier, literal or figurative constant (DISPLAY and MOVE operands)
 static AstNode *parse_value_operand(void) {
     if (tok.kind == TOK_IDENT) return parse_identifier();
+    if (tok.kind == TOK_ALL) return parse_all_literal();
     SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
     AstKind kind;
     if (tok.kind == TOK_STRING) kind = AST_STRING_LITERAL;
     else if (tok.kind == TOK_NUMBER) kind = AST_LITERAL_NUMBER;
     else if (is_figurative(tok.kind)) kind = AST_FIGURATIVE_CONSTANT;
     else return NULL;
-    char *val = tok_to_str();
+    char *val = tok_value();
     AstNode *node = ast_new(kind, val, loc);
     free(val);
     next();
@@ -679,8 +737,9 @@ static AstNode *make_relation(AstNode *left, const char *op, AstNode *right) {
 // expression. Returns NULL, consuming nothing, if none starts here.
 static AstNode *parse_rel_operand(void) {
     SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
+    if (tok.kind == TOK_ALL) return parse_all_literal();
     if (tok.kind == TOK_STRING || is_figurative(tok.kind)) {
-        char *val = tok_to_str();
+        char *val = tok_value();
         AstNode *op = ast_new(tok.kind == TOK_STRING ? AST_STRING_LITERAL : AST_FIGURATIVE_CONSTANT, val, loc);
         free(val);
         next();
@@ -963,6 +1022,15 @@ static AstNode *parse_arith_operand(void) {
     return op;
 }
 
+// Procedure names are words or unsigned integers ("0001")
+static bool is_procedure_name_token(void) {
+    if (tok.kind == TOK_IDENT) return true;
+    if (tok.kind != TOK_NUMBER) return false;
+    for (size_t i = 0; i < tok.length; i++)
+        if (!isdigit((unsigned char)tok.lexeme[i])) return false;
+    return true;
+}
+
 // Procedure (paragraph or section) name; may be a forward reference, so it is
 // resolved during IR lowering.
 static AstNode *parse_procedure_name(void) {
@@ -1016,10 +1084,12 @@ static bool is_scope_terminator(TokenKind kind) {
 }
 
 // True where a statement sequence ends: end of sentence, a phrase keyword of
-// an enclosing statement, a scope terminator, or a procedure name.
+// an enclosing statement, a scope terminator, or a procedure name (a word or
+// an all-digit name; no statement starts with a number).
 static bool at_block_end(void) {
     return tok.kind == TOK_PERIOD || tok.kind == TOK_EOF || tok.kind == TOK_ELSE ||
            tok.kind == TOK_NOT || tok.kind == TOK_WHEN || tok.kind == TOK_IDENT ||
+           tok.kind == TOK_NUMBER ||
            is_scope_terminator(tok.kind) ||
            is_division_start(tok.kind);
 }
@@ -1314,9 +1384,10 @@ static AstNode *parse_statement(void) {
         AstNode *perf = ast_new(AST_STATEMENT_PERFORM, NULL, loc);
         const char *form = "ONCE";
 
-        if (tok.kind == TOK_IDENT) {
+        if (tok.kind == TOK_IDENT ||
+            (is_procedure_name_token() && peek_token().kind != TOK_TIMES)) {
             AstNode *first = parse_procedure_name();
-            if (tok.kind == TOK_TIMES) {
+            if (tok.kind == TOK_TIMES && first->name && !isdigit((unsigned char)first->name[0])) {
                 // Inline PERFORM identifier TIMES: the name is a data item
                 if (!symtab_resolve_symbol(current_symtab, first->name))
                     cobalt_error_loc(current_lexer->original_source, first->loc.line, first->loc.column,
@@ -1328,7 +1399,7 @@ static AstNode *parse_statement(void) {
                 perf->extra = first;
                 if (tok.kind == TOK_THROUGH) {
                     next();
-                    if (tok.kind != TOK_IDENT) { ast_free(perf); arith_error("Expected procedure name after THRU"); return NULL; }
+                    if (!is_procedure_name_token()) { ast_free(perf); arith_error("Expected procedure name after THRU"); return NULL; }
                     first->next = parse_procedure_name();
                 }
             }
@@ -1402,7 +1473,7 @@ static AstNode *parse_statement(void) {
         if (tok.kind == TOK_TO) next();
         AstNode *go = ast_new(AST_STATEMENT_GOTO, NULL, loc);
         AstNode *tail = NULL;
-        while (tok.kind == TOK_IDENT) list_append(&go->children, &tail, parse_procedure_name());
+        while (is_procedure_name_token()) list_append(&go->children, &tail, parse_procedure_name());
         if (!go->children) { ast_free(go); arith_error("Expected procedure name after GO TO"); return NULL; }
         if (tok.kind == TOK_DEPENDING) {
             next();
@@ -1423,7 +1494,12 @@ static AstNode *parse_statement(void) {
     }
     else if (tok.kind == TOK_EXIT) {
         next();
-        return ast_new(AST_STATEMENT_EXIT, NULL, loc);
+        AstNode *exit_stmt = ast_new(AST_STATEMENT_EXIT, NULL, loc);
+        if (tok.kind == TOK_IDENT && tok.length == 7 && strncasecmp(tok.lexeme, "PROGRAM", 7) == 0) {
+            exit_stmt->name = strdup("PROGRAM");
+            next();
+        }
+        return exit_stmt;
     }
     // ─── EVALUATE ────────────────────────────────────────────────────────────
     // EVALUATE subject {ALSO subject}...
@@ -1671,14 +1747,16 @@ static void parse_procedure_body(AstNode *div) {
     AstNode *div_tail = NULL, *sec = NULL, *sec_tail = NULL;
 
     while (tok.kind != TOK_EOF && !is_division_start(tok.kind)) {
-        AstNode *node;
-        if (tok.kind == TOK_IDENT) {
+        const char *before = tok.lexeme;
+        AstNode *node = NULL;
+        if (is_procedure_name_token()) {
             SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
             char *name = tok_to_str();
             next();
             if (tok.kind == TOK_SECTION) {
                 next();
                 expect(TOK_PERIOD, ".");
+                parser_panic_mode = false;
                 sec = ast_new(AST_SECTION, name, loc);
                 sec_tail = NULL;
                 declare_procedure(name, SYM_SECTION, loc);
@@ -1692,13 +1770,17 @@ static void parse_procedure_body(AstNode *div) {
             declare_procedure(name, SYM_PARAGRAPH, loc);
             free(name);
             AstNode *ptail = NULL;
-            while (tok.kind != TOK_IDENT && tok.kind != TOK_EOF && !is_division_start(tok.kind))
+            while (!is_procedure_name_token() && tok.kind != TOK_EOF && !is_division_start(tok.kind)) {
+                const char *at = tok.lexeme;
                 list_append(&node->children, &ptail, parse_sentence());
+                if (tok.lexeme == at && tok.kind != TOK_EOF) next();   // always make progress
+            }
         } else {
             node = parse_sentence();
         }
         if (sec) list_append(&sec->children, &sec_tail, node);
         else list_append(&div->children, &div_tail, node);
+        if (tok.lexeme == before && tok.kind != TOK_EOF) next();       // always make progress
     }
 }
 
@@ -1712,19 +1794,21 @@ static AstNode *parse_section(void) {
     AstNode *sec = ast_new(AST_SECTION, NULL, loc);
     AstNode *last = NULL;
 
-    while (tok.kind != TOK_EOF && !is_division_start(tok.kind)) {
-        AstNode *decl = parse_var_decl();
-        if (decl) {
-            list_append(&sec->children, &last, decl);
+    while (tok.kind != TOK_EOF && !is_division_start(tok.kind) &&
+           tok.kind != TOK_FILE && tok.kind != TOK_LINKAGE && tok.kind != TOK_WORKING_STORAGE) {
+        const char *before = tok.lexeme;
+        parser_panic_mode = false;
+        if (tok.kind == TOK_NUMBER) {
+            AstNode *decl = parse_var_decl();
+            if (decl) list_append(&sec->children, &last, decl);
         } else if (tok.kind == TOK_PERIOD) {
             next();
-        } else if (!parser_panic_mode) {
+        } else {
             cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
                              "Expected a data description entry, got '%.*s'", (int)tok.length, tok.lexeme);
-            synchronize();
-        } else {
-            synchronize();
+            while (tok.kind != TOK_EOF && tok.kind != TOK_PERIOD && !is_division_start(tok.kind)) next();
         }
+        if (tok.lexeme == before && tok.kind != TOK_EOF) next();   // always make progress
     }
 
     return sec;
@@ -1785,16 +1869,28 @@ static AstNode *parse_division(void) {
         }
     }
     else if (strcasecmp(div->name, "DATA") == 0) {
-        AstNode *sec = NULL;
-        if (tok.kind == TOK_WORKING_STORAGE) {
-            SourceLocation ws_loc = {current_lexer->filename, tok.line, tok.column};
-            next(); // Consume TOK_WORKING_STORAGE
-            symtab_declare_symbol(current_symtab, "WORKING-STORAGE", SYM_SECTION, ws_loc); // Declare WORKING-STORAGE as a section
-            sec = parse_section();
-            div->children = sec;
-        } else {
-            cobalt_warn_loc(current_lexer->original_source, tok.line, tok.column, "Only WORKING-STORAGE supported in DATA DIVISION for now");
-            synchronize();
+        // FILE SECTION, WORKING-STORAGE SECTION, LINKAGE SECTION in this order
+        AstNode *sec_tail = NULL;
+        while (tok.kind != TOK_EOF && !is_division_start(tok.kind)) {
+            if (tok.kind == TOK_WORKING_STORAGE) {
+                next();
+                AstNode *sec = parse_section();
+                if (sec) list_append(&div->children, &sec_tail, sec);
+                continue;
+            }
+            const char *what = tok.kind == TOK_FILE ? "FILE SECTION" :
+                               tok.kind == TOK_LINKAGE ? "LINKAGE SECTION" : NULL;
+            if (what) {
+                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                                 "%s is not supported yet", what);
+            } else {
+                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                                 "Expected a DATA DIVISION section, got '%.*s'", (int)tok.length, tok.lexeme);
+            }
+            // Skip to the next section of this division
+            next();
+            while (tok.kind != TOK_EOF && !is_division_start(tok.kind) &&
+                   tok.kind != TOK_WORKING_STORAGE && tok.kind != TOK_FILE && tok.kind != TOK_LINKAGE) next();
         }
     }
 
@@ -1845,9 +1941,11 @@ AstNode *parse_program(Lexer *l) {
             next(); // Consume the period
         }
         else {
-            // Unexpected token at global scope, outside a division
+            // Unexpected token at global scope, outside a division; always
+            // consume it, so recovery cannot stop on the same token again
             cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Expected a DIVISION start");
-            synchronize();
+            next();
+            while (tok.kind != TOK_EOF && !is_division_start(tok.kind)) next();
         }
     }
 

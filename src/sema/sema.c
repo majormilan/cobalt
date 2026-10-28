@@ -105,6 +105,16 @@ static void sema_analyze_var_decl(AstNode *var_decl, SemaContext *ctx) {
                  c->kind == AST_FIGURATIVE_CONSTANT) value_literal_node = c;
     }
 
+    if (!pic_node && usage_clause_node && usage_clause_node->name &&
+        strcasecmp(usage_clause_node->name, "INDEX") == 0) {
+        // USAGE INDEX: an 8-byte binary occurrence number
+        var_decl->usage_type = USAGE_COMP5;
+        var_decl->is_numeric = true;
+        var_decl->is_signed = true;
+        var_decl->digits = 18;
+        var_decl->data_size = 8;
+        return;
+    }
     if (!pic_node || !pic_node->name) {
         // A group item: its size comes from its subordinate items (IR lowering)
         if (usage_clause_node && usage_clause_node->usage_type != USAGE_DISPLAY)

@@ -8,6 +8,7 @@ section .text
 global runtime_compare_alnum
 global runtime_compare_fill
 global runtime_class_test
+global runtime_compare_pattern
 
 ; Alphanumeric comparison in the native (ASCII) collating sequence; the
 ; shorter operand is padded with spaces.
@@ -171,5 +172,44 @@ runtime_class_test:
     xor eax, eax
     ret
 .yes:
+    mov eax, 1
+    ret
+
+; Compare a field with a pattern repeated (ALL "literal").
+; ARG0 = field, ARG1 = length, ARG2 = pattern, ARG3 = pattern length
+; Returns RET0 = -1, 0 or 1.
+runtime_compare_pattern:
+    mov rax, ARG3
+    mov r10, ARG0
+    mov r11, ARG1
+    mov r9, ARG2
+    mov r8, rax
+    push rbx
+    xor ecx, ecx                        ; field index
+    xor edx, edx                        ; pattern index
+.cp_loop:
+    cmp rcx, r11
+    jae .cp_equal
+    mov al, [r10 + rcx]
+    mov bl, [r9 + rdx]
+    cmp al, bl
+    jb .cp_less
+    ja .cp_greater
+    inc rcx
+    inc rdx
+    cmp rdx, r8
+    jb .cp_loop
+    xor edx, edx
+    jmp .cp_loop
+.cp_equal:
+    pop rbx
+    xor eax, eax
+    ret
+.cp_less:
+    pop rbx
+    mov rax, -1
+    ret
+.cp_greater:
+    pop rbx
     mov eax, 1
     ret

@@ -44,6 +44,98 @@ static char *read_file_content(const char *filepath) {
     return buffer;
 }
 
+// ── Reference format ─────────────────────────────────────────────────────────
+
+typedef struct {
+    char *buf;
+    size_t len, cap;
+} StrBuf;
+
+static void sb_append(StrBuf *sb, const char *s, size_t n) {
+    if (sb->len + n + 1 > sb->cap) {
+        sb->cap = (sb->len + n + 1) * 2;
+        sb->buf = realloc(sb->buf, sb->cap);
+    }
+    memcpy(sb->buf + sb->len, s, n);
+    sb->len += n;
+    sb->buf[sb->len] = '\0';
+}
+
+// Quote character of a nonnumeric literal left open at the end of text, or 0
+static char open_literal(const char *text) {
+    char q = 0;
+    for (const char *p = text; *p; p++) {
+        if (!q) {
+            if (*p == '"' || *p == '\'') q = *p;
+        } else if (*p == q) {
+            if (p[1] == q) p++;     // doubled quote inside the literal
+            else q = 0;
+        }
+    }
+    return q;
+}
+
+char *lexer_reference_format(const char *src) {
+    // Collect the converted lines first: a continuation line changes the
+    // line it continues.
+    size_t nlines = 1;
+    for (const char *p = src; *p; p++) if (*p == '\n') nlines++;
+    StrBuf *out = calloc(nlines, sizeof(StrBuf));
+    if (!out) return NULL;
+
+    size_t n = 0;
+    int last = -1;          // last line holding program text
+    const char *line = src;
+    while (n < nlines) {
+        const char *end = strchr(line, '\n');
+        size_t len = end ? (size_t)(end - line) : strlen(line);
+        if (len > 0 && line[len - 1] == '\r') len--;
+        char indicator = len > 6 ? line[6] : ' ';
+        size_t text_end = len > 72 ? 72 : len;
+        const char *text = line + 7;
+        size_t text_len = text_end > 7 ? text_end - 7 : 0;
+        sb_append(&out[n], "", 0);
+
+        if (len <= 6 || indicator == '*' || indicator == '/' || indicator == 'D' || indicator == 'd') {
+            // sequence area only, comment line or debugging line
+        } else if (indicator == '-' && last >= 0) {
+            StrBuf *prev = &out[last];
+            size_t skip = 0;
+            while (skip < text_len && text[skip] == ' ') skip++;
+            char q = open_literal(prev->buf);
+            if (q) {
+                // A literal continues: the previous line counts up to column
+                // 72, and the continuation starts after a quote character
+                while (prev->len < 72) sb_append(prev, " ", 1);
+                if (skip < text_len && text[skip] == q) skip++;
+            } else {
+                // A word or numeric literal continues without a space
+                while (prev->len > 0 && prev->buf[prev->len - 1] == ' ') prev->buf[--prev->len] = '\0';
+            }
+            sb_append(prev, text + skip, text_len - skip);
+        } else {
+            sb_append(&out[n], "       ", 7);   // keep columns for diagnostics
+            sb_append(&out[n], text, text_len);
+            for (size_t k = 0; k < text_len; k++) {
+                if (text[k] != ' ') { last = (int)n; break; }
+            }
+        }
+        n++;
+        if (!end) break;
+        line = end + 1;
+    }
+
+    StrBuf all = {0};
+    sb_append(&all, "", 0);
+    for (size_t i = 0; i < n; i++) {
+        sb_append(&all, out[i].buf, out[i].len);
+        if (i + 1 < n) sb_append(&all, "\n", 1);
+        free(out[i].buf);
+    }
+    free(out);
+    return all.buf;
+}
+
 static void advance(Lexer *l) {
     if (*l->src == '\n') {
         l->current_line++;
@@ -196,13 +288,40 @@ Token lexer_next(Lexer *l) {
         return make_token_public(l, TOK_PIC_STRING, start, l->src - start);
     }
 
-    if (*l->src == '"') {
-        advance(l);  // skip opening "
+    // Nonnumeric literal: "..." or '...'; a doubled delimiter stands for one
+    // (the parser collapses it, see the lexeme's preceding delimiter)
+    if (*l->src == '"' || *l->src == '\'') {
+        char q = *l->src;
+        int line = l->current_line, col = l->current_col;
+        advance(l);  // skip opening quote
         start = l->src;
-        while (*l->src && *l->src != '"') advance(l);
+        while (*l->src && *l->src != '\n') {
+            if (*l->src == q) {
+                if (l->src[1] != q) break;
+                advance(l);
+            }
+            advance(l);
+        }
         size_t len = l->src - start;
-        if (*l->src == '"') advance(l);  // skip closing "
+        if (*l->src == q) advance(l);  // skip closing quote
+        else cobalt_error_loc(l->original_source, line, col, "Nonnumeric literal is not closed");
         return make_token_public(l, TOK_STRING, start, len);
+    }
+
+    // A user-defined word may start with digits ("3-DIMENSION-TBL", "25ANS")
+    // as long as it contains a letter; it cannot end with a hyphen
+    if (isdigit((unsigned char)*l->src)) {
+        const char *p = l->src;
+        bool letter = false;
+        while (isalnum((unsigned char)*p) || *p == '-') {
+            if (isalpha((unsigned char)*p)) letter = true;
+            p++;
+        }
+        while (p > l->src && p[-1] == '-') p--;
+        if (letter) {
+            while (l->src < p) advance(l);
+            return l->get_keyword_or_ident(l, start, l->src - start);
+        }
     }
 
     // Handle numbers (a sign directly before the digits belongs to the literal)
@@ -264,6 +383,11 @@ Token lexer_next(Lexer *l) {
                     return make_token_public(l, TOK_EOF, start, 0); // Error recovery
                 }
                 
+                if (!l->mode->free_format) {
+                    char *converted = lexer_reference_format(file_content);
+                    free(file_content);
+                    file_content = converted;
+                }
                 lexer_push_source(l, file_content, copied_filename, true);
                 // After pushing, we don't return TOK_COPY. We immediately get the next token
                 // which will be from the newly pushed source.

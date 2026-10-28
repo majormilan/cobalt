@@ -23,7 +23,8 @@ typedef enum {
                             //   flags = 1 for a JUSTIFIED RIGHT receiver
     IR_CALL_MOVE_NUM,       // same fields: alphanumeric source into a numeric DISPLAY field
     IR_CALL_DISPLAY_FILL,   // pad_char, size
-    IR_CALL_MOVE_FILL,      // var_name, pad_char, size, usage_type
+    IR_CALL_MOVE_FILL,      // var_name, pad_char, size; with lit_name/lit_len: fill with
+                            //   that pattern repeated (ALL "literal")
     IR_CALL_ACCEPT,         // var_name, size (alphanumeric field)
     IR_CALL_ACCEPT_NUM,     // var_name, size, digits, decimal_places (scale), usage_type, flags
     IR_LABEL,               // branch label; var_name = label name
@@ -55,7 +56,8 @@ typedef enum {
     IR_ALNUM_CMP_JUMP_IF_FALSE, // var_name/size vs lit_name/lit_len (data labels);
                                 //   jump to jump_target unless (a cmp_op b)
     IR_FILL_CMP_JUMP_IF_FALSE,  // field var_name/size vs a figurative constant
-                                //   (pad_char repeated); jump unless (a cmp_op b)
+                                //   (pad_char repeated, or the lit_name/lit_len
+                                //   pattern repeated); jump unless (a cmp_op b)
     IR_CLASS_JUMP,          // class test of var_name/size, class code imm; jump to
                             //   jump_target when the result equals flags (1 or 0)
     // Field addresses computed at run time (subscripts, reference modification).

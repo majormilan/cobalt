@@ -163,6 +163,7 @@ Token lexer_cobol85_keyword_or_ident(Lexer *l, const char *start, size_t len) {
     KW("END-SEARCH",      TOK_END_SEARCH);
     KW("UP",              TOK_UP);
     KW("DOWN",            TOK_DOWN);
+    KW("INDEX",           TOK_INDEX);
     #undef KW
 
     return make_token_public(l, TOK_IDENT, start, len);

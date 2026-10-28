@@ -164,6 +164,7 @@ typedef enum {
     TOK_END_SEARCH,
     TOK_UP,
     TOK_DOWN,
+    TOK_INDEX,
 
     // Operators
     TOK_GT,
@@ -209,6 +210,12 @@ typedef struct Lexer {
 } Lexer;
 
 void lexer_init(Lexer *l, const char *source, const CompilerMode *mode, const char *filename);
+
+// Convert fixed reference format (columns 1-6 sequence area, 7 indicator,
+// 8-72 program text) to text the lexer reads as free format. Line numbers
+// and columns are kept; comment lines become empty and continuation lines
+// are joined to the line they continue. Returns a new buffer.
+char *lexer_reference_format(const char *src);
 Token lexer_next(Lexer *l);
 
 // Public helper functions for standard-specific lexers

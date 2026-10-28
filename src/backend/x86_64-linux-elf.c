@@ -7,23 +7,12 @@
 #include <stdbool.h>
 #include <ctype.h>
 
-static char *escape_string(const char *s) {
-    if (!s) return strdup("\"\"");
-    size_t len = strlen(s);
-    size_t extra = 0;
-    for (const char *p = s; *p; p++)
-        if (*p == '"' || *p == '\\') extra++;
-    char *esc = malloc(len + extra + 3);
-    if (!esc) return NULL;
-    char *d = esc;
-    *d++ = '"';
-    for (const char *p = s; *p; p++) {
-        if (*p == '"' || *p == '\\') *d++ = '\\';
-        *d++ = *p;
-    }
-    *d++ = '"';
-    *d = '\0';
-    return esc;
+// Write a NUL-terminated data literal as a list of byte values, which is safe
+// for any character (NASM strings would need escaping for quotes)
+static void emit_bytes(FILE *f, const char *s) {
+    fprintf(f, "db ");
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++) fprintf(f, "%u, ", *p);
+    fprintf(f, "0\n");
 }
 
 // Assembly label for a COBOL name or IR label. COBOL names are
@@ -162,9 +151,8 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
     while (i) {
         if (i->op == IR_DATA_LIT && i->lit_name && i->content) {
             char *sanitized_name = sanitize_label_name(i->lit_name);
-            char *esc = escape_string(i->content);
-            fprintf(f, "%s: db %s, 0\n", sanitized_name, esc);
-            free(esc);
+            fprintf(f, "%s: ", sanitized_name);
+            emit_bytes(f, i->content);
             free(sanitized_name);
         }
         i = i->next;
@@ -226,6 +214,14 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                         i->op == IR_CALL_MOVE_NUM ? "numeric" : "alphanum");
                 break;
             case IR_CALL_MOVE_FILL:
+                if (i->lit_name) {
+                    emit_addr(f, "rdi", i->var_name);
+                    emit_size(f, "rsi", i->size);
+                    emit_addr(f, "rdx", i->lit_name);
+                    fprintf(f, "    mov rcx, %d\n", i->lit_len);
+                    fprintf(f, "    call runtime_move_pattern\n\n");
+                    break;
+                }
                 emit_addr(f, "rdi", i->var_name);
                 fprintf(f, "    mov rsi, %d\n", i->pad_char);
                 emit_size(f, "rdx", i->size);
@@ -377,6 +373,16 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 fprintf(f, "    %s %s\n\n", false_jump(i->cmp_op), sanitized_jump);
                 break;
             case IR_FILL_CMP_JUMP_IF_FALSE:
+                if (i->lit_name) {
+                    emit_addr(f, "rdi", i->var_name);
+                    emit_size(f, "rsi", i->size);
+                    emit_addr(f, "rdx", i->lit_name);
+                    fprintf(f, "    mov rcx, %d\n", i->lit_len);
+                    fprintf(f, "    call runtime_compare_pattern\n");
+                    fprintf(f, "    cmp rax, 0\n");
+                    fprintf(f, "    %s %s\n\n", false_jump(i->cmp_op), sanitized_jump);
+                    break;
+                }
                 emit_addr(f, "rdi", i->var_name);
                 emit_size(f, "rsi", i->size);
                 fprintf(f, "    mov rdx, %d\n", (int)(unsigned char)i->pad_char);

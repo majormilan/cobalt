@@ -35,7 +35,8 @@
            END-PERFORM.
            DISPLAY "TOTAL=" TOTAL.
            DISPLAY "ROW2=" ROW(2).
-           DISPLAY TXT(1:5) "-" TXT(POS:LEN) "-" TXT(POS:) "-" TXT(I + 1:2).
+           DISPLAY TXT(1:5) "-" TXT(POS:LEN) "-" TXT(POS:) "-"
+                   TXT(I + 1:2).
            MOVE "J" TO TXT(1:1).
            DISPLAY TXT.
            MOVE 1 TO I.

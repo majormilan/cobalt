@@ -91,6 +91,8 @@ static void print_help(const char *progname) {
     printf("      Supported:\n");
     printf("        none           (default)\n");
     printf("        cobalt-basic\n");
+    printf("  --fixed                Fixed reference format: columns 8-72 (default)\n");
+    printf("  -F, --free             Free format source\n");
     printf("  -c                     Compile only (emit .asm file, no linking)\n");
     printf("  -a                     Always dump AST (debug parsing)\n\n");
 
@@ -142,11 +144,13 @@ int main(int argc, char **argv) {
         {"std",         required_argument, 0, 'S'},
         {"strictness",  required_argument, 0, 'X'},
         {"extensions",  required_argument, 0, 'E'},
+        {"free",        no_argument,       0, 'F'},
+        {"fixed",       no_argument,       0, 'R'},
         {"help",        no_argument,       0, 0}, // Handled separately
         {0, 0, 0, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "i:o:t:S:X:E:ca", long_options, &opt_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "i:o:t:S:X:E:caF", long_options, &opt_index)) != -1) {
         switch (opt) {
             case 'i': input_file = optarg; break;
             case 'o': output_file = optarg; break;
@@ -160,6 +164,8 @@ int main(int argc, char **argv) {
             case 'S': mode.std = parse_standard(optarg); break;
             case 'X': mode.strictness = parse_strictness(optarg); break;
             case 'E': mode.extensions = parse_extensions(optarg); break;
+            case 'F': mode.free_format = true; break;
+            case 'R': mode.free_format = false; break;
             case 'c': compile_only = true; break;
             case 'a': dump_ast = true; break;
             case 0: // long option without a short option
@@ -192,6 +198,11 @@ int main(int argc, char **argv) {
     current_filename = input_file;
 
     char *source = read_file(input_file);
+    if (!mode.free_format) {
+        char *converted = lexer_reference_format(source);
+        free(source);
+        source = converted;
+    }
     Lexer lexer;
     lexer_init(&lexer, source, &mode, input_file);
     AstNode *ast = parse_program(&lexer);

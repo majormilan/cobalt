@@ -20,10 +20,12 @@
            DISPLAY "Test 3 - SUBTRACT B C FROM A (65-30-15): " A.
 
            SUBTRACT B FROM A GIVING R.
-           DISPLAY "Test 4 - SUBTRACT B FROM A GIVING R (20-30 -> 10, unsigned R): " R.
+           DISPLAY "Test 4 - SUBTRACT B FROM A GIVING R (20-30 -> 10, un
+      -    "signed R): " R.
 
            MOVE 80 TO A.
            SUBTRACT 10 20 FROM A GIVING R.
-           DISPLAY "Test 5 - SUBTRACT 10 20 FROM A GIVING R (80-10-20): " R.
+           DISPLAY
+             "Test 5 - SUBTRACT 10 20 FROM A GIVING R (80-10-20): " R.
 
            STOP RUN.

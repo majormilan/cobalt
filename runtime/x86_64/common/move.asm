@@ -9,6 +9,7 @@ global runtime_move_alphanum
 global runtime_move_numeric
 global runtime_move_fill
 global runtime_replicate
+global runtime_move_pattern
 
 ; ARG0 = dest buffer
 ; ARG1 = src buffer / literal
@@ -146,4 +147,27 @@ runtime_replicate:
     inc rcx
     jmp .copy
 .done:
+    ret
+
+; Fill a field with a pattern repeated (MOVE ALL "literal").
+; ARG0 = field, ARG1 = field size, ARG2 = pattern, ARG3 = pattern length
+runtime_move_pattern:
+    mov r10, ARG0
+    mov r11, ARG1
+    mov r9, ARG2
+    mov r8, ARG3
+    xor ecx, ecx                        ; field index
+    xor edx, edx                        ; pattern index
+.p_loop:
+    cmp rcx, r11
+    jae .p_done
+    mov al, [r9 + rdx]
+    mov [r10 + rcx], al
+    inc rcx
+    inc rdx
+    cmp rdx, r8
+    jb .p_loop
+    xor edx, edx
+    jmp .p_loop
+.p_done:
     ret
