@@ -50,6 +50,7 @@ static void synchronize() {
             case TOK_PERFORM:
             case TOK_ACCEPT:
             case TOK_CONTINUE:
+            case TOK_COMPUTE:
                 parser_panic_mode = false; // Reset panic mode
                 return; 
             default:
@@ -170,6 +171,24 @@ static AstNode *parse_identification_paragraph(void) {
     return para;
 }
 
+// Map a usage keyword to its usage type; returns false if tok is not one
+static bool usage_from_token(TokenKind kind, AstUsageType *out) {
+    switch (kind) {
+        case TOK_DISPLAY: *out = USAGE_DISPLAY; return true;
+        case TOK_COMP:
+        case TOK_BINARY:  *out = USAGE_COMP;    return true;
+        case TOK_COMP_3:  *out = USAGE_COMP3;   return true;
+        case TOK_COMP_5:  *out = USAGE_COMP5;   return true;
+        default:          return false;
+    }
+}
+
+static void append_child(AstNode *parent, AstNode **tail, AstNode *child) {
+    if (!parent->children) parent->children = child;
+    else (*tail)->next = child;
+    *tail = child;
+}
+
 static AstNode *parse_var_decl(void) {
     if (tok.kind != TOK_NUMBER) return NULL;
     if (parser_panic_mode) return NULL; // Don't parse if in panic mode
@@ -198,98 +217,78 @@ static AstNode *parse_var_decl(void) {
 
     free(name);
     var->text = level_str; // Keep level_str in AST node for now, or just free it.
-    AstNode *current_child_tail = NULL; 
+    AstNode *tail = NULL;
 
-    if (tok.kind == TOK_PIC) {
-        next();
-        char pic_buf[64] = {0};
-        size_t pos = 0;
-        // Keep track of the start of the PIC string for location
-        SourceLocation pic_loc = {current_lexer->filename, tok.line, tok.column}; 
-        while (tok.kind != TOK_VALUE && tok.kind != TOK_USAGE && tok.kind != TOK_PERIOD && tok.kind != TOK_EOF && !parser_panic_mode) {
-            char *part = tok_to_str();
-            strncat(pic_buf + pos, part, sizeof(pic_buf) - pos - 1);
-            pos += strlen(part);
-            free(part);
+    // Clauses may appear in any order
+    while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF && !parser_panic_mode) {
+        SourceLocation cl_loc = {current_lexer->filename, tok.line, tok.column};
+        AstUsageType usage;
+
+        if (tok.kind == TOK_PIC) {
             next();
-        }
-        AstNode *pic_node = ast_new(AST_PIC_CLAUSE, strdup(pic_buf), pic_loc);
-        if (!var->children) { 
-            var->children = pic_node;
-        } else { 
-            current_child_tail->next = pic_node;
-        }
-        current_child_tail = pic_node; 
-
-        // Store PIC string in symbol and parse its attributes
-        if (sym) {
-            sym->pic_string = strdup(pic_buf);
-            symtab_parse_pic_string(sym, sym->pic_string);
-        }
-    }
-
-    if (tok.kind == TOK_USAGE) {
-        next(); 
-
-        if (tok.kind == TOK_IS) {
-            next(); 
-        }
-
-        AstNode *usage_clause = ast_new(AST_USAGE_CLAUSE, NULL, loc);
-        AstNode *usage_type = NULL;
-
-        if (tok.kind == TOK_COMP) {
-            next(); 
-            usage_type = ast_new(AST_USAGE_TYPE_COMP, NULL, loc);
-            if (sym) {
-                sym->var_type = VAR_TYPE_COMP; // Update symbol type for COMP
+            if (tok.kind == TOK_IS) next();
+            if (tok.kind != TOK_PIC_STRING) {
+                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                                 "Expected PICTURE character-string, got '%.*s'", (int)tok.length, tok.lexeme);
+                synchronize();
+                ast_free(var);
+                return NULL;
             }
-        } else if (tok.kind == TOK_DISPLAY) {
-            next(); 
-            usage_type = ast_new(AST_USAGE_TYPE_DISPLAY, NULL, loc);
-            // Default alphanumeric, no change needed if PIC already set it
-        } else {
-            cobalt_warn_loc(current_lexer->original_source, tok.line, tok.column, "Expected COMP or DISPLAY after USAGE, got '%.*s'", (int)tok.length, tok.lexeme);
-        }
-
-        if (usage_type) {
-            usage_clause->children = usage_type;
-        }
-
-        if (!var->children) { 
-            var->children = usage_clause;
-        } else { 
-            current_child_tail->next = usage_clause;
-        }
-        current_child_tail = usage_clause; 
-    }
-
-    if (tok.kind == TOK_VALUE) {
-        next();
-        char *val = tok_to_str();
-        AstNode *val_node = NULL;
-        if (tok.kind == TOK_STRING) {
-            val_node = ast_new(AST_STRING_LITERAL, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
-        } else if (tok.kind == TOK_NUMBER) {
-            val_node = ast_new(AST_LITERAL_NUMBER, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
-        } else if (tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) {
-            val_node = ast_new(AST_FIGURATIVE_CONSTANT, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
-        } else if (tok.kind == TOK_IDENT) {
-            val_node = ast_new(AST_IDENTIFIER, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
-        } else {
-            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Expected literal or figurative constant after VALUE, got '%.*s'", (int)tok.length, tok.lexeme);
+            char *pic = tok_to_str();
+            append_child(var, &tail, ast_new(AST_PIC_CLAUSE, pic, cl_loc));
+            // Store PIC string in symbol and parse its attributes
+            if (sym) {
+                sym->pic_string = strdup(pic);
+                symtab_parse_pic_string(sym, sym->pic_string);
+            }
+            free(pic);
+            next();
+        } else if (tok.kind == TOK_USAGE || usage_from_token(tok.kind, &usage)) {
+            if (tok.kind == TOK_USAGE) {
+                next();
+                if (tok.kind == TOK_IS) next();
+                if (!usage_from_token(tok.kind, &usage)) {
+                    cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                                     "Unsupported USAGE '%.*s'", (int)tok.length, tok.lexeme);
+                    synchronize();
+                    ast_free(var);
+                    return NULL;
+                }
+            }
+            AstNode *usage_clause = ast_new(AST_USAGE_CLAUSE, NULL, cl_loc);
+            usage_clause->usage_type = usage;
+            append_child(var, &tail, usage_clause);
+            if (sym && usage != USAGE_DISPLAY) sym->var_type = VAR_TYPE_COMP;
+            next();
+        } else if (tok.kind == TOK_VALUE) {
+            next();
+            if (tok.kind == TOK_IS) next();
+            char *val = tok_to_str();
+            AstNode *val_node = NULL;
+            SourceLocation val_loc = {current_lexer->filename, tok.line, tok.column};
+            if (tok.kind == TOK_STRING) {
+                val_node = ast_new(AST_STRING_LITERAL, val, val_loc);
+            } else if (tok.kind == TOK_NUMBER) {
+                val_node = ast_new(AST_LITERAL_NUMBER, val, val_loc);
+            } else if (tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) {
+                val_node = ast_new(AST_FIGURATIVE_CONSTANT, val, val_loc);
+            } else {
+                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Expected literal or figurative constant after VALUE, got '%.*s'", (int)tok.length, tok.lexeme);
+                free(val);
+                synchronize(); // Error, enter panic mode
+                ast_free(var);
+                return NULL;
+            }
             free(val);
-            synchronize(); // Error, enter panic mode
+            append_child(var, &tail, val_node);
+            next();
+        } else {
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                             "Unexpected '%.*s' in data description of '%s'", (int)tok.length, tok.lexeme, var->name);
+            synchronize();
+            ast_free(var);
             return NULL;
         }
-        free(val);
-        if (!var->children) { 
-            var->children = val_node;
-        } else { 
-            current_child_tail->next = val_node;
-        }
-        current_child_tail = val_node; 
-        next();
     }
 
     expect(TOK_PERIOD, ".");
@@ -311,24 +310,33 @@ static AstNode *parse_factor(void) {
         next();
         AstNode *inner = parse_expr();
         if (tok.kind == TOK_RPAREN) next();
+        else cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                              "Expected ')' in arithmetic expression");
         return inner;
     }
 
-    // Unary minus on a numeric literal: the lexer already folds -5 into TOK_NUMBER "-5"
-    // so we only need to handle '-' before '(' or an identifier here.
+    // Unary sign (the lexer already folds -5 into the literal "-5")
+    if (tok.kind == TOK_PLUS) {
+        next();
+        return parse_factor();
+    }
     if (tok.kind == TOK_MINUS) {
         next();
         AstNode *operand = parse_factor();
-        if (operand && operand->kind == AST_LITERAL_NUMBER && operand->name) {
-            char *neg = malloc(strlen(operand->name) + 2);
-            sprintf(neg, "-%s", operand->name);
+        if (!operand) return NULL;
+        if (operand->kind == AST_LITERAL_NUMBER && operand->name) {
+            const char *digits = operand->name;
+            char *neg = malloc(strlen(digits) + 2);
+            if (digits[0] == '-') strcpy(neg, digits + 1);
+            else if (digits[0] == '+') sprintf(neg, "-%s", digits + 1);
+            else sprintf(neg, "-%s", digits);
             free(operand->name);
             operand->name = neg;
-        } else if (operand) {
-            cobalt_warn_loc(current_lexer->original_source, loc.line, loc.column,
-                            "Unary minus on non-literal not supported in COMPUTE; result may be wrong");
+            return operand;
         }
-        return operand;
+        AstNode *node = ast_new(AST_EXPR_NEG, NULL, loc);
+        node->children = operand;
+        return node;
     }
 
     if (tok.kind == TOK_NUMBER) {
@@ -354,15 +362,31 @@ static AstNode *parse_factor(void) {
     return NULL;
 }
 
+// Exponentiation: left-to-right, higher precedence than * and /
+static AstNode *parse_power(void) {
+    AstNode *left = parse_factor();
+
+    while (tok.kind == TOK_POW) {
+        SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
+        next();
+        AstNode *right = parse_factor();
+        AstNode *node = ast_new(AST_EXPR_POW, NULL, loc);
+        node->children = left;
+        if (left) left->next = right;
+        left = node;
+    }
+    return left;
+}
+
 // Multiplication / division: left-to-right, higher precedence than +/-
 static AstNode *parse_term(void) {
-    AstNode *left = parse_factor();
+    AstNode *left = parse_power();
 
     while (tok.kind == TOK_MUL || tok.kind == TOK_DIV) {
         AstKind op = (tok.kind == TOK_MUL) ? AST_EXPR_MUL : AST_EXPR_DIV;
         SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
         next();
-        AstNode *right = parse_factor();
+        AstNode *right = parse_power();
         AstNode *node = ast_new(op, NULL, loc);
         node->children = left;
         if (left) left->next = right;
@@ -388,6 +412,105 @@ static AstNode *parse_expr(void) {
     return left;
 }
 
+// ── Arithmetic statement helpers ─────────────────────────────────────────────
+
+// Parse an arithmetic operand (identifier or numeric literal).
+// Returns NULL, consuming nothing, if the token is not an operand.
+static AstNode *parse_arith_operand(void) {
+    if (tok.kind != TOK_IDENT && tok.kind != TOK_NUMBER) return NULL;
+    char *val = tok_to_str();
+    if (tok.kind == TOK_IDENT && !symtab_resolve_symbol(current_symtab, val))
+        cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                         "Undeclared identifier '%s'.", val);
+    AstNode *op = make_operand_node(val, tok.kind);
+    free(val);
+    next();
+    return op;
+}
+
+// Parse receiving identifiers, each with optional ROUNDED. Returns the count.
+static int parse_receivers(AstNode **head, AstNode **tail) {
+    int n = 0;
+    while (tok.kind == TOK_IDENT && !parser_panic_mode) {
+        AstNode *op = parse_arith_operand();
+        if (tok.kind == TOK_ROUNDED) {
+            op->rounded = true;
+            next();
+        }
+        list_append(head, tail, op);
+        n++;
+    }
+    return n;
+}
+
+// Parse operands that may be receivers (identifiers with ROUNDED) or, if a
+// GIVING follows, sending operands. Returns the count; *all_idents tells
+// whether every one was an identifier.
+static int parse_operands_or_receivers(AstNode **head, AstNode **tail, bool *all_idents) {
+    int n = 0;
+    *all_idents = true;
+    AstNode *op;
+    while (!parser_panic_mode && (op = parse_arith_operand())) {
+        if (op->kind != AST_IDENTIFIER) *all_idents = false;
+        if (tok.kind == TOK_ROUNDED) {
+            op->rounded = true;
+            next();
+        }
+        list_append(head, tail, op);
+        n++;
+    }
+    return n;
+}
+
+static bool is_scope_terminator(TokenKind kind) {
+    return kind == TOK_END_IF || kind == TOK_END_ADD || kind == TOK_END_SUBTRACT ||
+           kind == TOK_END_MULTIPLY || kind == TOK_END_DIVIDE || kind == TOK_END_COMPUTE;
+}
+
+// Parse imperative statements up to the end of a conditional phrase.
+static AstNode *parse_imperative_block(void) {
+    AstNode *head = NULL, *tail = NULL;
+    while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF && tok.kind != TOK_ELSE &&
+           tok.kind != TOK_NOT && !is_scope_terminator(tok.kind) && !parser_panic_mode) {
+        AstNode *stmt = parse_statement(false);
+        if (!stmt) break;
+        list_append(&head, &tail, stmt);
+    }
+    if (!head) {
+        cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                         "Expected an imperative statement, got '%.*s'", (int)tok.length, tok.lexeme);
+        SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
+        head = ast_new(AST_STATEMENT_CONTINUE, NULL, loc);
+    }
+    return head;
+}
+
+// [ON] SIZE ERROR imperative  [NOT [ON] SIZE ERROR imperative]  [end_tok]
+static void parse_size_error_phrases(AstNode *stmt, TokenKind end_tok) {
+    if (tok.kind == TOK_ON || tok.kind == TOK_SIZE) {
+        if (tok.kind == TOK_ON) next();
+        expect(TOK_SIZE, "SIZE");
+        expect(TOK_ERROR, "ERROR");
+        if (parser_panic_mode) return;
+        stmt->on_error = parse_imperative_block();
+    }
+    if (tok.kind == TOK_NOT) {
+        next();
+        if (tok.kind == TOK_ON) next();
+        expect(TOK_SIZE, "SIZE");
+        expect(TOK_ERROR, "ERROR");
+        if (parser_panic_mode) return;
+        stmt->not_on_error = parse_imperative_block();
+    }
+    if (tok.kind == end_tok) next();
+}
+
+static void arith_error(const char *msg) {
+    cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                     "%s, got '%.*s'", msg, (int)tok.length, tok.lexeme);
+    synchronize();
+}
+
 static AstNode *parse_statement(bool require_period) {
     if (parser_panic_mode) return NULL; // Don't try to parse statements if in panic mode
 
@@ -398,12 +521,9 @@ static AstNode *parse_statement(bool require_period) {
         AstNode *display = ast_new(AST_STATEMENT_DISPLAY, NULL, loc);
         AstNode *last = NULL;
 
-        while (tok.kind != TOK_PERIOD &&
-               tok.kind != TOK_ELSE &&
-               tok.kind != TOK_END_IF &&
-               tok.kind != TOK_EOF && !parser_panic_mode) { // Added panic mode check
-            if (tok.kind == TOK_STRING || tok.kind == TOK_IDENT || tok.kind == TOK_NUMBER ||
-                tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) { 
+        while ((tok.kind == TOK_STRING || tok.kind == TOK_IDENT || tok.kind == TOK_NUMBER ||
+                tok.kind == TOK_ZEROS || tok.kind == TOK_SPACES) && !parser_panic_mode) {
+            {
                 char *val = tok_to_str();
                 AstNode *arg = NULL;
                 if (tok.kind == TOK_STRING) {
@@ -499,293 +619,179 @@ static AstNode *parse_statement(bool require_period) {
         if (require_period) expect(TOK_PERIOD, ".");
         return move;
     }
+    // ─── ADD ─────────────────────────────────────────────────────────────────
+    // Format 1: ADD src+ TO dest+ [ROUNDED]
+    // Format 2: ADD src+ [TO src] GIVING dest+ [ROUNDED]
+    // children: [src1,...,srcN, dest1,...]; decimal_places = N
+    // is_numeric = GIVING form
     else if (tok.kind == TOK_ADD) {
         next();
         AstNode *add = ast_new(AST_STATEMENT_ADD, NULL, loc);
+        AstNode *head = NULL, *tail = NULL, *op;
+        int num_src = 0, num_dest = 0;
 
-        AstNode *ops_head = NULL;
-        AstNode *ops_tail = NULL;
-        int num_sources = 0;
-
-        // Collect source operands (before TO or GIVING)
-        while (tok.kind != TOK_TO && tok.kind != TOK_GIVING && tok.kind != TOK_PERIOD && tok.kind != TOK_EOF &&
-               tok.kind != TOK_ELSE && tok.kind != TOK_END_IF && !parser_panic_mode) {
-            if (tok.kind == TOK_IDENT || tok.kind == TOK_NUMBER) {
-                char *val = tok_to_str();
-                AstNode *op = ast_new(
-                    tok.kind == TOK_NUMBER ? AST_LITERAL_NUMBER : AST_IDENTIFIER,
-                    val, (SourceLocation){current_lexer->filename, tok.line, tok.column}
-                );
-                if (tok.kind == TOK_IDENT) {
-                    Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, val);
-                    if (!resolved_sym) {
-                        cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", val);
-                    } else {
-                        symtab_mark_symbol_as_used(resolved_sym);
-                    }
-                }
-                free(val);
-                if (!ops_head) ops_head = op;
-                else ops_tail->next = op;
-                ops_tail = op;
-                num_sources++;
-            }
-            next();
+        while (!parser_panic_mode && (op = parse_arith_operand())) {
+            list_append(&head, &tail, op);
+            num_src++;
         }
-        if (parser_panic_mode) return NULL;
-
-        // is_numeric encodes the form: false = TO, true = GIVING
         if (tok.kind == TOK_TO) {
-            add->is_numeric = false;
-        } else if (tok.kind == TOK_GIVING) {
-            add->is_numeric = true;
-        } else {
-            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                             "Expected TO or GIVING in ADD statement.");
-            synchronize();
-            return NULL;
-        }
-        // decimal_places stores the number of source operands
-        add->decimal_places = num_sources;
-        add->children = ops_head;
-        next(); // consume TO or GIVING
-
-        // Collect one or more target identifiers
-        bool found_target = false;
-        while (tok.kind == TOK_IDENT && !parser_panic_mode) {
-            char *val = tok_to_str();
-            AstNode *tgt = ast_new(AST_IDENTIFIER, val,
-                                   (SourceLocation){current_lexer->filename, tok.line, tok.column});
-            Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, val);
-            if (!resolved_sym) {
-                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                                 "Undeclared identifier '%s'.", val);
-            } else {
-                symtab_mark_symbol_as_used(resolved_sym);
-            }
-            free(val);
-            if (!ops_head) { ops_head = ops_tail = tgt; add->children = ops_head; }
-            else { ops_tail->next = tgt; ops_tail = tgt; }
-            found_target = true;
             next();
-            if (tok.kind == TOK_ROUNDED) next(); // consume ROUNDED (not yet implemented)
+            bool all_idents;
+            AstNode *to_head = NULL, *to_tail = NULL;
+            int n_to = parse_operands_or_receivers(&to_head, &to_tail, &all_idents);
+            if (to_head) {
+                if (!head) head = to_head;
+                else tail->next = to_head;
+                tail = to_tail;
+            }
+            if (tok.kind == TOK_GIVING) {
+                next();
+                add->is_numeric = true;
+                num_src += n_to;
+                num_dest = parse_receivers(&head, &tail);
+            } else {
+                if (!all_idents) { ast_free(head); ast_free(add); arith_error("ADD ... TO requires identifiers as receivers"); return NULL; }
+                num_dest = n_to;
+            }
+        } else if (tok.kind == TOK_GIVING) {
+            next();
+            add->is_numeric = true;
+            num_dest = parse_receivers(&head, &tail);
         }
+        add->children = head;
+        add->decimal_places = num_src;
+        if (num_src == 0 || num_dest == 0) { ast_free(add); arith_error("Incomplete ADD statement"); return NULL; }
 
-        if (!found_target) {
-            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                             "Expected at least one target identifier in ADD statement.");
-            synchronize();
-            return NULL;
-        }
-
+        parse_size_error_phrases(add, TOK_END_ADD);
         if (require_period) expect(TOK_PERIOD, ".");
         return add;
     }
     // ─── SUBTRACT ────────────────────────────────────────────────────────────
     // Format 1: SUBTRACT src+ FROM dest+ [ROUNDED]
-    // Format 2: SUBTRACT src+ FROM operand [ROUNDED] GIVING dest+ [ROUNDED]
-    // is_numeric=false → no GIVING;  is_numeric=true → GIVING
-    // decimal_places   → number of subtrahend (source) operands
-    // children: [sub1,...,subN, from_op1,...] or [sub1,...,subN, from_op, giving1,...]
+    // Format 2: SUBTRACT src+ FROM minuend GIVING dest+ [ROUNDED]
+    // children: [src1,...,srcN, dest1,...] or [src1,...,srcN, minuend, dest1,...]
+    // decimal_places = N; is_numeric = GIVING form
     else if (tok.kind == TOK_SUBTRACT) {
         next();
-        AstNode *sub_stmt = ast_new(AST_STATEMENT_SUBTRACT, NULL, loc);
-        AstNode *ops_head = NULL, *ops_tail = NULL;
-        int num_src = 0;
+        AstNode *sub = ast_new(AST_STATEMENT_SUBTRACT, NULL, loc);
+        AstNode *head = NULL, *tail = NULL, *op;
+        int num_src = 0, num_dest = 0;
 
-        while (tok.kind != TOK_FROM && tok.kind != TOK_PERIOD && tok.kind != TOK_EOF
-               && tok.kind != TOK_ELSE && tok.kind != TOK_END_IF && !parser_panic_mode) {
-            if (tok.kind == TOK_IDENT || tok.kind == TOK_NUMBER) {
-                char *val = tok_to_str();
-                list_append(&ops_head, &ops_tail, make_operand_node(val, tok.kind));
-                free(val);
-                num_src++;
-            }
-            next();
+        while (!parser_panic_mode && (op = parse_arith_operand())) {
+            list_append(&head, &tail, op);
+            num_src++;
         }
-        if (parser_panic_mode) return NULL;
-        if (tok.kind != TOK_FROM) {
-            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                             "Expected FROM in SUBTRACT statement.");
-            synchronize(); return NULL;
-        }
-        next(); // consume FROM
-        sub_stmt->decimal_places = num_src;
-        sub_stmt->children = ops_head;
+        sub->children = head;
+        sub->decimal_places = num_src;
+        if (num_src == 0 || tok.kind != TOK_FROM) { ast_free(sub); arith_error("Expected FROM in SUBTRACT statement"); return NULL; }
+        next();
 
-        // Collect FROM targets (and optional GIVING)
-        while (tok.kind == TOK_IDENT && !parser_panic_mode) {
-            char *val = tok_to_str();
-            list_append(&ops_head, &ops_tail, make_operand_node(val, tok.kind));
-            free(val);
-            next();
-            if (tok.kind == TOK_ROUNDED) next(); // skip ROUNDED
-            if (tok.kind == TOK_GIVING) break;   // stop collecting FROM targets
+        bool all_idents;
+        AstNode *from_head = NULL, *from_tail = NULL;
+        int n_from = parse_operands_or_receivers(&from_head, &from_tail, &all_idents);
+        if (from_head) {
+            if (!head) sub->children = head = from_head;
+            else tail->next = from_head;
+            tail = from_tail;
         }
-
         if (tok.kind == TOK_GIVING) {
             next();
-            sub_stmt->is_numeric = true;
-            while (tok.kind == TOK_IDENT && !parser_panic_mode) {
-                char *val = tok_to_str();
-                list_append(&ops_head, &ops_tail, make_operand_node(val, tok.kind));
-                free(val);
-                next();
-                if (tok.kind == TOK_ROUNDED) next();
-            }
+            if (n_from != 1) { ast_free(sub); arith_error("SUBTRACT ... GIVING takes exactly one FROM operand"); return NULL; }
+            sub->is_numeric = true;
+            num_dest = parse_receivers(&head, &tail);
+        } else {
+            if (!all_idents) { ast_free(sub); arith_error("SUBTRACT ... FROM requires identifiers as receivers"); return NULL; }
+            num_dest = n_from;
         }
+        if (num_dest == 0) { ast_free(sub); arith_error("Expected receiving identifier in SUBTRACT statement"); return NULL; }
 
+        parse_size_error_phrases(sub, TOK_END_SUBTRACT);
         if (require_period) expect(TOK_PERIOD, ".");
-        return sub_stmt;
+        return sub;
     }
     // ─── MULTIPLY ────────────────────────────────────────────────────────────
     // Format 1: MULTIPLY factor BY dest+ [ROUNDED]
     // Format 2: MULTIPLY factor BY factor2 GIVING dest+ [ROUNDED]
-    // is_numeric=false → no GIVING;  is_numeric=true → GIVING
-    // decimal_places=1 always (one factor before BY)
-    // children: [factor, dest1,...] or [factor1, factor2, giving1,...]
+    // children: [factor, dest1,...] or [factor, factor2, dest1,...]
+    // is_numeric = GIVING form
     else if (tok.kind == TOK_MULTIPLY) {
         next();
-        AstNode *mul_stmt = ast_new(AST_STATEMENT_MULTIPLY, NULL, loc);
-        AstNode *ops_head = NULL, *ops_tail = NULL;
+        AstNode *mul = ast_new(AST_STATEMENT_MULTIPLY, NULL, loc);
+        AstNode *head = NULL, *tail = NULL;
 
-        if (tok.kind != TOK_IDENT && tok.kind != TOK_NUMBER) {
-            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                             "Expected operand after MULTIPLY."); synchronize(); return NULL;
-        }
-        char *val = tok_to_str();
-        list_append(&ops_head, &ops_tail, make_operand_node(val, tok.kind));
-        free(val); next();
-        mul_stmt->decimal_places = 1;
-        mul_stmt->children = ops_head;
+        AstNode *factor = parse_arith_operand();
+        if (!factor) { ast_free(mul); arith_error("Expected operand after MULTIPLY"); return NULL; }
+        list_append(&head, &tail, factor);
+        mul->children = head;
+        mul->decimal_places = 1;
+        if (tok.kind != TOK_BY) { ast_free(mul); arith_error("Expected BY in MULTIPLY statement"); return NULL; }
+        next();
 
-        if (tok.kind != TOK_BY) {
-            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                             "Expected BY in MULTIPLY statement."); synchronize(); return NULL;
-        }
-        next(); // consume BY
-
-        // Collect one or more targets (no GIVING) or one factor2 + GIVING
-        while (tok.kind == TOK_IDENT || tok.kind == TOK_NUMBER) {
-            char *v = tok_to_str();
-            list_append(&ops_head, &ops_tail, make_operand_node(v, tok.kind));
-            free(v); next();
-            if (tok.kind == TOK_ROUNDED) next();
-            if (tok.kind == TOK_GIVING) break;
-        }
+        bool all_idents;
+        int n_by = parse_operands_or_receivers(&head, &tail, &all_idents);
+        int num_dest;
         if (tok.kind == TOK_GIVING) {
             next();
-            mul_stmt->is_numeric = true;
-            while (tok.kind == TOK_IDENT && !parser_panic_mode) {
-                char *v = tok_to_str();
-                list_append(&ops_head, &ops_tail, make_operand_node(v, tok.kind));
-                free(v); next();
-                if (tok.kind == TOK_ROUNDED) next();
-            }
+            if (n_by != 1) { ast_free(mul); arith_error("MULTIPLY ... GIVING takes exactly one BY operand"); return NULL; }
+            mul->is_numeric = true;
+            num_dest = parse_receivers(&head, &tail);
+        } else {
+            if (!all_idents) { ast_free(mul); arith_error("MULTIPLY ... BY requires identifiers as receivers"); return NULL; }
+            num_dest = n_by;
         }
+        if (num_dest == 0) { ast_free(mul); arith_error("Expected receiving identifier in MULTIPLY statement"); return NULL; }
 
+        parse_size_error_phrases(mul, TOK_END_MULTIPLY);
         if (require_period) expect(TOK_PERIOD, ".");
-        return mul_stmt;
+        return mul;
     }
     // ─── DIVIDE ──────────────────────────────────────────────────────────────
     // Format 1: DIVIDE divisor INTO dest+ [ROUNDED]
-    // Format 2: DIVIDE divisor INTO dividend GIVING dest+ [REMAINDER r]
-    // Format 3: DIVIDE dividend BY divisor GIVING dest+ [REMAINDER r]
-    // name = "INTO" or "BY"
-    // is_numeric=false → no GIVING (INTO only);  is_numeric=true → GIVING
-    // is_signed=true   → REMAINDER clause present (last child is remainder var)
-    // decimal_places=1 (INTO) or 2 (BY) — number of operands before INTO/BY
-    // children (INTO, no GIVING): [divisor, target1,...]
-    // children (INTO, GIVING):    [divisor, dividend, giving1,..., [rem]]
-    // children (BY,  GIVING):     [dividend, divisor, giving1,..., [rem]]
+    // Format 2: DIVIDE divisor INTO dividend GIVING dest+ [ROUNDED] [REMAINDER r]
+    // Format 3: DIVIDE dividend BY divisor GIVING dest+ [ROUNDED] [REMAINDER r]
+    // name = "INTO" or "BY"; is_numeric = GIVING form
+    // is_signed = REMAINDER present (last child is the remainder receiver)
+    // children (INTO, no GIVING): [divisor, dest1,...]
+    // children (INTO, GIVING):    [divisor, dividend, dest1,..., [rem]]
+    // children (BY,  GIVING):     [dividend, divisor, dest1,..., [rem]]
     else if (tok.kind == TOK_DIVIDE) {
         next();
         AstNode *div_stmt = ast_new(AST_STATEMENT_DIVIDE, NULL, loc);
-        AstNode *ops_head = NULL, *ops_tail = NULL;
+        AstNode *head = NULL, *tail = NULL;
 
-        if (tok.kind != TOK_IDENT && tok.kind != TOK_NUMBER) {
-            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                             "Expected operand after DIVIDE."); synchronize(); return NULL;
-        }
-        char *val = tok_to_str();
-        list_append(&ops_head, &ops_tail, make_operand_node(val, tok.kind));
-        free(val); next();
-        div_stmt->children = ops_head;
+        AstNode *first = parse_arith_operand();
+        if (!first) { ast_free(div_stmt); arith_error("Expected operand after DIVIDE"); return NULL; }
+        list_append(&head, &tail, first);
+        div_stmt->children = head;
 
-        if (tok.kind == TOK_INTO) {
+        bool is_by = (tok.kind == TOK_BY);
+        if (tok.kind != TOK_INTO && !is_by) { ast_free(div_stmt); arith_error("Expected INTO or BY in DIVIDE statement"); return NULL; }
+        div_stmt->name = strdup(is_by ? "BY" : "INTO");
+        div_stmt->decimal_places = is_by ? 2 : 1;
+        next();
+
+        bool all_idents;
+        int n_second = parse_operands_or_receivers(&head, &tail, &all_idents);
+        int num_dest;
+        if (tok.kind == TOK_GIVING) {
             next();
-            div_stmt->name = strdup("INTO");
-            div_stmt->decimal_places = 1; // one divisor operand
-
-            // Collect targets (no GIVING) or one dividend then GIVING
-            while ((tok.kind == TOK_IDENT || tok.kind == TOK_NUMBER) && !parser_panic_mode) {
-                char *v = tok_to_str();
-                list_append(&ops_head, &ops_tail, make_operand_node(v, tok.kind));
-                free(v); next();
-                if (tok.kind == TOK_ROUNDED) next();
-                if (tok.kind == TOK_GIVING) break;
-            }
-            if (tok.kind == TOK_GIVING) {
-                next();
-                div_stmt->is_numeric = true;
-                while (tok.kind == TOK_IDENT && !parser_panic_mode) {
-                    char *v = tok_to_str();
-                    list_append(&ops_head, &ops_tail, make_operand_node(v, tok.kind));
-                    free(v); next();
-                    if (tok.kind == TOK_ROUNDED) next();
-                    if (tok.kind == TOK_REMAINDER) break;
-                }
-                if (tok.kind == TOK_REMAINDER) {
-                    next();
-                    if (tok.kind == TOK_IDENT) {
-                        char *v = tok_to_str();
-                        list_append(&ops_head, &ops_tail, make_operand_node(v, tok.kind));
-                        free(v); next();
-                        div_stmt->is_signed = true;
-                    }
-                }
-            }
-        } else if (tok.kind == TOK_BY) {
-            next();
-            div_stmt->name = strdup("BY");
-            div_stmt->decimal_places = 2; // dividend + divisor both before GIVING
-
-            // second operand (divisor)
-            if (tok.kind != TOK_IDENT && tok.kind != TOK_NUMBER) {
-                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                                 "Expected divisor after BY."); synchronize(); return NULL;
-            }
-            char *v = tok_to_str();
-            list_append(&ops_head, &ops_tail, make_operand_node(v, tok.kind));
-            free(v); next();
-
-            if (tok.kind != TOK_GIVING) {
-                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                                 "DIVIDE ... BY requires GIVING."); synchronize(); return NULL;
-            }
-            next();
+            if (n_second != 1) { ast_free(div_stmt); arith_error("DIVIDE ... GIVING takes exactly one operand before GIVING"); return NULL; }
             div_stmt->is_numeric = true;
-            while (tok.kind == TOK_IDENT && !parser_panic_mode) {
-                char *v2 = tok_to_str();
-                list_append(&ops_head, &ops_tail, make_operand_node(v2, tok.kind));
-                free(v2); next();
-                if (tok.kind == TOK_ROUNDED) next();
-                if (tok.kind == TOK_REMAINDER) break;
-            }
+            num_dest = parse_receivers(&head, &tail);
             if (tok.kind == TOK_REMAINDER) {
                 next();
-                if (tok.kind == TOK_IDENT) {
-                    char *v2 = tok_to_str();
-                    list_append(&ops_head, &ops_tail, make_operand_node(v2, tok.kind));
-                    free(v2); next();
-                    div_stmt->is_signed = true;
-                }
+                if (num_dest != 1) { ast_free(div_stmt); arith_error("REMAINDER requires exactly one GIVING receiver"); return NULL; }
+                if (parse_receivers(&head, &tail) != 1) { ast_free(div_stmt); arith_error("Expected one identifier after REMAINDER"); return NULL; }
+                div_stmt->is_signed = true;
             }
         } else {
-            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                             "Expected INTO or BY in DIVIDE statement."); synchronize(); return NULL;
+            if (is_by) { ast_free(div_stmt); arith_error("DIVIDE ... BY requires GIVING"); return NULL; }
+            if (!all_idents) { ast_free(div_stmt); arith_error("DIVIDE ... INTO requires identifiers as receivers"); return NULL; }
+            num_dest = n_second;
         }
+        if (num_dest == 0) { ast_free(div_stmt); arith_error("Expected receiving identifier in DIVIDE statement"); return NULL; }
 
+        parse_size_error_phrases(div_stmt, TOK_END_DIVIDE);
         if (require_period) expect(TOK_PERIOD, ".");
         return div_stmt;
     }
@@ -1059,50 +1065,38 @@ static AstNode *parse_statement(bool require_period) {
         if (require_period) expect(TOK_PERIOD, ".");
         return ast_new(AST_STATEMENT_CONTINUE, NULL, loc);
     }
+    // ─── COMPUTE ─────────────────────────────────────────────────────────────
+    // COMPUTE dest+ [ROUNDED] = expression
+    // children: [expression, dest1,...]
     else if (tok.kind == TOK_COMPUTE) {
         next();
         AstNode *compute = ast_new(AST_STATEMENT_COMPUTE, NULL, loc);
+        AstNode *dest_head = NULL, *dest_tail = NULL;
 
-        // Destination variable
-        if (tok.kind != TOK_IDENT) {
-            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                             "COMPUTE: expected destination variable");
-            synchronize();
+        if (parse_receivers(&dest_head, &dest_tail) == 0) {
+            ast_free(compute);
+            arith_error("COMPUTE: expected receiving identifier");
             return NULL;
         }
-        char *dest_name = tok_to_str();
-        AstNode *dest = ast_new(AST_IDENTIFIER, dest_name, (SourceLocation){current_lexer->filename, tok.line, tok.column});
-        Symbol *dest_sym = symtab_resolve_symbol(current_symtab, dest_name);
-        if (dest_sym) symtab_mark_symbol_as_used(dest_sym);
-        else cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                              "Undeclared identifier '%s'", dest_name);
-        free(dest_name);
-        compute->children = dest;
-        next();
-
-        // Optional ROUNDED — skip it silently
-        if (tok.kind == TOK_ROUNDED) next();
-
-        // Expect '='
         if (tok.kind != TOK_EQ) {
-            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                             "COMPUTE: expected '=' after destination, got '%.*s'",
-                             (int)tok.length, tok.lexeme);
-            synchronize();
+            ast_free(dest_head);
+            ast_free(compute);
+            arith_error("COMPUTE: expected '='");
             return NULL;
         }
         next();
 
-        // Parse the arithmetic expression
         AstNode *expr = parse_expr();
         if (!expr) {
-            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                             "COMPUTE: expected arithmetic expression");
-            synchronize();
+            ast_free(dest_head);
+            ast_free(compute);
+            arith_error("COMPUTE: expected arithmetic expression");
             return NULL;
         }
-        dest->next = expr;
+        expr->next = dest_head;
+        compute->children = expr;
 
+        parse_size_error_phrases(compute, TOK_END_COMPUTE);
         if (require_period) expect(TOK_PERIOD, ".");
         return compute;
     }

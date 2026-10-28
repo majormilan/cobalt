@@ -5,11 +5,13 @@
 #include <stdbool.h> // For bool type
 #include <stddef.h>  // For size_t type
 
-// New enum for UsageType
+// Storage usage of a data item. The values are the runtime usage codes
+// (runtime/ABI.md section 5), so they are passed to the runtime unchanged.
 typedef enum {
-    USAGE_DISPLAY,
-    USAGE_COMP,
-    // Add other COMP types like COMP-1, COMP-2, COMP-3, COMP-5 later
+    USAGE_DISPLAY = 0,
+    USAGE_COMP    = 1,      // COMP, COMP-4, BINARY: big-endian binary
+    USAGE_COMP3   = 2,      // COMP-3, PACKED-DECIMAL
+    USAGE_COMP5   = 3,      // COMP-5: native binary
 } AstUsageType;
 
 typedef enum {
@@ -51,6 +53,8 @@ typedef enum {
     AST_EXPR_SUB,
     AST_EXPR_MUL,
     AST_EXPR_DIV,
+    AST_EXPR_POW,           // children[0] ** children[1]
+    AST_EXPR_NEG,           // unary minus: children[0]
 } AstKind;
 
 
@@ -72,6 +76,12 @@ typedef struct AstNode {
     bool is_numeric;        // True if the data item is numeric
     bool is_signed;         // True if the data item is signed
     int decimal_places;     // Number of decimal places for numeric items (V in PIC)
+    int digits;             // Number of digit positions (9s) for numeric items
+
+    // Arithmetic statements
+    bool rounded;           // ROUNDED on this receiving identifier
+    struct AstNode *on_error;     // ON SIZE ERROR statements (NULL if absent)
+    struct AstNode *not_on_error; // NOT ON SIZE ERROR statements (NULL if absent)
 
     struct AstNode *children;
     struct AstNode *next;

@@ -2,6 +2,7 @@
 #include "diag.h"
 #include <ctype.h>
 #include <string.h>
+#include <strings.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <stdio.h> // For file operations
@@ -90,6 +91,7 @@ void lexer_init(Lexer *l, const char *source, const CompilerMode *mode, const ch
     l->file_content = NULL; // Not owned by the initial lexer
     l->free_content_on_pop = false;
     l->prev = NULL;
+    l->pic_next = false;
 
     // Set standard-specific keyword checker
     switch (l->mode->std) {
@@ -171,6 +173,24 @@ Token lexer_next(Lexer *l) {
 
     // TODO: Handle fixed/free format here
 
+    // PICTURE character-string: everything up to whitespace, except that a
+    // '.', ',' or ';' followed by whitespace ends the clause, not the string
+    if (l->pic_next) {
+        const char *p = l->src;
+        while (*p && !isspace((unsigned char)*p)) p++;
+        if (p - l->src == 2 && strncasecmp(l->src, "IS", 2) == 0) {
+            advance(l); advance(l);
+            return make_token_public(l, TOK_IS, start, 2);
+        }
+        l->pic_next = false;
+        while (*l->src && !isspace((unsigned char)*l->src)) {
+            if ((*l->src == '.' || *l->src == ',' || *l->src == ';') &&
+                (l->src[1] == '\0' || isspace((unsigned char)l->src[1]))) break;
+            advance(l);
+        }
+        return make_token_public(l, TOK_PIC_STRING, start, l->src - start);
+    }
+
     if (*l->src == '"') {
         advance(l);  // skip opening "
         start = l->src;
@@ -180,11 +200,19 @@ Token lexer_next(Lexer *l) {
         return make_token_public(l, TOK_STRING, start, len);
     }
 
-    // Handle numbers
+    // Handle numbers (a sign directly before the digits belongs to the literal)
     bool negative = false;
     if (*l->src == '-') {
         negative = true;
         advance(l);
+    } else if (*l->src == '+' && (isdigit((unsigned char)l->src[1]) || l->src[1] == '.')) {
+        advance(l);
+        while (isdigit(*l->src)) advance(l);
+        if (*l->src == '.' && isdigit(l->src[1])) {
+            advance(l);
+            while (isdigit(*l->src)) advance(l);
+        }
+        return make_token_public(l, TOK_NUMBER, start, l->src - start);
     }
 
     if (isdigit(*l->src) || (*l->src == '.' && isdigit(l->src[1]))) {
@@ -194,12 +222,8 @@ Token lexer_next(Lexer *l) {
             advance(l);
             while (isdigit(*l->src)) advance(l);
         }
-        size_t len = l->src - start;
-        if (negative) {
-            start--;  // include the '-'
-            len++;
-        }
-        return make_token_public(l, TOK_NUMBER, start, len);
+        // start already points at the '-' of a negative literal
+        return make_token_public(l, TOK_NUMBER, start, l->src - start);
     } else if (negative) {
         // If - not followed by number, treat as minus operator
         return make_token_public(l, TOK_MINUS, start, 1);
@@ -208,6 +232,7 @@ Token lexer_next(Lexer *l) {
     if (isalpha(*l->src)) {
         while (is_ident_char(l->src[0])) advance(l); // Use non-static is_ident_char
         Token t = l->get_keyword_or_ident(l, start, l->src - start);
+        if (t.kind == TOK_PIC) l->pic_next = true;
         if (t.kind == TOK_COPY) {
             // Found a COPY statement, now parse the filename
             // For simplicity, assume filename is a string literal immediately after COPY
@@ -300,6 +325,10 @@ Token lexer_next(Lexer *l) {
 
     if (*l->src == '*') {
         advance(l);
+        if (*l->src == '*') {
+            advance(l);
+            return make_token_public(l, TOK_POW, start, 2);
+        }
         return make_token_public(l, TOK_MUL, start, 1);
     }
 

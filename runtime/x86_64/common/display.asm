@@ -11,6 +11,8 @@ global runtime_display_var_string
 global runtime_display_fill
 global runtime_display_newline
 
+extern runtime_num_load
+
 ; ARG0 = null-terminated string pointer
 runtime_display_string:
     push rbp
@@ -34,74 +36,65 @@ runtime_display_string:
     leave
     ret
 
-; ARG0 = variable pointer (raw digits)
-; ARG1 = total size in bytes
-; ARG2 = number of decimal places
-; ARG3 = usage_type
+; ARG0 = field ptr, ARG1 = size, ARG2 = scale (digits after the implied point)
+; ARG3 = usage, ARG4 = flags
+; Writes the value without leading zeros (one zero before the point), with a
+; leading '-' when negative.
 runtime_display_numeric:
     push rbp
     mov rbp, rsp
-    ; Save incoming arguments onto the stack
-    push ARG0                           ; [rbp-8]  = var ptr
-    push ARG1                           ; [rbp-16] = size
-    push ARG2                           ; [rbp-24] = decimals
-    push ARG3                           ; [rbp-32] = usage_type
+    push r12
+    push r13
+    sub rsp, 48                         ; text buffer [rbp-64, rbp-16)
 
-    sub rsp, 64                         ; temp buffer
-    mov r8, rsp                         ; r8 = temp buffer
+    mov r12, ARG2                       ; scale
+    mov rax, ARG3
+    mov r10, ARG4
+    mov ARG2, rax                       ; usage
+    mov ARG3, r10                       ; flags
+    call runtime_num_load
+    mov r13, rax                        ; value
 
-    mov r9, [rbp-16]                    ; r9 = size (from stack)
-    ; Copy raw digits
-    mov rcx, r9
-    mov rsi, [rbp-8]                    ; var ptr (from stack)
-    mov rdi, r8
-    rep movsb
-    mov byte [r8 + r9], 0               ; null-terminate
+    lea rdi, [rbp-16]                   ; fill the buffer from the right
+    test rax, rax
+    jns .abs
+    neg rax
+.abs:
+    mov r8, 10
+    xor ecx, ecx                        ; digits written
+.digit_loop:
+    cmp rcx, r12
+    jne .digit
+    test rcx, rcx
+    jz .digit
+    dec rdi
+    mov byte [rdi], '.'
+.digit:
+    xor edx, edx
+    div r8
+    add dl, '0'
+    dec rdi
+    mov [rdi], dl
+    inc rcx
+    test rax, rax
+    jnz .digit_loop
+    cmp rcx, r12
+    jbe .digit_loop                     ; at least one digit before the point
 
-    ; Insert '.' if decimals > 0
-    mov rdx, [rbp-24]                   ; decimals (from stack)
-    test rdx, rdx
-    jz .no_dot
-    mov rcx, r9                         ; original size
-    sub rcx, rdx                        ; position for '.'
-    cmp rcx, 0
-    jle .no_dot
-    mov byte [r8 + rcx], '.'
-    inc r9                              ; length += 1 for '.'
-.no_dot:
-
-    ; Trim leading '0's (keep one '0' if value is zero)
-    mov rsi, r8
-.trim_loop:
-    cmp byte [rsi], '0'
-    jne .trim_done
-    inc rsi
-    cmp byte [rsi], 0
-    jne .trim_loop
-    dec rsi                             ; point back to single '0'
-.trim_done:
-
-    ; If trimmed result starts with '.', prepend '0'
-    cmp byte [rsi], '.'
-    jne .print
-    mov byte [r8], '0'
-    mov rsi, r8
-    inc r9
-
+    test r13, r13
+    jns .print
+    dec rdi
+    mov byte [rdi], '-'
 .print:
-    ; Calculate length of trimmed string
-    xor rdx, rdx
-.strlen_trimmed_loop:
-    cmp byte [rsi + rdx], 0
-    je .strlen_trimmed_done
-    inc rdx
-    jmp .strlen_trimmed_loop
-.strlen_trimmed_done:
-    mov ARG2, rdx                       ; length of trimmed string
-    mov ARG1, rsi                       ; trimmed start
+    lea rax, [rbp-16]
+    sub rax, rdi
+    mov ARG2, rax                       ; length
+    mov ARG1, rdi                       ; text
     mov ARG0, COBRT_STDOUT
     call cobrt_os_write
 
+    mov r12, [rbp-8]
+    mov r13, [rbp-16]
     leave
     ret
 

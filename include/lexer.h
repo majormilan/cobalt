@@ -61,6 +61,7 @@ typedef enum {
 
     /* PIC clause symbols */
     TOK_PIC,
+    TOK_PIC_STRING, // the character-string after PIC/PICTURE [IS]
     TOK_X,
     TOK_9,
     TOK_V,
@@ -73,6 +74,7 @@ typedef enum {
     TOK_COMP_2,
     TOK_COMP_3,
     TOK_COMP_5,
+    TOK_BINARY,
 
     /* Parentheses (used in PIC clauses and expressions) */
     TOK_LPAREN,     // (
@@ -100,6 +102,13 @@ typedef enum {
     TOK_CONTINUE,
     TOK_TIMES,
     TOK_REMAINDER,
+    TOK_NOT,
+    TOK_ON,
+    TOK_END_ADD,
+    TOK_END_SUBTRACT,
+    TOK_END_MULTIPLY,
+    TOK_END_DIVIDE,
+    TOK_END_COMPUTE,
 
     // Operators
     TOK_GT,
@@ -112,6 +121,7 @@ typedef enum {
     TOK_MINUS,
     TOK_MUL,
     TOK_DIV,
+    TOK_POW,        // **
 
     // Add more as needed...
 } TokenKind;
@@ -138,6 +148,8 @@ typedef struct Lexer {
     char *file_content;             // Owned content if read from a file, NULL otherwise
     bool free_content_on_pop;       // Whether to free `file_content` when this lexer is popped
     struct Lexer *prev;             // Pointer to the previous lexer state (for COPY)
+
+    bool pic_next;                  // next word is a PICTURE character-string
 } Lexer;
 
 void lexer_init(Lexer *l, const char *source, const CompilerMode *mode, const char *filename);

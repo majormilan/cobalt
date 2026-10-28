@@ -1,0 +1,32 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. NUMUSAGE.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 B1 PIC S9(4) COMP VALUE -1234.
+       01 B2 PIC 9(9) BINARY VALUE 123456789.
+       01 B3 PIC S9(18) COMP VALUE -999999999999999999.
+       01 P1 PIC S9(5)V99 COMP-3 VALUE -12345.67.
+       01 P2 PIC 9(4) PACKED-DECIMAL VALUE 9876.
+       01 N1 PIC S9(4) COMP-5 VALUE -2.
+       01 D1 PIC S9(7)V99 VALUE 0.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           DISPLAY "B1=" B1.
+           DISPLAY "B2=" B2.
+           DISPLAY "B3=" B3.
+           DISPLAY "P1=" P1.
+           DISPLAY "P2=" P2.
+           DISPLAY "N1=" N1.
+           ADD B1 P1 GIVING D1.
+           DISPLAY "D1=" D1.
+           MOVE D1 TO P1.
+           DISPLAY "P1=" P1.
+           ADD 1 TO B3.
+           DISPLAY "B3=" B3.
+           COMPUTE N1 = N1 * 1000.
+           DISPLAY "N1=" N1.
+           COMPUTE N1 = 40000 ON SIZE ERROR DISPLAY "N1 SIZE ERROR".
+           DISPLAY "N1=" N1.
+           MOVE 12345 TO B1.
+           DISPLAY "B1=" B1.
+           STOP RUN.

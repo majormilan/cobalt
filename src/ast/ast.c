@@ -28,6 +28,8 @@ void ast_free(AstNode *node) {
     free(node->text);
 
     ast_free(node->children);
+    ast_free(node->on_error);
+    ast_free(node->not_on_error);
     ast_free(node->next);
 
     free(node);
@@ -73,6 +75,8 @@ void ast_dump(AstNode *node, FILE *out, int indent) {
         case AST_EXPR_SUB:                  kind_name = "EXPR-SUB"; break;
         case AST_EXPR_MUL:                  kind_name = "EXPR-MUL"; break;
         case AST_EXPR_DIV:                  kind_name = "EXPR-DIV"; break;
+        case AST_EXPR_POW:                  kind_name = "EXPR-POW"; break;
+        case AST_EXPR_NEG:                  kind_name = "EXPR-NEG"; break;
         default:                            kind_name = "UNKNOWN"; break;
     }
 

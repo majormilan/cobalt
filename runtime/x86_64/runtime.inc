@@ -25,3 +25,11 @@
 
 %define COBRT_STDIN  0
 %define COBRT_STDOUT 1
+
+; Field usage codes and numeric flags (runtime/ABI.md section 5)
+%define USAGE_DISPLAY 0
+%define USAGE_COMP    1                 ; big-endian binary
+%define USAGE_COMP3   2                 ; packed decimal
+%define USAGE_COMP5   3                 ; native binary
+%define NUM_SIGNED    1                 ; PIC has S
+%define NUM_KEEP      2                 ; on size error, leave the field unchanged

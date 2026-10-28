@@ -1,4 +1,5 @@
 #include "lexer_cobol2002.h" // Corrected include path
+#include "lexer_cobol85.h"
 #include "lexer.h" // Corrected include path
 #include "diag.h" // Corrected include path
 #include <string.h>
@@ -79,14 +80,6 @@ Token lexer_cobol2002_keyword_or_ident(Lexer *l, const char *start, size_t len) 
 
     #undef KW
 
-    if (len == 1) {
-        switch (toupper(start[0])) {
-            case 'X': return make_token_public(l, TOK_X, start, len);
-            case 'V': return make_token_public(l, TOK_V, start, len);
-            case 'S': return make_token_public(l, TOK_S, start, len);
-            case 'P': return make_token_public(l, TOK_P, start, len);
-        }
-    }
-
-    return make_token_public(l, TOK_IDENT, start, len);
+    // Everything else is shared with COBOL-85
+    return lexer_cobol85_keyword_or_ident(l, start, len);
 }

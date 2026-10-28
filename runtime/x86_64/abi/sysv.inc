@@ -10,3 +10,4 @@
 %define ARG4 r8
 %define ARG5 r9
 %define RET0 rax
+%define RET1 rdx

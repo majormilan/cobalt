@@ -6,6 +6,9 @@
 section .text
 
 global runtime_accept
+global runtime_accept_numeric
+
+extern runtime_num_store
 
 ; Read one line from stdin into dest_var, padding to field size.
 ; Reads one byte at a time so it never consumes bytes beyond the \n.
@@ -107,3 +110,94 @@ runtime_accept:
     leave
     ret
 
+
+; Read one line from stdin and store it as a number.
+; Accepts optional leading spaces, an optional sign, digits and an optional
+; decimal point; the first other character ends the number. Fraction digits
+; beyond the field scale are dropped.
+;
+; ARG0 = field ptr, ARG1 = size, ARG2 = digits, ARG3 = scale,
+; ARG4 = usage, ARG5 = flags
+runtime_accept_numeric:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 112                        ; saved args [rbp-48, rbp), line [rbp-112, rbp-48)
+    mov [rbp-8], ARG0
+    mov [rbp-16], ARG1
+    mov [rbp-24], ARG2
+    mov [rbp-32], ARG3
+    mov [rbp-40], ARG4
+    mov [rbp-48], ARG5
+
+    lea ARG0, [rbp-112]                 ; read the line, space padded
+    mov ARG1, 64
+    xor ARG2, ARG2
+    xor ARG3, ARG3
+    mov ARG4, ' '
+    call runtime_accept
+
+    xor eax, eax                        ; value
+    xor ecx, ecx                        ; index into the line
+    xor r8d, r8d                        ; negative
+    xor r9d, r9d                        ; fraction digits taken
+    xor r10d, r10d                      ; decimal point seen
+    mov r11, [rbp-32]                   ; scale
+.an_skip:
+    cmp rcx, 64
+    jae .an_done
+    movzx edx, byte [rbp-112 + rcx]
+    cmp dl, ' '
+    jne .an_sign
+    inc rcx
+    jmp .an_skip
+.an_sign:
+    cmp dl, '+'
+    je .an_sign_next
+    cmp dl, '-'
+    jne .an_digits
+    mov r8d, 1
+.an_sign_next:
+    inc rcx
+.an_digits:
+    cmp rcx, 64
+    jae .an_done
+    movzx edx, byte [rbp-112 + rcx]
+    inc rcx
+    cmp dl, '.'
+    jne .an_not_point
+    mov r10d, 1
+    jmp .an_digits
+.an_not_point:
+    sub dl, '0'
+    cmp dl, 9
+    ja .an_done                         ; first other character ends the number
+    test r10d, r10d
+    jz .an_take
+    cmp r9, r11
+    jae .an_digits                      ; beyond the field scale: dropped
+    inc r9
+.an_take:
+    imul rax, rax, 10
+    add rax, rdx
+    jmp .an_digits
+.an_done:
+    cmp r9, r11                         ; fewer fraction digits than the scale
+    jae .an_sign_apply
+    imul rax, rax, 10
+    inc r9
+    jmp .an_done
+.an_sign_apply:
+    test r8d, r8d
+    jz .an_store
+    neg rax
+.an_store:
+    mov ARG5, rax                       ; value
+    mov ARG0, [rbp-8]
+    mov ARG1, [rbp-16]
+    mov ARG2, [rbp-24]                  ; digits
+    mov ARG3, [rbp-40]                  ; usage
+    mov ARG4, [rbp-48]                  ; flags
+    and ARG4, ~NUM_KEEP
+    call runtime_num_store
+    leave
+    ret

@@ -222,8 +222,9 @@ int main(int argc, char **argv) {
     }
 
     IrProgram *ir = lower_to_ir(ast);
-    if (!ir) {
-        fprintf(stderr, "IR lowering failed\n");
+    if (!ir || error_count > 0) {
+        if (!ir) fprintf(stderr, "IR lowering failed\n");
+        ir_free(ir);
         ast_free(ast);
         free(source);
         return 1;

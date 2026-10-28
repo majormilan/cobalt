@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <ctype.h>
 
 static char *escape_string(const char *s) {
     if (!s) return strdup("\"\"");
@@ -25,15 +26,18 @@ static char *escape_string(const char *s) {
     return esc;
 }
 
+// Assembly label for a COBOL name or IR label. COBOL names are
+// case-insensitive and may clash with assembler reserved words (DS, AX, ...),
+// so labels are upper-cased and prefixed with "c_"; '-' becomes '_'.
 static char *sanitize_label_name(const char *name) {
     if (!name) return NULL;
-    char *sanitized = strdup(name);
+    char *sanitized = malloc(strlen(name) + 3);
     if (!sanitized) return NULL;
-    for (char *p = sanitized; *p; p++) {
-        if (*p == '-') {
-            *p = '_';
-        }
-    }
+    char *d = sanitized;
+    *d++ = 'c';
+    *d++ = '_';
+    for (const char *p = name; *p; p++) *d++ = (*p == '-') ? '_' : (char)toupper((unsigned char)*p);
+    *d = '\0';
     return sanitized;
 }
 
@@ -51,8 +55,33 @@ static const char *const runtime_routines[] = {
 //   entered the same way.
 // - rbx holds the PERFORM ... TIMES counter. Each loop saves the previous
 //   value on the stack (which also serves as the call padding), so loops nest.
-// - r12 holds the left operand of a comparison across the runtime call that
-//   loads the right one. It is never live across a paragraph call.
+// - The numeric stack machine (IR_NUM_*) keeps values on the machine stack in
+//   16-byte slots, so rsp stays aligned while values are pending.
+// - cobrt_tgt_err collects errors (overflow, division by zero) while one
+//   receiver's value is computed; cobrt_stmt_err collects size errors of the
+//   whole statement for ON SIZE ERROR.
+
+// Numeric stack: push rax / pop into reg, one 16-byte slot per value
+static void emit_push(FILE *f) {
+    fprintf(f, "    sub rsp, 16\n");
+    fprintf(f, "    mov [rsp], rax\n");
+}
+
+static void emit_pop(FILE *f, const char *reg) {
+    fprintf(f, "    mov %s, [rsp]\n", reg);
+    fprintf(f, "    add rsp, 16\n");
+}
+
+// Inverted conditional jump: taken when (a cmp_op b) is false
+static const char *false_jump(const char *cmp_op) {
+    if (!cmp_op || strcmp(cmp_op, "=") == 0) return "jne";
+    if (strcmp(cmp_op, "<>") == 0) return "je";
+    if (strcmp(cmp_op, ">")  == 0) return "jle";
+    if (strcmp(cmp_op, "<")  == 0) return "jge";
+    if (strcmp(cmp_op, ">=") == 0) return "jl";
+    if (strcmp(cmp_op, "<=") == 0) return "jg";
+    return "jne";
+}
 
 // Call a paragraph from aligned code
 static void emit_para_call(FILE *f, const char *para) {
@@ -63,6 +92,7 @@ static void emit_para_call(FILE *f, const char *para) {
 
 int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *target) {
     int perform_counter = 0; // unique label suffix for PERFORM TIMES loops
+    int store_counter = 0;   // unique label suffix for numeric stores
 
     FILE *f = fopen(filename, "w");
     if (!f) {
@@ -87,6 +117,8 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
         }
         i = i->next;
     }
+    fprintf(f, "cobrt_tgt_err: resb 1\n");
+    fprintf(f, "cobrt_stmt_err: resb 1\n");
     fprintf(f, "\n");
 
     fprintf(f, "section .data\n");
@@ -113,9 +145,11 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
     while (i) {
         char *sanitized_var_name = NULL;
         char *sanitized_lit_name = NULL;
+        char *sanitized_jump = NULL;
 
         if (i->var_name) sanitized_var_name = sanitize_label_name(i->var_name);
         if (i->lit_name) sanitized_lit_name = sanitize_label_name(i->lit_name);
+        if (i->jump_target) sanitized_jump = sanitize_label_name(i->jump_target);
 
         switch (i->op) {
             case IR_CALL_DISPLAY_STR:
@@ -126,19 +160,20 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
                 fprintf(f, "    mov rsi, %d\n", i->size);
                 fprintf(f, "    mov rdx, %d\n", i->decimal_places);
-                fprintf(f, "    mov rcx, %d\n", i->usage_type); // Pass usage_type
+                fprintf(f, "    mov rcx, %d\n", i->usage_type);
+                fprintf(f, "    mov r8, %d\n", i->flags);
                 fprintf(f, "    call runtime_display_numeric\n");
                 break;
-            case IR_CALL_DISPLAY_FILL: // New
-                fprintf(f, "    mov rdi, %d\n", i->pad_char);   // fill_char
-                fprintf(f, "    mov rsi, %d\n", i->size);       // size (new)
-                fprintf(f, "    mov rdx, %d\n", i->usage_type); // usage_type (new)
+            case IR_CALL_DISPLAY_FILL:
+                fprintf(f, "    mov rdi, %d\n", i->pad_char);
+                fprintf(f, "    mov rsi, %d\n", i->size);
+                fprintf(f, "    mov rdx, %d\n", i->usage_type);
                 fprintf(f, "    call runtime_display_fill\n");
                 break;
             case IR_CALL_DISPLAY_VAR_STR:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name); // var_name
-                fprintf(f, "    mov rsi, %d\n", i->size);               // size
-                fprintf(f, "    mov rdx, %d\n", i->usage_type);         // usage_type
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
+                fprintf(f, "    mov rsi, %d\n", i->size);
+                fprintf(f, "    mov rdx, %d\n", i->usage_type);
                 fprintf(f, "    call runtime_display_var_string\n");
                 break;
             case IR_EMIT_NEWLINE:
@@ -150,59 +185,33 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 fprintf(f, "    lea rsi, [%s]\n", sanitized_lit_name);
                 fprintf(f, "    mov rdx, %d\n", i->lit_len);
                 fprintf(f, "    mov rcx, %d\n", i->size);
-                fprintf(f, "    mov r8, %d\n", i->usage_type); // Pass usage_type
+                fprintf(f, "    mov r8, %d\n", i->usage_type);
                 fprintf(f, "    call runtime_move_%s\n\n",
                         i->op == IR_CALL_MOVE_NUM ? "numeric" : "alphanum");
                 break;
-            case IR_CALL_MOVE_FILL: // New
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name); // dest_var
-                fprintf(f, "    mov rsi, %d\n", i->pad_char);   // fill_char
-                fprintf(f, "    mov rdx, %d\n", i->size);       // size
-                fprintf(f, "    mov rcx, %d\n", i->usage_type); // usage_type
+            case IR_CALL_MOVE_FILL:
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
+                fprintf(f, "    mov rsi, %d\n", i->pad_char);
+                fprintf(f, "    mov rdx, %d\n", i->size);
+                fprintf(f, "    mov rcx, %d\n", i->usage_type);
                 fprintf(f, "    call runtime_move_fill\n\n");
                 break;
             case IR_CALL_ACCEPT:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name); // dest_var
-                fprintf(f, "    mov rsi, %d\n", i->size);               // size
-                fprintf(f, "    mov rdx, %d\n", i->decimal_places);     // decimal_places
-                fprintf(f, "    mov rcx, %d\n", i->usage_type);         // usage_type
-                fprintf(f, "    mov r8, %d\n", (int)(unsigned char)i->pad_char); // pad_char
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
+                fprintf(f, "    mov rsi, %d\n", i->size);
+                fprintf(f, "    xor edx, edx\n");
+                fprintf(f, "    xor ecx, ecx\n");
+                fprintf(f, "    mov r8, %d\n", (int)(unsigned char)i->pad_char);
                 fprintf(f, "    call runtime_accept\n");
                 break;
-            case IR_CALL_ADD_TO:
+            case IR_CALL_ACCEPT_NUM:
                 fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
                 fprintf(f, "    mov rsi, %d\n", i->size);
-                fprintf(f, "    lea rdx, [%s]\n", sanitized_lit_name);
-                fprintf(f, "    mov rcx, %d\n", i->lit_len);
-                fprintf(f, "    call runtime_add_to\n\n");
-                break;
-            case IR_CALL_SUB_FROM:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
-                fprintf(f, "    mov rsi, %d\n", i->size);
-                fprintf(f, "    lea rdx, [%s]\n", sanitized_lit_name);
-                fprintf(f, "    mov rcx, %d\n", i->lit_len);
-                fprintf(f, "    call runtime_sub_from\n\n");
-                break;
-            case IR_CALL_MUL_BY:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
-                fprintf(f, "    mov rsi, %d\n", i->size);
-                fprintf(f, "    lea rdx, [%s]\n", sanitized_lit_name);
-                fprintf(f, "    mov rcx, %d\n", i->lit_len);
-                fprintf(f, "    call runtime_mul_by\n\n");
-                break;
-            case IR_CALL_DIV_INTO:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
-                fprintf(f, "    mov rsi, %d\n", i->size);
-                fprintf(f, "    lea rdx, [%s]\n", sanitized_lit_name);
-                fprintf(f, "    mov rcx, %d\n", i->lit_len);
-                fprintf(f, "    call runtime_div_into\n\n");
-                break;
-            case IR_CALL_MOD_INTO:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
-                fprintf(f, "    mov rsi, %d\n", i->size);
-                fprintf(f, "    lea rdx, [%s]\n", sanitized_lit_name);
-                fprintf(f, "    mov rcx, %d\n", i->lit_len);
-                fprintf(f, "    call runtime_mod_into\n\n");
+                fprintf(f, "    mov rdx, %d\n", i->digits);
+                fprintf(f, "    mov rcx, %d\n", i->decimal_places);
+                fprintf(f, "    mov r8, %d\n", i->usage_type);
+                fprintf(f, "    mov r9, %d\n", i->flags);
+                fprintf(f, "    call runtime_accept_numeric\n");
                 break;
             case IR_LABEL:
                 fprintf(f, "\n%s:\n", sanitized_var_name);
@@ -214,79 +223,122 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 fprintf(f, "    ret\n\n");
                 break;
             case IR_PERFORM_TIMES:
-                if (!sanitized_lit_name) {
+                if (!i->flags) {
                     // Literal count: PERFORM para N TIMES
-                    if (i->size <= 0) break; // zero iterations: nothing to emit
+                    if (i->imm <= 0) break; // zero iterations: nothing to emit
                     fprintf(f, "    push rbx\n"); // save outer counter; pads the calls below
-                    fprintf(f, "    mov rbx, %d\n", i->size);
-                    fprintf(f, ".perform_%d:\n", perform_counter);
-                    fprintf(f, "    call %s\n", sanitized_var_name);
-                    fprintf(f, "    dec rbx\n");
-                    fprintf(f, "    jnz .perform_%d\n", perform_counter);
-                    fprintf(f, "    pop rbx\n\n");
-                    perform_counter++;
+                    fprintf(f, "    mov rbx, %lld\n", i->imm);
                 } else {
-                    // Variable count: PERFORM para var TIMES
-                    fprintf(f, "    lea rdi, [%s]\n", sanitized_lit_name);
-                    fprintf(f, "    mov rsi, %d\n", i->lit_len);
-                    fprintf(f, "    call runtime_load_int\n");
+                    // Count on the numeric stack: PERFORM para var TIMES
+                    emit_pop(f, "rax");
                     fprintf(f, "    push rbx\n"); // save outer counter; pads the calls below
                     fprintf(f, "    mov rbx, rax\n");
                     fprintf(f, "    test rbx, rbx\n");
-                    fprintf(f, "    jz .perform_%d_done\n", perform_counter);
-                    fprintf(f, ".perform_%d:\n", perform_counter);
-                    fprintf(f, "    call %s\n", sanitized_var_name);
-                    fprintf(f, "    dec rbx\n");
-                    fprintf(f, "    jnz .perform_%d\n", perform_counter);
-                    fprintf(f, ".perform_%d_done:\n", perform_counter);
-                    fprintf(f, "    pop rbx\n\n");
-                    perform_counter++;
+                    fprintf(f, "    jle .perform_%d_done\n", perform_counter);
                 }
+                fprintf(f, ".perform_%d:\n", perform_counter);
+                fprintf(f, "    call %s\n", sanitized_var_name);
+                fprintf(f, "    dec rbx\n");
+                fprintf(f, "    jnz .perform_%d\n", perform_counter);
+                fprintf(f, ".perform_%d_done:\n", perform_counter);
+                fprintf(f, "    pop rbx\n\n");
+                perform_counter++;
                 break;
             case IR_CALL_EXIT:
                 fprintf(f, "    call runtime_exit\n");
                 break;
             case IR_JUMP:
-                fprintf(f, "    jmp %s\n\n", i->jump_target ? i->jump_target : "");
+                fprintf(f, "    jmp %s\n\n", sanitized_jump);
                 break;
-            case IR_CMP_JUMP_IF_FALSE: {
-                // Load left operand into r12 (callee-saved, survives the call below)
-                if (i->left_is_literal) {
-                    fprintf(f, "    mov r12, %s\n", i->var_name ? i->var_name : "0");
-                } else if (sanitized_var_name) {
-                    fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
-                    fprintf(f, "    mov rsi, %d\n", i->size);
-                    fprintf(f, "    call runtime_load_int\n");
-                    fprintf(f, "    mov r12, rax\n");
-                }
-                // Load right operand into rax
-                if (i->right_is_literal) {
-                    fprintf(f, "    mov rax, %s\n", i->lit_name ? i->lit_name : "0");
-                } else if (sanitized_lit_name) {
-                    fprintf(f, "    lea rdi, [%s]\n", sanitized_lit_name);
-                    fprintf(f, "    mov rsi, %d\n", i->lit_len);
-                    fprintf(f, "    call runtime_load_int\n");
-                }
-                fprintf(f, "    cmp r12, rax\n");
-                // Emit the INVERTED conditional jump (we jump when condition is FALSE)
-                const char *jmp_instr = "jne"; // default: "=" inverted
-                if (i->cmp_op) {
-                    if      (strcmp(i->cmp_op, "=")  == 0) jmp_instr = "jne";
-                    else if (strcmp(i->cmp_op, "<>") == 0) jmp_instr = "je";
-                    else if (strcmp(i->cmp_op, ">")  == 0) jmp_instr = "jle";
-                    else if (strcmp(i->cmp_op, "<")  == 0) jmp_instr = "jge";
-                    else if (strcmp(i->cmp_op, ">=") == 0) jmp_instr = "jl";
-                    else if (strcmp(i->cmp_op, "<=") == 0) jmp_instr = "jg";
-                }
-                fprintf(f, "    %s %s\n\n", jmp_instr, i->jump_target ? i->jump_target : "");
+            case IR_NUM_LOAD:
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
+                fprintf(f, "    mov rsi, %d\n", i->size);
+                fprintf(f, "    mov rdx, %d\n", i->usage_type);
+                fprintf(f, "    mov rcx, %d\n", i->flags);
+                fprintf(f, "    call runtime_num_load\n");
+                emit_push(f);
                 break;
-            }
+            case IR_NUM_CONST:
+                fprintf(f, "    mov rax, %lld\n", i->imm);
+                emit_push(f);
+                break;
+            case IR_NUM_RESCALE:
+                emit_pop(f, "rdi");
+                fprintf(f, "    mov rsi, %lld\n", i->imm);
+                fprintf(f, "    mov rdx, %d\n", i->flags);
+                fprintf(f, "    call runtime_num_rescale\n");
+                fprintf(f, "    or [rel cobrt_tgt_err], dl\n");
+                emit_push(f);
+                break;
+            case IR_NUM_ADD:
+            case IR_NUM_SUB:
+                emit_pop(f, "rcx");
+                emit_pop(f, "rax");
+                fprintf(f, "    %s rax, rcx\n", i->op == IR_NUM_ADD ? "add" : "sub");
+                fprintf(f, "    seto dl\n");
+                fprintf(f, "    or [rel cobrt_tgt_err], dl\n");
+                emit_push(f);
+                break;
+            case IR_NUM_MUL:
+            case IR_NUM_DIV:
+                emit_pop(f, "rsi");
+                emit_pop(f, "rdi");
+                fprintf(f, "    mov rdx, %lld\n", i->imm);
+                fprintf(f, "    call runtime_num_%s\n", i->op == IR_NUM_MUL ? "mul" : "div");
+                fprintf(f, "    or [rel cobrt_tgt_err], dl\n");
+                emit_push(f);
+                break;
+            case IR_NUM_NEG:
+                fprintf(f, "    neg qword [rsp]\n");
+                break;
+            case IR_NUM_STORE:
+                // An error while computing the value: leave the receiver unchanged
+                emit_pop(f, "r9");
+                fprintf(f, "    cmp byte [rel cobrt_tgt_err], 0\n");
+                fprintf(f, "    jne .store_%d_done\n", store_counter);
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
+                fprintf(f, "    mov rsi, %d\n", i->size);
+                fprintf(f, "    mov rdx, %d\n", i->digits);
+                fprintf(f, "    mov rcx, %d\n", i->usage_type);
+                fprintf(f, "    mov r8, %d\n", i->flags);
+                fprintf(f, "    call runtime_num_store\n");
+                fprintf(f, "    or [rel cobrt_tgt_err], al\n");
+                fprintf(f, ".store_%d_done:\n", store_counter);
+                fprintf(f, "    mov al, [rel cobrt_tgt_err]\n");
+                fprintf(f, "    or [rel cobrt_stmt_err], al\n");
+                fprintf(f, "    mov byte [rel cobrt_tgt_err], 0\n\n");
+                store_counter++;
+                break;
+            case IR_NUM_CMP_JUMP_IF_FALSE:
+                emit_pop(f, "rcx");
+                emit_pop(f, "rax");
+                fprintf(f, "    cmp rax, rcx\n");
+                fprintf(f, "    %s %s\n\n", false_jump(i->cmp_op), sanitized_jump);
+                break;
+            case IR_ALNUM_CMP_JUMP_IF_FALSE:
+                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
+                fprintf(f, "    mov rsi, %d\n", i->size);
+                fprintf(f, "    lea rdx, [%s]\n", sanitized_lit_name);
+                fprintf(f, "    mov rcx, %d\n", i->lit_len);
+                fprintf(f, "    call runtime_compare_alnum\n");
+                fprintf(f, "    cmp rax, 0\n");
+                fprintf(f, "    %s %s\n\n", false_jump(i->cmp_op), sanitized_jump);
+                break;
+            case IR_SIZE_ERR_CLEAR:
+                fprintf(f, "    mov byte [rel cobrt_tgt_err], 0\n");
+                fprintf(f, "    mov byte [rel cobrt_stmt_err], 0\n");
+                break;
+            case IR_JUMP_IF_NO_SIZE_ERR:
+                fprintf(f, "    cmp byte [rel cobrt_stmt_err], 0\n");
+                fprintf(f, "    je %s\n", sanitized_jump);
+                break;
             default:
                 // Handle other IR opcodes if necessary, or do nothing for IR_DATA_VAR/IR_DATA_LIT as they are handled in .bss/.data sections
                 break;
         }
-        free(sanitized_var_name); // Free the sanitized name
-        free(sanitized_lit_name); // Free the sanitized name
+        free(sanitized_var_name);
+        free(sanitized_lit_name);
+        free(sanitized_jump);
         i = i->next;
     }
 

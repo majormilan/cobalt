@@ -54,12 +54,20 @@ Token lexer_cobol85_keyword_or_ident(Lexer *l, const char *start, size_t len) {
     KW("IS",              TOK_IS); // Added for USAGE IS COMP/DISPLAY
 
     KW("PIC",             TOK_PIC);
+    KW("PICTURE",         TOK_PIC);
     KW("USAGE",           TOK_USAGE);
     KW("COMP",            TOK_COMP);
     KW("COMP-1",          TOK_COMP_1);
     KW("COMP-2",          TOK_COMP_2);
     KW("COMP-3",          TOK_COMP_3);
     KW("COMP-5",          TOK_COMP_5);
+    KW("COMP-4",          TOK_COMP);
+    KW("COMPUTATIONAL",   TOK_COMP);
+    KW("COMPUTATIONAL-3", TOK_COMP_3);
+    KW("COMPUTATIONAL-4", TOK_COMP);
+    KW("COMPUTATIONAL-5", TOK_COMP_5);
+    KW("BINARY",          TOK_BINARY);
+    KW("PACKED-DECIMAL",  TOK_COMP_3);
 
     KW("ACCEPT",          TOK_ACCEPT);
     KW("INTO",            TOK_INTO);
@@ -86,16 +94,14 @@ Token lexer_cobol85_keyword_or_ident(Lexer *l, const char *start, size_t len) {
     KW("TIMES",           TOK_TIMES);
     KW("THRU",            TOK_THROUGH);  // THRU is an alias for THROUGH
     KW("REMAINDER",       TOK_REMAINDER);
+    KW("NOT",             TOK_NOT);
+    KW("ON",              TOK_ON);
+    KW("END-ADD",         TOK_END_ADD);
+    KW("END-SUBTRACT",    TOK_END_SUBTRACT);
+    KW("END-MULTIPLY",    TOK_END_MULTIPLY);
+    KW("END-DIVIDE",      TOK_END_DIVIDE);
+    KW("END-COMPUTE",     TOK_END_COMPUTE);
     #undef KW
-
-    if (len == 1) {
-        switch (toupper(start[0])) {
-            case 'X': return make_token_public(l, TOK_X, start, len);
-            case 'V': return make_token_public(l, TOK_V, start, len);
-            case 'S': return make_token_public(l, TOK_S, start, len);
-            case 'P': return make_token_public(l, TOK_P, start, len);
-        }
-    }
 
     return make_token_public(l, TOK_IDENT, start, len);
 }

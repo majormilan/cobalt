@@ -68,42 +68,53 @@ Rules for generated code (x86_64, see `src/backend/x86_64-linux-elf.c`):
 - `rbx` holds the `PERFORM ... TIMES` counter. Each loop pushes the previous
   value before it starts and pops it at the end; the pushed value also serves
   as the 8-byte call padding.
-- `r12` holds the left operand of a comparison across the runtime call that
-  loads the right one. It is never live across a paragraph call.
+- Pending numeric values (the numeric stack machine, section 6) live on the
+  machine stack in 16-byte slots, which keeps `rsp` aligned.
+- Two bytes in the program's `.bss` track size errors: `cobrt_tgt_err`
+  collects errors while one receiver's value is computed, `cobrt_stmt_err`
+  collects them for the whole statement (for ON SIZE ERROR).
+- Labels derived from COBOL names are upper-cased and prefixed with `c_`
+  (`WS-TOTAL` becomes `c_WS_TOTAL`), because COBOL names are case-insensitive
+  and may collide with assembler reserved words such as `DS`.
 - Any other value that must survive a runtime call lives in a callee-saved
   register or on the stack.
+
+x86_64 runtime code uses `rdi` and `rsi` as scratch registers (for
+`rep movsb` and similar). They are caller-saved under SysV but callee-saved
+under Win64, so a Win64 port must save them in each routine's prologue.
 
 ## 3. Runtime routines
 
 The authoritative list is `runtime/routines.def`. The compiler generates its
 `extern` declarations from it, and `make check-runtime` checks that a runtime
 exports every routine. Signatures below use: `ptr` for a field or literal
-address, `size` and `len` in bytes, `usage` as the `AstUsageType` value
-(0 = DISPLAY, 1 = COMP).
+address, `size` and `len` in bytes, `usage` for the usage code and `flags`
+for the numeric flags (both in section 5), `scale` for the number of digits
+after the implied decimal point, and `digits` for the number of digit
+positions in the PICTURE.
 
 | Routine | Arguments | Behavior |
 |---|---|---|
 | `runtime_init` | none | Called once at program start. |
 | `runtime_exit` | none | Ends the program with status 0. Does not return. |
 | `runtime_display_string` | `ptr` (NUL-terminated) | Writes a literal to stdout. |
-| `runtime_display_numeric` | `ptr, size, decimals, usage` | Writes a numeric field: inserts the decimal point, drops leading zeros (keeps one zero before the point). |
+| `runtime_display_numeric` | `ptr, size, scale, usage, flags` | Writes a numeric field: no leading zeros (one zero before the point), all `scale` decimals, a leading `-` when negative. |
 | `runtime_display_var_string` | `ptr, size, usage` | Writes an alphanumeric field as is (`size` bytes). |
 | `runtime_display_fill` | `char, size, usage` | Writes `size` copies of `char` (figurative constants). |
 | `runtime_display_newline` | none | Ends the DISPLAY line. |
 | `runtime_move_alphanum` | `dest, src, src_len, dest_size, usage` | Left-justified copy, space padded, truncated on the right. |
-| `runtime_move_numeric` | `dest, src_digits, src_len, dest_size, usage` | Right-justified digit copy, zero padded. Requires `src_len <= dest_size`. |
+| `runtime_move_numeric` | `dest, src_digits, src_len, dest_size, usage` | Right-justified digit copy, zero padded, for an alphanumeric source moved to an unsigned integer DISPLAY field. Requires `src_len <= dest_size`. |
 | `runtime_move_fill` | `dest, char, size, usage` | Fills a field with `char`. |
 | `runtime_accept` | `dest, size, decimals, usage, pad_char` | Reads one line from stdin. `pad_char` `'0'`: right-justify and zero pad; otherwise left-justify and space pad. Excess input is discarded, `\r` is ignored, EOF ends the line. |
-| `runtime_load_int` | `ptr, size` | Returns the unsigned DISPLAY field as an integer in `RET0`. |
-| `runtime_add_to` | `dest, dest_size, src, src_size` | `dest += src` |
-| `runtime_sub_from` | same | `dest -= src`, clamped at 0 |
-| `runtime_mul_by` | same | `dest *= src` |
-| `runtime_div_into` | same | `dest /= src` (integer); unchanged if `src` is 0 |
-| `runtime_mod_into` | same | `dest %= src`; unchanged if `src` is 0 |
+| `runtime_accept_numeric` | `ptr, size, digits, scale, usage, flags` | Reads one line and stores it as a number: optional spaces, optional sign, digits and an optional point; the first other character ends the number; extra decimals are dropped. |
+| `runtime_num_load` | `ptr, size, usage, flags` | Returns the field's value as an unscaled signed integer in `RET0`. |
+| `runtime_num_store` | `ptr, size, digits, usage, flags, value` | Stores an unscaled value (already at the field's scale). Returns 1 in `RET0` on size error, after truncating, or without storing when `NUM_KEEP` is set. |
+| `runtime_num_rescale` | `value, shift, rounded` | `value * 10^shift`; a negative shift truncates, or rounds half away from zero when `rounded` is non-zero. `RET1` = 1 on overflow. |
+| `runtime_num_mul` | `a, b, shift` | `(a * b) / 10^shift` with a 128-bit product, truncated. `RET1` = 1 on overflow. |
+| `runtime_num_div` | `a, b, shift` | `(a * 10^shift) / b` with a 128-bit dividend, truncated. `RET1` = 1 on overflow or division by zero. |
+| `runtime_compare_alnum` | `a, a_len, b, b_len` | Compares in the ASCII collating sequence, padding the shorter operand with spaces. Returns -1, 0 or 1. |
 
-All arithmetic routines are currently [implemented] for unsigned integer
-DISPLAY fields only. High-order digits that do not fit are silently lost.
-Phase 1 replaces their internals with the numeric core in section 6.
+`RET1` is the second return register (`rdx` under SysV).
 
 ## 4. OS layer interface
 
@@ -128,6 +139,11 @@ every target. A given COBOL program produces the same bytes in memory and the
 same output on every target. The one deliberate exception is COMP-5 (native
 binary).
 
+Usage codes passed to the runtime: 0 = DISPLAY, 1 = COMP (also COMP-4 and
+BINARY), 2 = COMP-3 (also PACKED-DECIMAL), 3 = COMP-5. Numeric flags:
+`NUM_SIGNED` (1) when the PICTURE has `S`, `NUM_KEEP` (2) when the statement
+has ON SIZE ERROR and the receiver must stay unchanged on size error.
+
 Character data is ASCII, one byte per character position. Bytes outside ASCII
 (for example UTF-8 in literals) are copied unchanged and count as one position
 per byte. EBCDIC is not supported.
@@ -141,10 +157,9 @@ per byte. EBCDIC is not supported.
 - One ASCII digit `'0'` to `'9'` per byte, most significant first. Size =
   number of digit positions. [implemented]
 - The implied decimal point (`V`) is not stored. The scale (digits after `V`)
-  is a compile-time property passed to the runtime. [planned: arithmetic and
-  MOVE ignore it today]
+  is a compile-time property passed to the runtime. [implemented]
 - **Signed fields (`S`) use a trailing overpunch** in the last digit's byte,
-  the default IBM position. [planned] Encoding (the ASCII convention used by
+  the default IBM position. [implemented] Encoding (the ASCII convention used by
   GnuCOBOL and Micro Focus):
 
   | Digit | Positive or unsigned | Negative |
@@ -158,9 +173,9 @@ per byte. EBCDIC is not supported.
 - `SIGN LEADING`, `SIGN SEPARATE` and their combinations are [planned] for
   later and will be documented here when implemented.
 - DISPLAY of a signed field prints a leading `-` for negative values and no
-  sign for positive ones.
+  sign for positive ones. [implemented]
 
-### Binary (`COMP`, `COMP-4`, `BINARY`) [planned]
+### Binary (`COMP`, `COMP-4`, `BINARY`) [implemented]
 
 Two's complement, **big-endian on every target**: the standard and IBM
 behavior, and it keeps binary data files portable between targets. Size by
@@ -173,46 +188,55 @@ digit count, as `sema.c` already allocates:
 | 10 to 18 | 8 |
 
 The value is limited by the PIC digits (for example `PIC 9(3) COMP` holds 0 to
-999), not by the byte size. Today COMP fields get these sizes but are still
-stored as ASCII digits, which truncates them (`tests/usage_test.xfail`).
+999), not by the byte size.
 
-### Native binary (`COMP-5`) [planned]
+### Native binary (`COMP-5`) [implemented]
 
 Same sizes, two's complement, **native byte order of the target**. The value
 range is the full binary range of the size, not the PIC digits. Meant for
 interfacing with non-COBOL code.
 
-### Packed decimal (`COMP-3`, `PACKED-DECIMAL`) [planned]
+### Packed decimal (`COMP-3`, `PACKED-DECIMAL`) [implemented]
 
 Two digits per byte, high nibble first, with the sign in the low nibble of the
 last byte: `0xC` positive, `0xD` negative, `0xF` unsigned. Size =
 `digits / 2 + 1` bytes (integer division). On input `0xA`, `0xE` are also
 accepted as positive and `0xB` as negative.
 
-## 6. Numeric core [planned]
+## 6. Numeric core [implemented]
 
-All arithmetic and numeric MOVE go through a single internal representation:
+All arithmetic, numeric MOVE, VALUE initialization, numeric comparison and
+PERFORM counts go through a single representation:
 
 - A value is a **signed 64-bit integer scaled by a power of ten**:
-  `value = n * 10^-scale`. The scale is known at compile time.
+  `value = n * 10^-scale`. The scale of every value is known at compile time.
 - Maximum precision is **18 digits**, the COBOL-85 limit, which always fits in
-  64 bits. The compiler rejects PICs with more digits.
-- Two routines convert between storage and the core, so each new usage
-  (DISPLAY, COMP, COMP-3) touches only them:
-  - `load_num(ptr, size, scale, usage, signed)` returns the scaled integer.
-  - `store_num(ptr, size, scale, usage, signed, value, value_scale, rounded)`
-    stores it and returns a size-error flag.
-- **Scale alignment is done by the compiler** where possible (multiplying by a
-  constant power of ten), which keeps the runtime small on every arch.
+  64 bits. The compiler rejects PICTUREs with more digits.
+- `runtime_num_load` and `runtime_num_store` convert between storage and the
+  core, so each usage (DISPLAY, COMP, COMP-3, COMP-5) touches only them.
+- Generated code is a **stack machine** (`IR_NUM_*` in `include/ir.h`): push
+  fields and literals, rescale, add, subtract, multiply, divide, negate, then
+  store or compare. Add, subtract and negate are inline instructions; scaling,
+  multiplication and division call the runtime.
+- **Scale alignment is done by the compiler**: operands of `+`, `-` and
+  comparisons are brought to the larger scale before the operation.
+- **Working scale W** = largest scale among the operands and the receiver,
+  plus 2 (at most 18). Products are cut back to W decimals, quotients are
+  computed to W decimals, so `ROUNDED` always sees at least one digit beyond
+  the receiver's scale.
 - Multiplication and division use a 128-bit intermediate (`rdx:rax` on
   x86_64), so `a * b` and the scaling before a division do not overflow before
-  the result is rounded or truncated. Other arches must give the same results.
+  the result is truncated. Other arches must give the same results.
 - **Truncation (default):** extra decimal digits are dropped and high-order
   digits that do not fit are lost, as the standard requires.
 - **ROUNDED:** round half away from zero.
-- **Size error:** set when high-order digits would be lost or on division by
-  zero. With `ON SIZE ERROR` the target keeps its old value and the handler
-  runs. Without it, the truncated result is stored, except after division by
-  zero, where the target is left unchanged.
-- Unsigned targets store the absolute value of a negative result (standard
-  behavior). This replaces today's clamp at 0 in `runtime_sub_from`.
+- **Size error:** set when high-order digits would be lost, on overflow of an
+  intermediate result, or on division by zero. An overflow or division by
+  zero always leaves the receiver unchanged. Lost high-order digits leave it
+  unchanged with `ON SIZE ERROR`, and store the truncated value without it.
+- Unsigned receivers store the absolute value of a negative result (standard
+  behavior).
+- Every arithmetic statement is computed as one expression per receiver:
+  `ADD a b TO x` stores `x + a + b` into `x`, `DIVIDE a INTO b GIVING q
+  REMAINDER r` stores `b / a` into `q` and then `b - q * a` into `r`.
+- Exponentiation (`**`) supports integer literal exponents from 0 to 18.

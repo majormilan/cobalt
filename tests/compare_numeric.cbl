@@ -1,0 +1,17 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. COMPARENUM.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 A  PIC S99V9 VALUE -1.5.
+       01 B  PIC 99 VALUE 1.
+       01 N1 PIC X(5) VALUE "ABC".
+       01 N2 PIC X(3) VALUE "ABD".
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           IF A < B DISPLAY "A<B" ELSE DISPLAY "A>=B" END-IF.
+           IF A = -1.5 DISPLAY "A=-1.5" END-IF.
+           IF B > 0.9 DISPLAY "B>0.9" END-IF.
+           IF N1 < N2 DISPLAY "N1<N2" END-IF.
+           MOVE "ABD" TO N1.
+           IF N1 = N2 DISPLAY "N1=N2" END-IF.
+           STOP RUN.
