@@ -78,9 +78,18 @@ Rules for generated code (x86_64, see `src/backend/x86_64-linux-elf.c`):
 - Two bytes in the program's `.bss` track size errors: `cobrt_tgt_err`
   collects errors while one receiver's value is computed, `cobrt_stmt_err`
   collects them for the whole statement (for ON SIZE ERROR).
-- Labels derived from COBOL names are upper-cased and prefixed with `c_`
-  (`WS-TOTAL` becomes `c_WS_TOTAL`), because COBOL names are case-insensitive
-  and may collide with assembler reserved words such as `DS`.
+- Data lives in records: every 01 or 77 item, together with any 01 that
+  redefines it, is one block `D_<n>` in `.bss`, and subordinate items are at
+  fixed offsets in it (`D_3+12`). Index-names (INDEXED BY) are 8-byte binary
+  occurrence numbers in records of their own.
+- A field whose address depends on subscripts or reference modifiers is
+  addressed through an address slot `A_<k>` (and, for a length known only at
+  run time, a length slot `N_<k>`) in `.bss`, computed just before use.
+  Subscripts are not range-checked at run time; constant subscripts out of
+  range are compile-time errors.
+- Other labels derived from COBOL names (literals) are upper-cased and
+  prefixed with `c_`, because COBOL names are case-insensitive and may collide
+  with assembler reserved words such as `DS`.
 - Any other value that must survive a runtime call lives in a callee-saved
   register or on the stack.
 
@@ -107,9 +116,10 @@ positions in the PICTURE.
 | `runtime_display_var_string` | `ptr, size, usage` | Writes an alphanumeric field as is (`size` bytes). |
 | `runtime_display_fill` | `char, size, usage` | Writes `size` copies of `char` (figurative constants). |
 | `runtime_display_newline` | none | Ends the DISPLAY line. |
-| `runtime_move_alphanum` | `dest, src, src_len, dest_size, usage` | Left-justified copy, space padded, truncated on the right. |
+| `runtime_move_alphanum` | `dest, src, src_len, dest_size, justified` | Left-justified copy, space padded, truncated on the right. With `justified` non-zero (JUSTIFIED RIGHT): right-justified, space padded on the left, truncated on the left. |
 | `runtime_move_numeric` | `dest, src_digits, src_len, dest_size, usage` | Right-justified digit copy, zero padded, for an alphanumeric source moved to an unsigned integer DISPLAY field. Requires `src_len <= dest_size`. |
 | `runtime_move_fill` | `dest, char, size, usage` | Fills a field with `char`. |
+| `runtime_replicate` | `ptr, size, count` | Copies the first `size` bytes at `ptr` over the following `count - 1` occurrences (INITIALIZE of a table). |
 | `runtime_accept` | `dest, size, decimals, usage, pad_char` | Reads one line from stdin. `pad_char` `'0'`: right-justify and zero pad; otherwise left-justify and space pad. Excess input is discarded, `\r` is ignored, EOF ends the line. |
 | `runtime_accept_numeric` | `ptr, size, digits, scale, usage, flags` | Reads one line and stores it as a number: optional spaces, optional sign, digits and an optional point; the first other character ends the number; extra decimals are dropped. |
 | `runtime_num_load` | `ptr, size, usage, flags` | Returns the field's value as an unscaled signed integer in `RET0`. |
@@ -157,7 +167,17 @@ per byte. EBCDIC is not supported.
 
 ### Alphanumeric (`PIC X`) [implemented]
 
-`n` bytes, left-justified, padded with spaces.
+`n` bytes, left-justified, padded with spaces (right-justified with
+JUSTIFIED RIGHT).
+
+### Groups and tables [implemented]
+
+A group item is the concatenation of its subordinate items with no padding
+(SYNCHRONIZED is accepted and ignored) and is alphanumeric. A REDEFINES item
+starts at the offset of the item it redefines; the group is as long as its
+longest member. An item with `OCCURS n` takes `n` consecutive copies of its
+size; element `(i, j, ...)` is at the first occurrence's offset plus
+`(i-1) * outer size + (j-1) * inner size ...`.
 
 ### Numeric DISPLAY (`PIC 9`, `S`, `V`)
 

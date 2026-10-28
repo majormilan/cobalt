@@ -54,9 +54,14 @@ static void advance(Lexer *l) {
     l->src++;
 }
 
+// Whitespace, and the separators ", " and "; " (a comma or semicolon followed
+// by a space is equivalent to a space)
 static void skip_ws(Lexer *l) {
-    while (*l->src && isspace(*l->src)) {
-        advance(l);
+    while (*l->src) {
+        if (isspace((unsigned char)*l->src)) advance(l);
+        else if ((*l->src == ',' || *l->src == ';') &&
+                 (l->src[1] == '\0' || isspace((unsigned char)l->src[1]))) advance(l);
+        else break;
     }
 }
 
@@ -269,6 +274,11 @@ Token lexer_next(Lexer *l) {
             }
         }
         return t;
+    }
+
+    if (*l->src == ':') {
+        advance(l);
+        return make_token_public(l, TOK_COLON, start, 1);
     }
 
     if (*l->src == '(') {

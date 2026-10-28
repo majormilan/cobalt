@@ -73,7 +73,18 @@ typedef enum {
     AST_BOOL_LITERAL,       // name: TRUE or FALSE (an always true/false condition)
     AST_STATEMENT_EVALUATE, // children: AST_WHEN nodes
     AST_WHEN,               // extra: condition (NULL for WHEN OTHER); children: statements
-    AST_STATEMENT_SET,      // children: condition-names (SET ... TO TRUE)
+    AST_STATEMENT_SET,      // name: TRUE, TO, UP or DOWN; children: receivers;
+                            //   extra: sending operand (TO / UP BY / DOWN BY)
+
+    // Data hierarchy
+    AST_OCCURS,             // name: count; children: INDEXED BY names
+    AST_REDEFINES,          // name: the redefined item
+    AST_JUSTIFIED,          // JUSTIFIED RIGHT
+    AST_REFMOD,             // reference modification: children: start, [length]
+    AST_STATEMENT_INITIALIZE, // children: identifiers
+    AST_STATEMENT_SEARCH,   // name: "ALL" for SEARCH ALL; extra: table identifier;
+                            //   loop: VARYING identifier; on_error: AT END statements;
+                            //   children: AST_WHEN nodes
 } AstKind;
 
 
@@ -83,6 +94,8 @@ typedef struct {
     int column;
 } SourceLocation;
 
+// AST_IDENTIFIER references: children = subscripts, extra = qualifiers
+// (innermost first), loop = AST_REFMOD.
 typedef struct AstNode {
     AstKind kind;
     char *name;             // owned

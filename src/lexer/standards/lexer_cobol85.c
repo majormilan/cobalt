@@ -140,6 +140,29 @@ Token lexer_cobol85_keyword_or_ident(Lexer *l, const char *start, size_t len) {
     KW("QUOTES",          TOK_QUOTES);
     KW("VALUES",          TOK_VALUE);
     KW("ARE",             TOK_IS);
+    KW("OF",              TOK_OF);
+    KW("IN",              TOK_IN);
+    KW("FILLER",          TOK_FILLER);
+    KW("REDEFINES",       TOK_REDEFINES);
+    KW("OCCURS",          TOK_OCCURS);
+    KW("INDEXED",         TOK_INDEXED);
+    KW("ASCENDING",       TOK_ASCENDING);
+    KW("DESCENDING",      TOK_DESCENDING);
+    KW("KEY",             TOK_KEY);
+    KW("JUSTIFIED",       TOK_JUSTIFIED);
+    KW("JUST",            TOK_JUSTIFIED);
+    KW("RIGHT",           TOK_RIGHT);
+    KW("LEFT",            TOK_LEFT);
+    KW("SYNCHRONIZED",    TOK_SYNCHRONIZED);
+    KW("SYNC",            TOK_SYNCHRONIZED);
+    KW("BLANK",           TOK_BLANK);
+    KW("SIGN",            TOK_SIGN);
+    KW("INITIALIZE",      TOK_INITIALIZE);
+    KW("SEARCH",          TOK_SEARCH);
+    KW("ALL",             TOK_ALL);
+    KW("END-SEARCH",      TOK_END_SEARCH);
+    KW("UP",              TOK_UP);
+    KW("DOWN",            TOK_DOWN);
     #undef KW
 
     return make_token_public(l, TOK_IDENT, start, len);

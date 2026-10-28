@@ -1,0 +1,34 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. GROUPSREDEFINES.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 CUSTOMER.
+          05 CUST-ID     PIC 9(4) VALUE 1234.
+          05 CUST-NAME.
+             10 FIRST-NAME PIC X(5) VALUE "ANNA".
+             10 LAST-NAME  PIC X(6) VALUE "SMITH".
+          05 BALANCE     PIC S9(5)V99 VALUE -12.5.
+       01 DATE-NUM PIC 9(8) VALUE 20261028.
+       01 DATE-PARTS REDEFINES DATE-NUM.
+          05 YYYY PIC 9(4).
+          05 MM   PIC 99.
+          05 DD   PIC 99.
+       01 OTHER-REC.
+          05 FIRST-NAME PIC X(5) VALUE "BOB".
+          05 FILLER     PIC X VALUE "-".
+          05            PIC X(2) VALUE "OK".
+       01 AMOUNT-X PIC X(4) VALUE "0042".
+       01 AMOUNT-N REDEFINES AMOUNT-X PIC 9(4).
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           DISPLAY "ID=" CUST-ID " NAME=" CUST-NAME "|".
+           DISPLAY "FIRST=" FIRST-NAME OF CUSTOMER " OTHER=" FIRST-NAME IN OTHER-REC.
+           DISPLAY "Y=" YYYY " M=" MM " D=" DD.
+           DISPLAY "REC=" OTHER-REC.
+           DISPLAY "BAL=" BALANCE.
+           ADD 1 TO AMOUNT-N.
+           DISPLAY "AMOUNT=" AMOUNT-X.
+           MOVE "XY" TO CUST-NAME.
+           DISPLAY "[" CUST-NAME "]".
+           DISPLAY "[" LAST-NAME OF CUST-NAME "]".
+           STOP RUN.

@@ -10,9 +10,28 @@
 #include <stdbool.h>
 #include <limits.h>
 
+// ── Data items ───────────────────────────────────────────────────────────────
+//
+// Every 01/77 item (and every 01 that redefines it) lives in one record; the
+// items below it are at offsets inside that record. Index-names (INDEXED BY)
+// get a record of their own: an 8-byte binary occurrence number.
+
 typedef struct {
     char *name;
-    int size;
+    int level;
+    int parent;             // enclosing group item; for a condition-name its data item; -1
+    int first_child;        // subordinate items in order, linked by next_sibling
+    int next_sibling;
+    int record;             // index of the record holding the item
+    int offset;             // offset of the first occurrence in the record
+    int size;               // bytes of one occurrence
+    int occurs;             // OCCURS count, 0 without OCCURS
+    int redefines;          // item redefined by this one, or -1
+    int first_index;        // table: its first index-name, or -1
+    bool is_group;
+    bool is_filler;
+    bool is_index;          // index-name
+    bool justified;         // JUSTIFIED RIGHT
     int decimal_places;     // scale: digits after the implied point
     int digits;             // digit positions (numeric items)
     bool is_numeric;
@@ -20,14 +39,18 @@ typedef struct {
     AstUsageType usage_type;
     AstNode *value;         // VALUE clause literal (owned by the AST), or NULL
     bool is_cond;           // level-88 condition-name
-    int parent;             // condition-name: index of its data item
     AstNode *cond_values;   // condition-name: literals (THRU upper bound in extra)
+    AstNode *decl;
 } VarInfo;
 
-static VarInfo vars[512];
+#define MAX_VARS 4096
+static VarInfo vars[MAX_VARS];
 static int num_vars = 0;
+static int record_size[MAX_VARS];
+static int num_records = 0;
 static int lit_counter = 0;
 static int if_counter = 0;
+static int addr_slots = 0;  // address/length slots used so far
 
 // Procedures (sections and paragraphs) in source order
 typedef struct {
@@ -83,11 +106,8 @@ static void emit_jump(IrProgram *ir, IrOpcode op, const char *target) {
     i->jump_target = strdup(target);
 }
 
-static VarInfo *find_var(const char *name) {
-    for (int i = 0; i < num_vars; i++) {
-        if (strcasecmp(vars[i].name, name) == 0) return &vars[i];
-    }
-    return NULL;
+static void new_label(char *buf, size_t size, const char *what) {
+    snprintf(buf, size, "$%s_%d", what, if_counter++);
 }
 
 // Emit a data literal and return its label in buf
@@ -107,6 +127,396 @@ static int figurative_char(const AstNode *n) {
     if (strncasecmp(n->name, "LOW-VALUE", 9) == 0)  return 0;
     if (strncasecmp(n->name, "QUOTE", 5) == 0)      return '"';
     return -1;
+}
+
+// ── Data layout ──────────────────────────────────────────────────────────────
+
+static bool has_clause(AstNode *decl, AstKind kind) {
+    for (AstNode *c = decl->children; c; c = c->next)
+        if (c->kind == kind) return true;
+    return false;
+}
+
+static AstNode *find_clause(AstNode *decl, AstKind kind) {
+    for (AstNode *c = decl->children; c; c = c->next)
+        if (c->kind == kind) return c;
+    return NULL;
+}
+
+static VarInfo *new_var(const char *name) {
+    if (num_vars >= MAX_VARS) {
+        cobalt_error("Too many data items (%d limit)", MAX_VARS);
+        return NULL;
+    }
+    VarInfo *v = &vars[num_vars++];
+    memset(v, 0, sizeof(VarInfo));
+    v->name = strdup(name);
+    v->parent = v->first_child = v->next_sibling = v->redefines = v->first_index = -1;
+    return v;
+}
+
+static void add_child(int parent, int child) {
+    if (vars[parent].first_child < 0) {
+        vars[parent].first_child = child;
+        return;
+    }
+    int c = vars[parent].first_child;
+    while (vars[c].next_sibling >= 0) c = vars[c].next_sibling;
+    vars[c].next_sibling = child;
+}
+
+// Assign record and offsets; returns the item's extent (bytes from offset)
+static int layout_item(int idx, int record, int offset) {
+    VarInfo *v = &vars[idx];
+    v->record = record;
+    v->offset = offset;
+    if (!v->is_group) return v->size * (v->occurs ? v->occurs : 1);
+
+    int pos = offset, end = offset;
+    for (int c = v->first_child; c >= 0; c = vars[c].next_sibling) {
+        int start = vars[c].redefines >= 0 ? vars[vars[c].redefines].offset : pos;
+        int ext = layout_item(c, record, start);
+        if (vars[c].redefines < 0) pos = start + ext;
+        if (start + ext > end) end = start + ext;
+    }
+    v->size = end - offset;
+    return v->size * (v->occurs ? v->occurs : 1);
+}
+
+// The REDEFINES target: the previous item at the same level under the same parent
+static int find_redefined(const char *name, int parent, int before) {
+    for (int i = before - 1; i >= 0; i--) {
+        if (vars[i].is_cond || vars[i].is_index) continue;
+        if (vars[i].parent == parent && strcasecmp(vars[i].name, name) == 0) return i;
+    }
+    return -1;
+}
+
+static void build_data(IrProgram *ir, AstNode *program) {
+    int stack[64];
+    int depth = 0;
+    int last_item = -1;     // data item that level-88 entries belong to
+
+    for (AstNode *div = program->children; div; div = div->next) {
+        if (div->kind != AST_DIVISION || strcasecmp(div->name, "DATA") != 0) continue;
+        for (AstNode *sec = div->children; sec; sec = sec->next) {
+            if (sec->kind != AST_SECTION) continue;
+            for (AstNode *decl = sec->children; decl; decl = decl->next) {
+                if (decl->kind != AST_VAR_DECL) continue;
+                int level = decl->text ? atoi(decl->text) : 1;
+
+                if (level == 88) {
+                    if (last_item < 0) {
+                        cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
+                                         "Condition-name '%s' has no data item", decl->name);
+                        continue;
+                    }
+                    VarInfo *cv = new_var(decl->name);
+                    if (!cv) return;
+                    cv->is_cond = true;
+                    cv->parent = last_item;
+                    cv->cond_values = decl->children;
+                    cv->decl = decl;
+                    continue;
+                }
+                if (level != 1 && level != 77 && (level < 2 || level > 49)) {
+                    cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
+                                     "Level %d is not supported", level);
+                    continue;
+                }
+
+                VarInfo *v = new_var(decl->name);
+                if (!v) return;
+                int idx = (int)(v - vars);
+                last_item = idx;
+                v->level = level;
+                v->decl = decl;
+                v->is_filler = strcasecmp(decl->name, "FILLER") == 0;
+                v->is_group = !has_clause(decl, AST_PIC_CLAUSE);
+                v->justified = has_clause(decl, AST_JUSTIFIED);
+                // sema.c has already populated the semantic fields
+                v->size = (int)decl->data_size;
+                v->decimal_places = decl->decimal_places;
+                v->digits = decl->digits;
+                v->is_numeric = decl->is_numeric;
+                v->is_signed = decl->is_signed;
+                v->usage_type = decl->usage_type;
+                for (AstNode *c = decl->children; c; c = c->next) {
+                    if (c->kind == AST_STRING_LITERAL || c->kind == AST_LITERAL_NUMBER ||
+                        c->kind == AST_FIGURATIVE_CONSTANT) v->value = c;
+                }
+
+                if (level == 1 || level == 77) {
+                    depth = 0;
+                } else {
+                    while (depth > 0 && vars[stack[depth - 1]].level >= level) depth--;
+                    if (depth == 0) {
+                        cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
+                                         "Level %02d item '%s' is not inside a group", level, decl->name);
+                        continue;
+                    }
+                    v->parent = stack[depth - 1];
+                    if (!vars[v->parent].is_group) {
+                        cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
+                                         "'%s' has a PICTURE, so it cannot contain '%s'",
+                                         vars[v->parent].name, decl->name);
+                    }
+                    add_child(v->parent, idx);
+                }
+                if (depth < 64) stack[depth++] = idx;
+
+                AstNode *redef = find_clause(decl, AST_REDEFINES);
+                if (redef) {
+                    v->redefines = find_redefined(redef->name, v->parent, idx);
+                    if (v->redefines < 0)
+                        cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
+                                         "REDEFINES target '%s' is not the preceding item at this level", redef->name);
+                }
+
+                AstNode *occurs = find_clause(decl, AST_OCCURS);
+                if (occurs) {
+                    v->occurs = atoi(occurs->name);
+                    if (v->occurs < 1 || level == 1 || level == 77) {
+                        cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
+                                         "Invalid OCCURS on '%s'", decl->name);
+                        v->occurs = 0;
+                    }
+                    for (AstNode *ix = occurs->children; ix; ix = ix->next) {
+                        VarInfo *xv = new_var(ix->name);
+                        if (!xv) return;
+                        v = &vars[idx];     // vars[] does not move, but keep v explicit
+                        xv->is_index = true;
+                        xv->is_numeric = true;
+                        xv->is_signed = true;
+                        xv->usage_type = USAGE_COMP5;
+                        xv->size = 8;
+                        xv->digits = 18;
+                        xv->decl = decl;
+                        if (v->first_index < 0) v->first_index = (int)(xv - vars);
+                    }
+                }
+            }
+        }
+    }
+
+    // Validate the hierarchy, then lay out the records
+    for (int i = 0; i < num_vars; i++) {
+        VarInfo *v = &vars[i];
+        if (v->is_cond || v->is_index) continue;
+        if (v->is_group && v->first_child < 0)
+            cobalt_error_loc(NULL, v->decl->loc.line, v->decl->loc.column,
+                             "'%s' needs a PICTURE clause (it has no subordinate items)", v->name);
+        if (v->value && v->occurs)
+            cobalt_error_loc(NULL, v->decl->loc.line, v->decl->loc.column,
+                             "VALUE cannot be used with OCCURS ('%s')", v->name);
+    }
+    for (int i = 0; i < num_vars; i++) {
+        VarInfo *v = &vars[i];
+        if (v->is_cond || (v->parent >= 0 && !v->is_index)) continue;
+        if (v->redefines >= 0) {
+            // 01 REDEFINES 01: shares the record
+            int r = vars[v->redefines].record;
+            int ext = layout_item(i, r, 0);
+            if (ext > record_size[r]) record_size[r] = ext;
+            continue;
+        }
+        int r = num_records++;
+        record_size[r] = layout_item(i, r, 0);
+    }
+    for (int r = 0; r < num_records; r++) {
+        char label[32];
+        snprintf(label, sizeof(label), "%%r%d", r);
+        append_instr(ir, new_instr(IR_DATA_VAR, label, NULL, NULL, 0,
+                                   record_size[r] > 0 ? record_size[r] : 1, 0, 0, USAGE_DISPLAY));
+    }
+}
+
+// ── Data references ──────────────────────────────────────────────────────────
+
+// An identifier whose name is "#<n>" refers to vars[n] directly (used for
+// trees built by the compiler, e.g. the data item of a condition-name).
+static AstNode *item_ref(int idx, SourceLocation loc) {
+    char name[16];
+    snprintf(name, sizeof(name), "#%d", idx);
+    return ast_new(AST_IDENTIFIER, name, loc);
+}
+
+// Find the data item an identifier refers to, applying OF/IN qualification.
+// Reports unknown and ambiguous names when report is set.
+static VarInfo *find_item(const AstNode *ref, bool report) {
+    if (ref->name[0] == '#') return &vars[atoi(ref->name + 1)];
+    VarInfo *found = NULL;
+    int count = 0;
+    for (int i = 0; i < num_vars; i++) {
+        if (vars[i].is_filler || strcasecmp(vars[i].name, ref->name) != 0) continue;
+        int a = vars[i].parent;
+        bool ok = true;
+        for (const AstNode *q = ref->extra; q && ok; q = q->next) {
+            while (a >= 0 && strcasecmp(vars[a].name, q->name) != 0) a = vars[a].parent;
+            if (a < 0) ok = false;
+            else a = vars[a].parent;
+        }
+        if (!ok) continue;
+        if (!found) found = &vars[i];
+        count++;
+    }
+    if (report && !found)
+        cobalt_error_loc(NULL, ref->loc.line, ref->loc.column, "Undeclared identifier '%s'", ref->name);
+    else if (report && count > 1)
+        cobalt_error_loc(NULL, ref->loc.line, ref->loc.column,
+                         "'%s' is ambiguous; qualify it with OF or IN", ref->name);
+    return count == 1 ? found : (report ? NULL : found);
+}
+
+// Table dimensions of an item, outermost first: occurrence counts and strides
+static int item_dims(const VarInfo *v, int counts[], int strides[]) {
+    int n = 0, tmp_c[16], tmp_s[16];
+    for (const VarInfo *a = v; a && n < 16; a = a->parent >= 0 ? &vars[a->parent] : NULL) {
+        if (a->is_cond) continue;
+        if (a->occurs) {
+            tmp_c[n] = a->occurs;
+            tmp_s[n] = a->size;
+            n++;
+        }
+    }
+    for (int i = 0; i < n; i++) {
+        counts[i] = tmp_c[n - 1 - i];
+        strides[i] = tmp_s[n - 1 - i];
+    }
+    return n;
+}
+
+// A resolved field operand (see IR_ADDR_SET in ir.h for the label forms)
+typedef struct {
+    VarInfo *var;
+    char label[64];
+    int size;               // bytes; -(k+1): length in length slot N_<k>
+    bool refmod;            // reference-modified: always alphanumeric
+} FieldRef;
+
+static bool is_int_literal(const AstNode *n, long long *value);
+static bool num_expr_valid(AstNode *e);
+static int num_expr(IrProgram *ir, AstNode *e, int W);
+static void emit_num(IrProgram *ir, IrOpcode op, long long imm, int flags);
+static void emit_rescale(IrProgram *ir, int shift, bool rounded);
+
+// Push the integer value of a subscript or reference-modifier expression
+static void push_int(IrProgram *ir, AstNode *e) {
+    int s = num_expr(ir, e, 0);
+    emit_rescale(ir, -s, false);
+}
+
+// Resolve an identifier to a field, emitting the address computation for
+// subscripts and reference modifiers that are not constant.
+static bool resolve_ref(IrProgram *ir, AstNode *ref, FieldRef *out) {
+    memset(out, 0, sizeof(*out));
+    VarInfo *v = find_item(ref, true);
+    if (!v) return false;
+    if (v->is_cond) {
+        cobalt_error_loc(NULL, ref->loc.line, ref->loc.column, "Condition-name '%s' is not a data item", ref->name);
+        return false;
+    }
+    out->var = v;
+
+    int counts[16], strides[16];
+    int ndims = item_dims(v, counts, strides);
+    int nsubs = 0;
+    for (AstNode *s = ref->children; s; s = s->next) nsubs++;
+    if (nsubs != ndims) {
+        cobalt_error_loc(NULL, ref->loc.line, ref->loc.column,
+                         "'%s' needs %d subscript%s, %d given", ref->name, ndims, ndims == 1 ? "" : "s", nsubs);
+        return false;
+    }
+
+    int offset = v->offset;
+    bool dynamic = false;
+    int k = 0;
+    for (AstNode *s = ref->children; s; s = s->next, k++) {
+        long long n;
+        if (is_int_literal(s, &n)) {
+            if (n < 1 || n > counts[k]) {
+                cobalt_error_loc(NULL, s->loc.line, s->loc.column,
+                                 "Subscript %lld of '%s' is out of range 1 to %d", n, ref->name, counts[k]);
+                return false;
+            }
+            offset += (int)(n - 1) * strides[k];
+        } else {
+            if (!num_expr_valid(s)) return false;
+            dynamic = true;
+        }
+    }
+
+    int size = v->size;
+    AstNode *start = NULL, *length = NULL;
+    long long start_val = 1, len_val = -1;
+    bool start_const = true, len_const = true;
+    if (ref->loop) {
+        out->refmod = true;
+        start = ref->loop->children;
+        length = start ? start->next : NULL;
+        if (!is_int_literal(start, &start_val)) {
+            if (!num_expr_valid(start)) return false;
+            start_const = false;
+            dynamic = true;
+        } else if (start_val < 1 || start_val > v->size) {
+            cobalt_error_loc(NULL, start->loc.line, start->loc.column, "Reference modifier start is out of range");
+            return false;
+        }
+        if (length && !is_int_literal(length, &len_val)) {
+            if (!num_expr_valid(length)) return false;
+            len_const = false;
+            dynamic = true;
+        } else if (length && (len_val < 1 || (start_const && start_val + len_val - 1 > v->size))) {
+            cobalt_error_loc(NULL, length->loc.line, length->loc.column, "Reference modifier length is out of range");
+            return false;
+        }
+        if (start_const) offset += (int)start_val - 1;
+        if (start_const && len_const) size = length ? (int)len_val : v->size - (int)start_val + 1;
+        else if (len_const && length) size = (int)len_val;
+    }
+
+    if (!dynamic) {
+        snprintf(out->label, sizeof(out->label), "%%r%d+%d", v->record, offset);
+        out->size = size;
+        return true;
+    }
+
+    int slot = addr_slots++;
+    char base[32];
+    snprintf(base, sizeof(base), "%%r%d+%d", v->record, offset);
+    IrInstr *set = emit(ir, IR_ADDR_SET);
+    set->imm = slot;
+    set->var_name = strdup(base);
+    k = 0;
+    for (AstNode *s = ref->children; s; s = s->next, k++) {
+        long long n;
+        if (is_int_literal(s, &n)) continue;
+        push_int(ir, s);
+        IrInstr *add = emit(ir, IR_ADDR_ADD);
+        add->imm = slot;
+        add->size = strides[k];
+    }
+    if (ref->loop && !start_const) {
+        push_int(ir, start);
+        IrInstr *add = emit(ir, IR_ADDR_ADD);
+        add->imm = slot;
+        add->size = 1;
+    }
+    if (ref->loop && !(start_const && len_const) && !(len_const && length)) {
+        // Length known only at run time
+        if (length) {
+            push_int(ir, length);
+        } else {
+            emit_num(ir, IR_NUM_CONST, v->size + 1, 0);
+            push_int(ir, start);
+            emit_num(ir, IR_NUM_SUB, 0, 0);
+        }
+        emit(ir, IR_LEN_SET)->imm = slot;
+        size = -(slot + 1);
+    }
+    snprintf(out->label, sizeof(out->label), "*A_%d", slot);
+    out->size = size;
+    return true;
 }
 
 // ── Numeric expressions ──────────────────────────────────────────────────────
@@ -136,17 +546,20 @@ static bool parse_num_literal(const char *s, long long *value, int *scale) {
     return true;
 }
 
+static bool is_int_literal(const AstNode *n, long long *value) {
+    int scale;
+    return n && n->kind == AST_LITERAL_NUMBER && parse_num_literal(n->name, value, &scale) && scale == 0;
+}
+
 static int var_flags(const VarInfo *v) {
     return v->is_signed ? IR_NUM_SIGNED : 0;
 }
 
-static VarInfo *numeric_var(AstNode *n, const char *role) {
-    VarInfo *v = find_var(n->name);
-    if (!v) {
-        cobalt_error_loc(NULL, n->loc.line, n->loc.column, "Undeclared identifier '%s'", n->name);
-        return NULL;
-    }
-    if (!v->is_numeric) {
+// Numeric data item an identifier refers to (no reference modification)
+static VarInfo *numeric_item(AstNode *n, const char *role) {
+    VarInfo *v = find_item(n, true);
+    if (!v) return NULL;
+    if (!v->is_numeric || v->is_cond || n->loop) {
         cobalt_error_loc(NULL, n->loc.line, n->loc.column, "%s '%s' is not numeric", role, n->name);
         return NULL;
     }
@@ -159,14 +572,22 @@ static bool num_expr_valid(AstNode *e) {
     long long value;
     int scale;
     switch (e->kind) {
-        case AST_IDENTIFIER:
-            return numeric_var(e, "Operand") != NULL;
+        case AST_IDENTIFIER: {
+            if (!numeric_item(e, "Operand")) return false;
+            for (AstNode *s = e->children; s; s = s->next)
+                if (!num_expr_valid(s)) return false;
+            return true;
+        }
         case AST_LITERAL_NUMBER:
             if (!parse_num_literal(e->name, &value, &scale)) {
                 cobalt_error_loc(NULL, e->loc.line, e->loc.column, "Invalid numeric literal '%s'", e->name);
                 return false;
             }
             return true;
+        case AST_FIGURATIVE_CONSTANT:
+            if (figurative_char(e) == '0') return true;
+            cobalt_error_loc(NULL, e->loc.line, e->loc.column, "%s is not numeric", e->name);
+            return false;
         case AST_EXPR_NEG:
             return num_expr_valid(e->children);
         case AST_EXPR_POW: {
@@ -197,7 +618,7 @@ static bool num_expr_valid(AstNode *e) {
 static int max_leaf_scale(AstNode *e) {
     if (!e) return 0;
     if (e->kind == AST_IDENTIFIER) {
-        VarInfo *v = find_var(e->name);
+        VarInfo *v = find_item(e, false);
         return v ? v->decimal_places : 0;
     }
     if (e->kind == AST_LITERAL_NUMBER) {
@@ -206,6 +627,7 @@ static int max_leaf_scale(AstNode *e) {
         parse_num_literal(e->name, &value, &scale);
         return scale;
     }
+    if (e->kind == AST_FIGURATIVE_CONSTANT) return 0;
     int m = max_leaf_scale(e->children);
     if (e->children) {
         int r = max_leaf_scale(e->children->next);
@@ -224,21 +646,21 @@ static void emit_rescale(IrProgram *ir, int shift, bool rounded) {
     if (shift != 0) emit_num(ir, IR_NUM_RESCALE, shift, rounded ? 1 : 0);
 }
 
-static void emit_load(IrProgram *ir, const VarInfo *v) {
+static void emit_load(IrProgram *ir, const FieldRef *f) {
     IrInstr *i = emit(ir, IR_NUM_LOAD);
-    i->var_name = strdup(v->name);
-    i->size = v->size;
-    i->usage_type = v->usage_type;
-    i->flags = var_flags(v);
+    i->var_name = strdup(f->label);
+    i->size = f->var->size;
+    i->usage_type = f->var->usage_type;
+    i->flags = var_flags(f->var);
 }
 
-static void emit_store(IrProgram *ir, const VarInfo *v, bool keep) {
+static void emit_store(IrProgram *ir, const FieldRef *f, bool keep) {
     IrInstr *i = emit(ir, IR_NUM_STORE);
-    i->var_name = strdup(v->name);
-    i->size = v->size;
-    i->digits = v->digits;
-    i->usage_type = v->usage_type;
-    i->flags = var_flags(v) | (keep ? IR_NUM_KEEP : 0);
+    i->var_name = strdup(f->label);
+    i->size = f->var->size;
+    i->digits = f->var->digits;
+    i->usage_type = f->var->usage_type;
+    i->flags = var_flags(f->var) | (keep ? IR_NUM_KEEP : 0);
 }
 
 // Compute the scale of a valid expression; when ir is non-NULL also emit the
@@ -248,10 +670,17 @@ static void emit_store(IrProgram *ir, const VarInfo *v, bool keep) {
 static int num_expr(IrProgram *ir, AstNode *e, int W) {
     switch (e->kind) {
         case AST_IDENTIFIER: {
-            VarInfo *v = find_var(e->name);
-            if (ir) emit_load(ir, v);
-            return v->decimal_places;
+            if (ir) {
+                FieldRef f;
+                if (resolve_ref(ir, e, &f)) emit_load(ir, &f);
+                else emit_num(ir, IR_NUM_CONST, 0, 0);  // keep the stack balanced
+            }
+            VarInfo *v = find_item(e, false);
+            return v ? v->decimal_places : 0;
         }
+        case AST_FIGURATIVE_CONSTANT:   // ZERO
+            if (ir) emit_num(ir, IR_NUM_CONST, 0, 0);
+            return 0;
         case AST_LITERAL_NUMBER: {
             long long value;
             int scale;
@@ -328,20 +757,19 @@ static int working_scale(AstNode *tree, const VarInfo *target) {
     return w > 18 ? 18 : w;
 }
 
-// Evaluate tree and store it into the receiver (an identifier node)
+// Evaluate tree and store it into the receiver (an identifier node). The
+// receiver's subscripts are evaluated after the value, just before storing.
 static void lower_assign(IrProgram *ir, AstNode *tree, AstNode *receiver, bool keep) {
-    VarInfo *t = numeric_var(receiver, "Receiving item");
+    VarInfo *t = numeric_item(receiver, "Receiving item");
     if (!t || !num_expr_valid(tree)) return;
     int s = num_expr(ir, tree, working_scale(tree, t));
     emit_rescale(ir, t->decimal_places - s, receiver->rounded);
-    emit_store(ir, t, keep);
+    FieldRef f;
+    if (!resolve_ref(ir, receiver, &f)) return;
+    emit_store(ir, &f, keep);
 }
 
 // Expression trees built from statement operands (freed with ast_free)
-static AstNode *leaf_copy(AstNode *n) {
-    return ast_new(n->kind, n->name, n->loc);
-}
-
 static AstNode *mk_bin(AstKind kind, AstNode *l, AstNode *r) {
     AstNode *n = ast_new(kind, NULL, l->loc);
     n->children = l;
@@ -352,7 +780,7 @@ static AstNode *mk_bin(AstKind kind, AstNode *l, AstNode *r) {
 // first op ops[0] op ops[1] ... (left-associative), each operand copied
 static AstNode *fold_ops(AstKind kind, AstNode *first, AstNode **ops, int n) {
     AstNode *tree = first;
-    for (int i = 0; i < n; i++) tree = mk_bin(kind, tree, leaf_copy(ops[i]));
+    for (int i = 0; i < n; i++) tree = mk_bin(kind, tree, ast_clone(ops[i]));
     return tree;
 }
 
@@ -389,9 +817,8 @@ static int resolve_proc(AstNode *ref) {
 static void lower_size_error_phrases(IrProgram *ir, AstNode *stmt) {
     if (!stmt->on_error && !stmt->not_on_error) return;
     char no_err_lbl[32], end_lbl[32];
-    int idx = if_counter++;
-    snprintf(no_err_lbl, sizeof(no_err_lbl), "$size_ok_%d", idx);
-    snprintf(end_lbl, sizeof(end_lbl), "$size_end_%d", idx);
+    new_label(no_err_lbl, sizeof(no_err_lbl), "size_ok");
+    new_label(end_lbl, sizeof(end_lbl), "size_end");
 
     emit_jump(ir, IR_JUMP_IF_NO_SIZE_ERR, no_err_lbl);
     lower_block(ir, stmt->on_error);
@@ -416,8 +843,8 @@ static void lower_arith_node(IrProgram *ir, AstNode *node) {
         case AST_STATEMENT_ADD: {
             int nsrc = node->decimal_places;
             for (int i = nsrc; i < n; i++) {
-                AstNode *tree = giving ? fold_ops(AST_EXPR_ADD, leaf_copy(ops[0]), ops + 1, nsrc - 1)
-                                       : fold_ops(AST_EXPR_ADD, leaf_copy(ops[i]), ops, nsrc);
+                AstNode *tree = giving ? fold_ops(AST_EXPR_ADD, ast_clone(ops[0]), ops + 1, nsrc - 1)
+                                       : fold_ops(AST_EXPR_ADD, ast_clone(ops[i]), ops, nsrc);
                 lower_assign(ir, tree, ops[i], keep);
                 ast_free(tree);
             }
@@ -428,7 +855,7 @@ static void lower_arith_node(IrProgram *ir, AstNode *node) {
             int first_dest = giving ? nsrc + 1 : nsrc;
             for (int i = first_dest; i < n; i++) {
                 AstNode *minuend = giving ? ops[nsrc] : ops[i];
-                AstNode *tree = fold_ops(AST_EXPR_SUB, leaf_copy(minuend), ops, nsrc);
+                AstNode *tree = fold_ops(AST_EXPR_SUB, ast_clone(minuend), ops, nsrc);
                 lower_assign(ir, tree, ops[i], keep);
                 ast_free(tree);
             }
@@ -437,8 +864,8 @@ static void lower_arith_node(IrProgram *ir, AstNode *node) {
         case AST_STATEMENT_MULTIPLY: {
             int first_dest = giving ? 2 : 1;
             for (int i = first_dest; i < n; i++) {
-                AstNode *tree = mk_bin(AST_EXPR_MUL, leaf_copy(ops[0]),
-                                       leaf_copy(giving ? ops[1] : ops[i]));
+                AstNode *tree = mk_bin(AST_EXPR_MUL, ast_clone(ops[0]),
+                                       ast_clone(giving ? ops[1] : ops[i]));
                 lower_assign(ir, tree, ops[i], keep);
                 ast_free(tree);
             }
@@ -450,7 +877,7 @@ static void lower_arith_node(IrProgram *ir, AstNode *node) {
             if (!giving) {
                 // DIVIDE divisor INTO dest+
                 for (int i = 1; i < n; i++) {
-                    AstNode *tree = mk_bin(AST_EXPR_DIV, leaf_copy(ops[i]), leaf_copy(ops[0]));
+                    AstNode *tree = mk_bin(AST_EXPR_DIV, ast_clone(ops[i]), ast_clone(ops[0]));
                     lower_assign(ir, tree, ops[i], keep);
                     ast_free(tree);
                 }
@@ -460,14 +887,14 @@ static void lower_arith_node(IrProgram *ir, AstNode *node) {
             AstNode *divisor  = is_by ? ops[1] : ops[0];
             int last_dest = has_rem ? n - 1 : n;
             for (int i = 2; i < last_dest; i++) {
-                AstNode *tree = mk_bin(AST_EXPR_DIV, leaf_copy(dividend), leaf_copy(divisor));
+                AstNode *tree = mk_bin(AST_EXPR_DIV, ast_clone(dividend), ast_clone(divisor));
                 lower_assign(ir, tree, ops[i], keep);
                 ast_free(tree);
             }
             if (has_rem) {
                 // remainder = dividend - quotient * divisor, using the stored quotient
-                AstNode *tree = mk_bin(AST_EXPR_SUB, leaf_copy(dividend),
-                                       mk_bin(AST_EXPR_MUL, leaf_copy(ops[2]), leaf_copy(divisor)));
+                AstNode *tree = mk_bin(AST_EXPR_SUB, ast_clone(dividend),
+                                       mk_bin(AST_EXPR_MUL, ast_clone(ops[2]), ast_clone(divisor)));
                 lower_assign(ir, tree, ops[n - 1], keep);
                 ast_free(tree);
             }
@@ -513,34 +940,28 @@ static bool is_arith_expr(const AstNode *n) {
 
 static bool is_numeric_operand(AstNode *n) {
     if (n->kind == AST_LITERAL_NUMBER || is_arith_expr(n)) return true;
-    if (n->kind == AST_IDENTIFIER) {
-        VarInfo *v = find_var(n->name);
-        return v && v->is_numeric;
+    if (n->kind == AST_IDENTIFIER && !n->loop) {
+        VarInfo *v = find_item(n, false);
+        return v && v->is_numeric && !v->is_cond;
     }
     return false;
 }
 
 // Address and length of an operand compared as alphanumeric
-static bool alnum_operand(IrProgram *ir, AstNode *n, const char **label, int *len,
-                          char *buf, size_t buf_size) {
+static bool alnum_operand(IrProgram *ir, AstNode *n, FieldRef *f) {
     if (n->kind == AST_IDENTIFIER) {
-        VarInfo *v = find_var(n->name);
-        if (!v || v->is_cond) {
-            cobalt_error_loc(NULL, n->loc.line, n->loc.column, "'%s' is not a data item", n->name);
-            return false;
-        }
-        if (v->is_numeric && v->usage_type != USAGE_DISPLAY) {
+        if (!resolve_ref(ir, n, f)) return false;
+        if (f->var->is_numeric && f->var->usage_type != USAGE_DISPLAY && !f->refmod) {
             cobalt_error_loc(NULL, n->loc.line, n->loc.column,
                              "Comparing non-DISPLAY numeric '%s' with a nonnumeric operand is not supported", n->name);
             return false;
         }
-        *label = v->name;
-        *len = v->size;
         return true;
     }
     if (n->kind == AST_LITERAL_NUMBER || n->kind == AST_STRING_LITERAL) {
-        *label = emit_data_lit(ir, "cmplit", n->name, buf, buf_size);
-        *len = (int)strlen(n->name);
+        memset(f, 0, sizeof(*f));
+        emit_data_lit(ir, "cmplit", n->name, f->label, sizeof(f->label));
+        f->size = (int)strlen(n->name);
         return true;
     }
     cobalt_error_loc(NULL, n->loc.line, n->loc.column,
@@ -552,13 +973,10 @@ static bool alnum_operand(IrProgram *ir, AstNode *n, const char **label, int *le
 static void emit_relation_false_jump(IrProgram *ir, AstNode *left, AstNode *right,
                                      const char *op, const char *target) {
     int fl = figurative_char(left), fr = figurative_char(right);
-    AstNode *zero = NULL;
-    // ZERO compared with a numeric operand is the number 0
-    if (fl == '0' && is_numeric_operand(right)) { zero = ast_new(AST_LITERAL_NUMBER, "0", left->loc); left = zero; fl = -1; }
-    if (fr == '0' && is_numeric_operand(left))  { zero = ast_new(AST_LITERAL_NUMBER, "0", right->loc); right = zero; fr = -1; }
-
     IrInstr *jump = NULL;
-    if (is_numeric_operand(left) && is_numeric_operand(right)) {
+    if ((is_numeric_operand(left) || fl == '0') && (is_numeric_operand(right) || fr == '0') &&
+        !(fl == '0' && fr == '0')) {
+        // ZERO compared with a numeric operand is the number 0
         if (num_expr_valid(left) && num_expr_valid(right)) {
             int W = max_leaf_scale(left);
             if (max_leaf_scale(right) > W) W = max_leaf_scale(right);
@@ -580,34 +998,28 @@ static void emit_relation_false_jump(IrProgram *ir, AstNode *left, AstNode *righ
                 fr = fl;
                 op = mirror_op(op);
             }
-            char buf[32];
-            const char *label;
-            int len;
-            if (alnum_operand(ir, left, &label, &len, buf, sizeof(buf))) {
+            FieldRef f;
+            if (alnum_operand(ir, left, &f)) {
                 jump = emit(ir, IR_FILL_CMP_JUMP_IF_FALSE);
-                jump->var_name = strdup(label);
-                jump->size = len;
+                jump->var_name = strdup(f.label);
+                jump->size = f.size;
                 jump->pad_char = (char)fr;
             }
         }
     } else {
-        char lbuf[32], rbuf[32];
-        const char *ll, *rl;
-        int llen, rlen;
-        if (alnum_operand(ir, left, &ll, &llen, lbuf, sizeof(lbuf)) &&
-            alnum_operand(ir, right, &rl, &rlen, rbuf, sizeof(rbuf))) {
+        FieldRef lf, rf;
+        if (alnum_operand(ir, left, &lf) && alnum_operand(ir, right, &rf)) {
             jump = emit(ir, IR_ALNUM_CMP_JUMP_IF_FALSE);
-            jump->var_name = strdup(ll);
-            jump->size = llen;
-            jump->lit_name = strdup(rl);
-            jump->lit_len = rlen;
+            jump->var_name = strdup(lf.label);
+            jump->size = lf.size;
+            jump->lit_name = strdup(rf.label);
+            jump->lit_len = rf.size;
         }
     }
     if (jump) {
         jump->cmp_op = strdup(op);
         jump->jump_target = strdup(target);
     }
-    ast_free(zero);
 }
 
 static AstNode *make_relation(AstNode *left, const char *op, AstNode *right) {
@@ -618,23 +1030,30 @@ static AstNode *make_relation(AstNode *left, const char *op, AstNode *right) {
     return c;
 }
 
+// The data item of a condition-name, with the condition-name's subscripts
+static AstNode *condition_item_ref(const VarInfo *cv, const AstNode *cond_ref) {
+    AstNode *item = item_ref(cv->parent, cond_ref->loc);
+    item->children = ast_clone_list(cond_ref->children);
+    return item;
+}
+
 // Condition-name as an explicit condition on its data item:
 // item = v1 OR item = v2 OR (item >= lo AND item <= hi) ...
-static AstNode *condition_name_tree(const VarInfo *cv, SourceLocation loc) {
-    const VarInfo *item = &vars[cv->parent];
+static AstNode *condition_name_tree(const VarInfo *cv, const AstNode *cond_ref) {
+    SourceLocation loc = cond_ref->loc;
     AstNode *tree = NULL;
     for (AstNode *v = cv->cond_values; v; v = v->next) {
         AstNode *alt;
         AstNode *lo = ast_new(v->kind, v->name, v->loc);
         if (v->extra) {
             AstNode *hi = ast_new(v->extra->kind, v->extra->name, v->extra->loc);
-            AstNode *ge = make_relation(ast_new(AST_IDENTIFIER, item->name, loc), ">=", lo);
-            AstNode *le = make_relation(ast_new(AST_IDENTIFIER, item->name, loc), "<=", hi);
+            AstNode *ge = make_relation(condition_item_ref(cv, cond_ref), ">=", lo);
+            AstNode *le = make_relation(condition_item_ref(cv, cond_ref), "<=", hi);
             alt = ast_new(AST_COND_AND, NULL, loc);
             alt->children = ge;
             ge->next = le;
         } else {
-            alt = make_relation(ast_new(AST_IDENTIFIER, item->name, loc), "=", lo);
+            alt = make_relation(condition_item_ref(cv, cond_ref), "=", lo);
         }
         if (tree) {
             AstNode *or = ast_new(AST_COND_OR, NULL, loc);
@@ -648,26 +1067,27 @@ static AstNode *condition_name_tree(const VarInfo *cv, SourceLocation loc) {
     return tree;
 }
 
-static void new_label(char *buf, size_t size, const char *what);
-
 // Class condition: NUMERIC, ALPHABETIC, ALPHABETIC-LOWER, ALPHABETIC-UPPER
 static void emit_class_jump(IrProgram *ir, AstNode *c, const char *target, bool when) {
     AstNode *operand = c->children;
-    VarInfo *v = operand->kind == AST_IDENTIFIER ? find_var(operand->name) : NULL;
-    if (!v || v->is_cond) {
+    if (operand->kind != AST_IDENTIFIER) {
         cobalt_error_loc(NULL, operand->loc.line, operand->loc.column,
                          "A class condition requires a data item");
         return;
     }
+    FieldRef f;
+    if (!resolve_ref(ir, operand, &f)) return;
+    VarInfo *v = f.var;
+    bool numeric = v->is_numeric && !f.refmod;
     // Class codes of runtime_class_test (runtime/ABI.md section 3)
     int code;
     if (strcmp(c->name, "NUMERIC") == 0) {
-        if (v->is_numeric && (v->usage_type == USAGE_COMP || v->usage_type == USAGE_COMP5)) {
+        if (numeric && (v->usage_type == USAGE_COMP || v->usage_type == USAGE_COMP5)) {
             if (when) emit_jump(ir, IR_JUMP, target); // binary items are always numeric
             return;
         }
-        if (v->is_numeric && v->usage_type == USAGE_COMP3) code = 5;
-        else code = (v->is_numeric && v->is_signed) ? 1 : 0;
+        if (numeric && v->usage_type == USAGE_COMP3) code = 5;
+        else code = (numeric && v->is_signed) ? 1 : 0;
     } else if (strcmp(c->name, "ALPHABETIC") == 0) {
         code = 2;
     } else if (strcmp(c->name, "ALPHABETIC-LOWER") == 0) {
@@ -676,8 +1096,8 @@ static void emit_class_jump(IrProgram *ir, AstNode *c, const char *target, bool 
         code = 4;
     }
     IrInstr *j = emit(ir, IR_CLASS_JUMP);
-    j->var_name = strdup(v->name);
-    j->size = v->size;
+    j->var_name = strdup(f.label);
+    j->size = f.size;
     j->imm = code;
     j->flags = when ? 1 : 0;
     j->jump_target = strdup(target);
@@ -733,12 +1153,13 @@ static void emit_cond_jump(IrProgram *ir, AstNode *cond, const char *target, boo
             break;
         }
         case AST_COND_NAME: {
-            VarInfo *cv = find_var(cond->name);
-            if (!cv || !cv->is_cond) {
+            VarInfo *cv = find_item(cond, true);
+            if (!cv) break;
+            if (!cv->is_cond) {
                 cobalt_error_loc(NULL, cond->loc.line, cond->loc.column, "'%s' is not a condition-name", cond->name);
                 break;
             }
-            AstNode *tree = condition_name_tree(cv, cond->loc);
+            AstNode *tree = condition_name_tree(cv, cond);
             emit_cond_jump(ir, tree, target, when);
             ast_free(tree);
             break;
@@ -751,78 +1172,103 @@ static void emit_cond_jump(IrProgram *ir, AstNode *cond, const char *target, boo
 
 // ── Statements ───────────────────────────────────────────────────────────────
 
-// MOVE src TO dest (one receiver)
+// Alphanumeric move of size bytes from src_label into a field
+static void emit_move_alpha(IrProgram *ir, const FieldRef *dest, const char *src_label, int src_size) {
+    IrInstr *m = new_instr(IR_CALL_MOVE_ALPHA, dest->label, src_label, NULL,
+                           src_size, dest->size, 0, 0, USAGE_DISPLAY);
+    m->flags = (dest->var->justified && !dest->refmod) ? 1 : 0;
+    append_instr(ir, m);
+}
+
+static void emit_fill(IrProgram *ir, const FieldRef *dest, int ch) {
+    append_instr(ir, new_instr(IR_CALL_MOVE_FILL, dest->label, NULL, NULL, 0, dest->size, 0,
+                               (char)ch, USAGE_DISPLAY));
+}
+
+// MOVE src TO dest (one receiver). Receiver subscripts are evaluated just
+// before the data is moved.
 static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const char *src_lit) {
-    VarInfo *dest = find_var(dest_node->name);
-    if (!dest) {
-        cobalt_error_loc(NULL, dest_node->loc.line, dest_node->loc.column,
-                         "Undeclared identifier '%s'", dest_node->name);
-        return;
-    }
+    VarInfo *dv = find_item(dest_node, true);
+    if (!dv) return;
+    bool dest_numeric = dv->is_numeric && !dest_node->loop && !dv->is_cond;
 
     int fig = figurative_char(src);
     if (fig >= 0) {
-        if (dest->is_numeric && fig != '0') {
+        if (dest_numeric && fig != '0') {
             cobalt_error_loc(NULL, src->loc.line, src->loc.column,
-                             "%s cannot be moved to numeric '%s'", src->name, dest->name);
-        } else if (dest->is_numeric) {
+                             "%s cannot be moved to numeric '%s'", src->name, dv->name);
+            return;
+        }
+        FieldRef dest;
+        if (dest_numeric) {
             emit_num(ir, IR_NUM_CONST, 0, 0);
-            emit_store(ir, dest, false);
+            if (!resolve_ref(ir, dest_node, &dest)) return;
+            emit_store(ir, &dest, false);
         } else {
-            append_instr(ir, new_instr(IR_CALL_MOVE_FILL, dest->name, NULL, NULL, 0, dest->size, 0,
-                                       (char)fig, dest->usage_type));
+            if (!resolve_ref(ir, dest_node, &dest)) return;
+            emit_fill(ir, &dest, fig);
         }
         return;
     }
 
     if (src->kind == AST_STRING_LITERAL) {
-        if (dest->is_numeric) {
+        if (dest_numeric) {
             cobalt_error_loc(NULL, src->loc.line, src->loc.column,
-                             "A nonnumeric literal cannot be moved to numeric '%s'", dest->name);
+                             "A nonnumeric literal cannot be moved to numeric '%s'", dv->name);
             return;
         }
-        int len = (int)strlen(src->name);
-        append_instr(ir, new_instr(IR_CALL_MOVE_ALPHA, dest->name, src_lit, NULL,
-                                   len > dest->size ? dest->size : len, dest->size, 0, 0, dest->usage_type));
+        FieldRef dest;
+        if (!resolve_ref(ir, dest_node, &dest)) return;
+        emit_move_alpha(ir, &dest, src_lit, (int)strlen(src->name));
         return;
     }
 
     if (src->kind == AST_LITERAL_NUMBER) {
-        if (dest->is_numeric) {
+        FieldRef dest;
+        if (dest_numeric) {
             if (!num_expr_valid(src)) return;
             int s = num_expr(ir, src, 0);
-            emit_rescale(ir, dest->decimal_places - s, false);
-            emit_store(ir, dest, false);
+            emit_rescale(ir, dv->decimal_places - s, false);
+            if (!resolve_ref(ir, dest_node, &dest)) return;
+            emit_store(ir, &dest, false);
         } else {
-            int len = (int)strlen(src->name);
-            append_instr(ir, new_instr(IR_CALL_MOVE_ALPHA, dest->name, src_lit, NULL,
-                                       len > dest->size ? dest->size : len, dest->size, 0, 0, dest->usage_type));
+            if (!resolve_ref(ir, dest_node, &dest)) return;
+            emit_move_alpha(ir, &dest, src_lit, (int)strlen(src->name));
         }
         return;
     }
 
     if (src->kind != AST_IDENTIFIER) return;
-    VarInfo *sv = find_var(src->name);
-    if (!sv) {
-        cobalt_error_loc(NULL, src->loc.line, src->loc.column, "Undeclared identifier '%s'", src->name);
-        return;
-    }
-    if (sv->is_numeric && dest->is_numeric) {
-        emit_load(ir, sv);
-        emit_rescale(ir, dest->decimal_places - sv->decimal_places, false);
-        emit_store(ir, dest, false);
-    } else if (!dest->is_numeric) {
-        if (sv->is_numeric && sv->usage_type != USAGE_DISPLAY) {
+    VarInfo *sv = find_item(src, true);
+    if (!sv) return;
+    bool src_numeric = sv->is_numeric && !src->loop && !sv->is_cond;
+
+    if (src_numeric && dest_numeric) {
+        FieldRef sf, dest;
+        if (!resolve_ref(ir, src, &sf)) return;
+        emit_load(ir, &sf);
+        emit_rescale(ir, dv->decimal_places - sv->decimal_places, false);
+        if (!resolve_ref(ir, dest_node, &dest)) return;
+        emit_store(ir, &dest, false);
+    } else if (!dest_numeric) {
+        if (src_numeric && sv->usage_type != USAGE_DISPLAY) {
             cobalt_error_loc(NULL, src->loc.line, src->loc.column,
                              "MOVE of non-DISPLAY numeric '%s' to alphanumeric is not supported yet", sv->name);
             return;
         }
-        append_instr(ir, new_instr(IR_CALL_MOVE_ALPHA, dest->name, sv->name, NULL,
-                                   sv->size, dest->size, 0, 0, dest->usage_type));
-    } else if (dest->usage_type == USAGE_DISPLAY && !dest->is_signed && dest->decimal_places == 0) {
-        int len = sv->size > dest->size ? dest->size : sv->size;
-        append_instr(ir, new_instr(IR_CALL_MOVE_NUM, dest->name, sv->name, NULL,
-                                   len, dest->size, 0, 0, dest->usage_type));
+        FieldRef sf, dest;
+        if (!resolve_ref(ir, src, &sf) || !resolve_ref(ir, dest_node, &dest)) return;
+        emit_move_alpha(ir, &dest, sf.label, sf.size);
+    } else if (dv->usage_type == USAGE_DISPLAY && !dv->is_signed && dv->decimal_places == 0) {
+        FieldRef sf, dest;
+        if (!resolve_ref(ir, src, &sf) || !resolve_ref(ir, dest_node, &dest)) return;
+        if (sf.size < 0 || sf.size > dest.size) {
+            cobalt_error_loc(NULL, src->loc.line, src->loc.column,
+                             "MOVE of '%s' to the shorter numeric '%s' is not supported yet", sv->name, dv->name);
+            return;
+        }
+        append_instr(ir, new_instr(IR_CALL_MOVE_NUM, dest.label, sf.label, NULL,
+                                   sf.size, dest.size, 0, 0, USAGE_DISPLAY));
     } else {
         cobalt_error_loc(NULL, src->loc.line, src->loc.column,
                          "MOVE of alphanumeric '%s' to this numeric item is not supported yet", sv->name);
@@ -832,13 +1278,9 @@ static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const ch
 // x = value (VARYING initialization) and x = x + by (augmentation)
 static void lower_varying_set(IrProgram *ir, AstNode *var, AstNode *value, bool add) {
     emit(ir, IR_SIZE_ERR_CLEAR);
-    AstNode *tree = add ? mk_bin(AST_EXPR_ADD, leaf_copy(var), leaf_copy(value)) : leaf_copy(value);
+    AstNode *tree = add ? mk_bin(AST_EXPR_ADD, ast_clone(var), ast_clone(value)) : ast_clone(value);
     lower_assign(ir, tree, var, false);
     ast_free(tree);
-}
-
-static void new_label(char *buf, size_t size, const char *what) {
-    snprintf(buf, size, "$%s_%d", what, if_counter++);
 }
 
 // The statements of one PERFORM iteration: the procedure range or the inline body
@@ -883,18 +1325,16 @@ static void lower_perform(IrProgram *ir, AstNode *node) {
     if (strcmp(form, "TIMES") == 0) {
         AstNode *count = node->loop;
         IrInstr *begin;
-        if (count->kind == AST_LITERAL_NUMBER) {
-            long long n = atoll(count->name);
+        long long n;
+        if (is_int_literal(count, &n)) {
             if (n <= 0) return; // zero iterations
             begin = emit(ir, IR_TIMES_BEGIN);
             begin->imm = n;
         } else {
-            VarInfo *cnt = numeric_var(count, "PERFORM TIMES count");
-            if (!cnt) return;
-            emit_load(ir, cnt);
-            emit_rescale(ir, -cnt->decimal_places, false); // integer part
+            if (!num_expr_valid(count)) return;
+            push_int(ir, count);    // integer part
             begin = emit(ir, IR_TIMES_BEGIN);
-            begin->flags = 1; // count on the numeric stack
+            begin->flags = 1;       // count on the numeric stack
         }
         char loop_lbl[32], done_lbl[32];
         new_label(loop_lbl, sizeof(loop_lbl), "times");
@@ -931,16 +1371,14 @@ static void lower_goto(IrProgram *ir, AstNode *node) {
         g->imm = target;
         return;
     }
-    VarInfo *sel = numeric_var(node->extra, "GO TO DEPENDING ON item");
-    if (!sel) return;
+    if (!numeric_item(node->extra, "GO TO DEPENDING ON item") || !num_expr_valid(node->extra)) return;
     int k = 1;
     for (AstNode *proc = node->children; proc; proc = proc->next, k++) {
         int target = resolve_proc(proc);
         if (target < 0) return;
         char next_lbl[32];
         new_label(next_lbl, sizeof(next_lbl), "goto_next");
-        emit_load(ir, sel);
-        emit_rescale(ir, -sel->decimal_places, false);
+        push_int(ir, node->extra);
         emit_num(ir, IR_NUM_CONST, k, 0);
         IrInstr *cmp = emit(ir, IR_NUM_CMP_JUMP_IF_FALSE);
         cmp->cmp_op = strdup("=");
@@ -951,172 +1389,315 @@ static void lower_goto(IrProgram *ir, AstNode *node) {
     }
 }
 
-static void lower_node(IrProgram *ir, AstNode *node) {
-    if (!node) return;
+// INITIALIZE: numeric elementary items to zero, the others to spaces;
+// FILLER items, redefining items and index-names are left alone. A table is
+// initialized by initializing its first occurrence and copying it to the rest.
+static void init_item(IrProgram *ir, const char *base, int base_offset, int idx, bool whole);
 
-    if (node->kind == AST_SENTENCE) {
-        char end_lbl[32];
-        new_label(end_lbl, sizeof(end_lbl), "sentence_end");
-        const char *outer = sentence_end;
-        sentence_end = end_lbl;
-        lower_block(ir, node->children);
-        sentence_end = outer;
-        emit_label(ir, end_lbl);
-    } else if (node->kind == AST_STATEMENT_PERFORM) {
-        lower_perform(ir, node);
-    } else if (node->kind == AST_STATEMENT_GOTO) {
-        lower_goto(ir, node);
-    } else if (node->kind == AST_STATEMENT_NEXT_SENTENCE) {
-        if (sentence_end) emit_jump(ir, IR_JUMP, sentence_end);
-    } else if (node->kind == AST_STATEMENT_EVALUATE) {
-        char end_lbl[32];
-        new_label(end_lbl, sizeof(end_lbl), "eval_end");
-        for (AstNode *when = node->children; when; when = when->next) {
-            char next_lbl[32];
-            new_label(next_lbl, sizeof(next_lbl), "when_next");
-            emit_cond_jump(ir, when->extra, next_lbl, false);
-            lower_block(ir, when->children);
-            emit_jump(ir, IR_JUMP, end_lbl);
-            emit_label(ir, next_lbl);
-        }
-        emit_label(ir, end_lbl);
-    } else if (node->kind == AST_STATEMENT_SET) {
-        // SET condition-name TO TRUE: move its first value to its data item
-        emit(ir, IR_SIZE_ERR_CLEAR);
-        for (AstNode *name = node->children; name; name = name->next) {
-            VarInfo *cv = find_var(name->name);
+static void init_contents(IrProgram *ir, const char *base, int base_offset, int idx) {
+    VarInfo *v = &vars[idx];
+    char label[64];
+    snprintf(label, sizeof(label), "%s+%d", base, v->offset - base_offset);
+    if (v->is_group) {
+        for (int c = v->first_child; c >= 0; c = vars[c].next_sibling) init_item(ir, base, base_offset, c, false);
+        return;
+    }
+    FieldRef f = { .var = v, .size = v->size };
+    snprintf(f.label, sizeof(f.label), "%s", label);
+    if (v->is_numeric) {
+        emit_num(ir, IR_NUM_CONST, 0, 0);
+        emit_store(ir, &f, false);
+    } else {
+        emit_fill(ir, &f, ' ');
+    }
+}
+
+static void init_item(IrProgram *ir, const char *base, int base_offset, int idx, bool whole) {
+    VarInfo *v = &vars[idx];
+    if (!whole && (v->is_filler || v->redefines >= 0)) return;
+    init_contents(ir, base, base_offset, idx);
+    if (v->occurs > 1 && !whole) {
+        IrInstr *r = emit(ir, IR_CALL_REPLICATE);
+        char label[64];
+        snprintf(label, sizeof(label), "%s+%d", base, v->offset - base_offset);
+        r->var_name = strdup(label);
+        r->size = v->size;
+        r->imm = v->occurs;
+    }
+}
+
+static void lower_initialize(IrProgram *ir, AstNode *target) {
+    FieldRef f;
+    if (!resolve_ref(ir, target, &f)) return;
+    if (target->loop) {
+        emit_fill(ir, &f, ' ');     // a reference-modified item is alphanumeric
+        return;
+    }
+    // f.label addresses the target occurrence; subordinate items are at their
+    // offset relative to it. Tables inside the target are replicated.
+    init_item(ir, f.label, f.var->offset, (int)(f.var - vars), true);
+}
+
+// SET receivers TO TRUE / TO value / UP BY / DOWN BY
+static void lower_set(IrProgram *ir, AstNode *node) {
+    emit(ir, IR_SIZE_ERR_CLEAR);
+    const char *form = node->name ? node->name : "TRUE";
+    for (AstNode *recv = node->children; recv; recv = recv->next) {
+        if (strcmp(form, "TRUE") == 0) {
+            // Move the condition-name's first value to its data item
+            VarInfo *cv = find_item(recv, true);
             if (!cv || !cv->is_cond) continue;
             AstNode *value = cv->cond_values;
-            AstNode *item = ast_new(AST_IDENTIFIER, vars[cv->parent].name, name->loc);
+            AstNode *item = condition_item_ref(cv, recv);
             char lit_name[32] = {0};
             if (value->kind == AST_STRING_LITERAL || value->kind == AST_LITERAL_NUMBER)
                 emit_data_lit(ir, "lit", value->name, lit_name, sizeof(lit_name));
             lower_move(ir, value, item, lit_name);
             ast_free(item);
+            continue;
         }
-    } else if (node->kind == AST_STATEMENT_EXIT) {
-        // EXIT marks the end of a procedure; it does nothing itself
-    } else if (node->kind == AST_STATEMENT_IF) {
-        AstNode *cond      = node->children;
-        AstNode *then_blk  = cond  ? cond->next  : NULL;
-        AstNode *else_blk  = then_blk ? then_blk->next : NULL;
+        AstNode *tree;
+        if (strcmp(form, "TO") == 0) tree = ast_clone(node->extra);
+        else tree = mk_bin(strcmp(form, "UP") == 0 ? AST_EXPR_ADD : AST_EXPR_SUB,
+                           ast_clone(recv), ast_clone(node->extra));
+        lower_assign(ir, tree, recv, false);
+        ast_free(tree);
+    }
+}
 
-        char else_lbl[32], end_lbl[32];
-        int idx = if_counter++;
-        snprintf(else_lbl, sizeof(else_lbl), "$if_else_%d", idx);
-        snprintf(end_lbl,  sizeof(end_lbl),  "$if_end_%d",  idx);
-        bool has_else = (else_blk && else_blk->kind == AST_ELSE_BLOCK);
+// SEARCH (serial, from the current index value) and SEARCH ALL (from 1).
+// SEARCH ALL is done serially too: on a table ordered by its keys it finds
+// the same element a binary search would.
+static void lower_search(IrProgram *ir, AstNode *node) {
+    AstNode *table = node->extra;
+    VarInfo *tv = find_item(table, true);
+    if (!tv) return;
+    if (!tv->occurs || tv->first_index < 0) {
+        cobalt_error_loc(NULL, table->loc.line, table->loc.column,
+                         "SEARCH needs a table with INDEXED BY ('%s')", table->name);
+        return;
+    }
+    AstNode *index = item_ref(tv->first_index, table->loc);
+    char loop_lbl[32], end_lbl[32], at_end_lbl[32];
+    new_label(loop_lbl, sizeof(loop_lbl), "search");
+    new_label(end_lbl, sizeof(end_lbl), "search_end");
+    new_label(at_end_lbl, sizeof(at_end_lbl), "search_at_end");
 
-        // Jump to else/end when condition is FALSE
-        emit_cond_jump(ir, cond, has_else ? else_lbl : end_lbl, false);
+    emit(ir, IR_SIZE_ERR_CLEAR);
+    if (node->name && strcmp(node->name, "ALL") == 0) {
+        AstNode *one = ast_new(AST_LITERAL_NUMBER, "1", table->loc);
+        lower_assign(ir, one, index, false);
+        ast_free(one);
+    }
+    emit_label(ir, loop_lbl);
+    char count[16];
+    snprintf(count, sizeof(count), "%d", tv->occurs);
+    AstNode *limit = make_relation(ast_clone(index), ">", ast_new(AST_LITERAL_NUMBER, count, table->loc));
+    emit_cond_jump(ir, limit, at_end_lbl, true);
+    ast_free(limit);
 
-        if (then_blk) lower_block(ir, then_blk->children);
+    for (AstNode *when = node->children; when; when = when->next) {
+        char next_lbl[32];
+        new_label(next_lbl, sizeof(next_lbl), "search_next");
+        emit_cond_jump(ir, when->extra, next_lbl, false);
+        lower_block(ir, when->children);
+        emit_jump(ir, IR_JUMP, end_lbl);
+        emit_label(ir, next_lbl);
+    }
+    AstNode *one = ast_new(AST_LITERAL_NUMBER, "1", table->loc);
+    lower_varying_set(ir, index, one, true);
+    if (node->loop) lower_varying_set(ir, node->loop, one, true);
+    ast_free(one);
+    emit_jump(ir, IR_JUMP, loop_lbl);
 
-        if (has_else) {
-            emit_jump(ir, IR_JUMP, end_lbl);
-            emit_label(ir, else_lbl);
-            lower_block(ir, else_blk->children);
-        }
+    emit_label(ir, at_end_lbl);
+    lower_block(ir, node->on_error);
+    emit_label(ir, end_lbl);
+    ast_free(index);
+}
 
-        emit_label(ir, end_lbl);
-    } else if (node->kind == AST_STATEMENT_DISPLAY) {
-        for (AstNode *arg = node->children; arg; arg = arg->next) {
-            const char *content = arg->name ? arg->name : "";
-            if (arg->kind == AST_STRING_LITERAL || arg->kind == AST_LITERAL_NUMBER) {
-                char lit_name[32];
-                emit_data_lit(ir, "lit", content, lit_name, sizeof(lit_name));
-                append_instr(ir, new_instr(IR_CALL_DISPLAY_STR, NULL, lit_name, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
-            } else if (arg->kind == AST_FIGURATIVE_CONSTANT) {
-                char pad_char = (char)figurative_char(arg);
-                append_instr(ir, new_instr(IR_CALL_DISPLAY_FILL, NULL, NULL, NULL, 0, 1, 0, pad_char, USAGE_DISPLAY));
-            } else if (arg->kind == AST_IDENTIFIER) {
-                VarInfo *v = find_var(arg->name);
-                if (!v) {
-                    cobalt_warn("Variable '%s' not found for DISPLAY", arg->name);
-                } else if (v->is_numeric) {
-                    IrInstr *d = new_instr(IR_CALL_DISPLAY_NUM, v->name, NULL, NULL, 0, v->size,
-                                           v->decimal_places, 0, v->usage_type);
-                    d->flags = var_flags(v);
-                    append_instr(ir, d);
-                } else {
-                    append_instr(ir, new_instr(IR_CALL_DISPLAY_VAR_STR, v->name, NULL, NULL, 0, v->size, 0, 0, v->usage_type));
-                }
-            }
-        }
-        append_instr(ir, new_instr(IR_EMIT_NEWLINE, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
-    } else if (node->kind == AST_STATEMENT_CONTINUE) {
-        // No-op: CONTINUE does nothing
-    } else if (node->kind == AST_STATEMENT_MOVE) {
-        AstNode *src = node->children;
-        if (!src) return;
-
-        // A literal source is emitted once and shared by all receivers
-        char lit_name[32] = {0};
-        if (src->kind == AST_STRING_LITERAL || src->kind == AST_LITERAL_NUMBER)
-            emit_data_lit(ir, "lit", src->name ? src->name : "", lit_name, sizeof(lit_name));
-
-        emit(ir, IR_SIZE_ERR_CLEAR);
-        for (AstNode *dest = src->next; dest && dest->kind == AST_IDENTIFIER; dest = dest->next)
-            lower_move(ir, src, dest, lit_name);
-    } else if (node->kind == AST_STATEMENT_ADD || node->kind == AST_STATEMENT_SUBTRACT ||
-               node->kind == AST_STATEMENT_MULTIPLY || node->kind == AST_STATEMENT_DIVIDE ||
-               node->kind == AST_STATEMENT_COMPUTE) {
-        lower_arith_node(ir, node);
-    } else if (node->kind == AST_STATEMENT_STOP) {
-        append_instr(ir, new_instr(IR_CALL_EXIT, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
-    } else if (node->kind == AST_STATEMENT_ACCEPT) {
-        AstNode *var_node = node->children; // Should be an AST_IDENTIFIER
-        if (var_node && var_node->kind == AST_IDENTIFIER) {
-            VarInfo *v = find_var(var_node->name);
-            if (!v) {
-                cobalt_warn("Variable '%s' not found for ACCEPT", var_node->name);
-            } else if (v->is_numeric) {
-                IrInstr *a = new_instr(IR_CALL_ACCEPT_NUM, v->name, NULL, NULL, 0, v->size,
-                                       v->decimal_places, 0, v->usage_type);
-                a->digits = v->digits;
-                a->flags = var_flags(v);
-                append_instr(ir, a);
+static void lower_display(IrProgram *ir, AstNode *node) {
+    for (AstNode *arg = node->children; arg; arg = arg->next) {
+        const char *content = arg->name ? arg->name : "";
+        if (arg->kind == AST_STRING_LITERAL || arg->kind == AST_LITERAL_NUMBER) {
+            char lit_name[32];
+            emit_data_lit(ir, "lit", content, lit_name, sizeof(lit_name));
+            append_instr(ir, new_instr(IR_CALL_DISPLAY_STR, NULL, lit_name, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+        } else if (arg->kind == AST_FIGURATIVE_CONSTANT) {
+            char pad_char = (char)figurative_char(arg);
+            append_instr(ir, new_instr(IR_CALL_DISPLAY_FILL, NULL, NULL, NULL, 0, 1, 0, pad_char, USAGE_DISPLAY));
+        } else if (arg->kind == AST_IDENTIFIER) {
+            FieldRef f;
+            if (!resolve_ref(ir, arg, &f)) continue;
+            if (f.var->is_numeric && !f.refmod) {
+                IrInstr *d = new_instr(IR_CALL_DISPLAY_NUM, f.label, NULL, NULL, 0, f.var->size,
+                                       f.var->decimal_places, 0, f.var->usage_type);
+                d->flags = var_flags(f.var);
+                append_instr(ir, d);
             } else {
-                append_instr(ir, new_instr(IR_CALL_ACCEPT, v->name, NULL, NULL, 0, v->size, 0, ' ', v->usage_type));
+                append_instr(ir, new_instr(IR_CALL_DISPLAY_VAR_STR, f.label, NULL, NULL, 0, f.size, 0, 0, USAGE_DISPLAY));
             }
-        } else {
-            cobalt_warn("ACCEPT statement requires a variable", NULL);
         }
+    }
+    append_instr(ir, new_instr(IR_EMIT_NEWLINE, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+}
+
+static void lower_accept(IrProgram *ir, AstNode *node) {
+    AstNode *var_node = node->children;
+    if (!var_node || var_node->kind != AST_IDENTIFIER) {
+        cobalt_warn("ACCEPT statement requires a variable", NULL);
+        return;
+    }
+    FieldRef f;
+    if (!resolve_ref(ir, var_node, &f)) return;
+    if (f.var->is_numeric && !f.refmod) {
+        IrInstr *a = new_instr(IR_CALL_ACCEPT_NUM, f.label, NULL, NULL, 0, f.var->size,
+                               f.var->decimal_places, 0, f.var->usage_type);
+        a->digits = f.var->digits;
+        a->flags = var_flags(f.var);
+        append_instr(ir, a);
+    } else {
+        append_instr(ir, new_instr(IR_CALL_ACCEPT, f.label, NULL, NULL, 0, f.size, 0, ' ', USAGE_DISPLAY));
+    }
+}
+
+static void lower_node(IrProgram *ir, AstNode *node) {
+    if (!node) return;
+
+    switch (node->kind) {
+        case AST_SENTENCE: {
+            char end_lbl[32];
+            new_label(end_lbl, sizeof(end_lbl), "sentence_end");
+            const char *outer = sentence_end;
+            sentence_end = end_lbl;
+            lower_block(ir, node->children);
+            sentence_end = outer;
+            emit_label(ir, end_lbl);
+            break;
+        }
+        case AST_STATEMENT_PERFORM:
+            lower_perform(ir, node);
+            break;
+        case AST_STATEMENT_GOTO:
+            lower_goto(ir, node);
+            break;
+        case AST_STATEMENT_NEXT_SENTENCE:
+            if (sentence_end) emit_jump(ir, IR_JUMP, sentence_end);
+            break;
+        case AST_STATEMENT_EVALUATE: {
+            char end_lbl[32];
+            new_label(end_lbl, sizeof(end_lbl), "eval_end");
+            for (AstNode *when = node->children; when; when = when->next) {
+                char next_lbl[32];
+                new_label(next_lbl, sizeof(next_lbl), "when_next");
+                emit_cond_jump(ir, when->extra, next_lbl, false);
+                lower_block(ir, when->children);
+                emit_jump(ir, IR_JUMP, end_lbl);
+                emit_label(ir, next_lbl);
+            }
+            emit_label(ir, end_lbl);
+            break;
+        }
+        case AST_STATEMENT_SET:
+            lower_set(ir, node);
+            break;
+        case AST_STATEMENT_INITIALIZE:
+            for (AstNode *t = node->children; t; t = t->next) lower_initialize(ir, t);
+            break;
+        case AST_STATEMENT_SEARCH:
+            lower_search(ir, node);
+            break;
+        case AST_STATEMENT_EXIT:        // marks the end of a procedure; does nothing
+        case AST_STATEMENT_CONTINUE:
+            break;
+        case AST_STATEMENT_IF: {
+            AstNode *cond      = node->children;
+            AstNode *then_blk  = cond  ? cond->next  : NULL;
+            AstNode *else_blk  = then_blk ? then_blk->next : NULL;
+
+            char else_lbl[32], end_lbl[32];
+            new_label(else_lbl, sizeof(else_lbl), "if_else");
+            new_label(end_lbl, sizeof(end_lbl), "if_end");
+            bool has_else = (else_blk && else_blk->kind == AST_ELSE_BLOCK);
+
+            // Jump to else/end when condition is FALSE
+            emit_cond_jump(ir, cond, has_else ? else_lbl : end_lbl, false);
+            if (then_blk) lower_block(ir, then_blk->children);
+            if (has_else) {
+                emit_jump(ir, IR_JUMP, end_lbl);
+                emit_label(ir, else_lbl);
+                lower_block(ir, else_blk->children);
+            }
+            emit_label(ir, end_lbl);
+            break;
+        }
+        case AST_STATEMENT_DISPLAY:
+            lower_display(ir, node);
+            break;
+        case AST_STATEMENT_MOVE: {
+            AstNode *src = node->children;
+            if (!src) break;
+            // A literal source is emitted once and shared by all receivers
+            char lit_name[32] = {0};
+            if (src->kind == AST_STRING_LITERAL || src->kind == AST_LITERAL_NUMBER)
+                emit_data_lit(ir, "lit", src->name ? src->name : "", lit_name, sizeof(lit_name));
+            emit(ir, IR_SIZE_ERR_CLEAR);
+            for (AstNode *dest = src->next; dest && dest->kind == AST_IDENTIFIER; dest = dest->next)
+                lower_move(ir, src, dest, lit_name);
+            break;
+        }
+        case AST_STATEMENT_ADD:
+        case AST_STATEMENT_SUBTRACT:
+        case AST_STATEMENT_MULTIPLY:
+        case AST_STATEMENT_DIVIDE:
+        case AST_STATEMENT_COMPUTE:
+            lower_arith_node(ir, node);
+            break;
+        case AST_STATEMENT_STOP:
+            append_instr(ir, new_instr(IR_CALL_EXIT, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+            break;
+        case AST_STATEMENT_ACCEPT:
+            lower_accept(ir, node);
+            break;
+        default:
+            break;
     }
 }
 
 static void lower_block(IrProgram *ir, AstNode *block) {
-    AstNode *n = block;
-    while (n) {
-        lower_node(ir, n);
-        n = n->next;
-    }
+    for (AstNode *n = block; n; n = n->next) lower_node(ir, n);
 }
 
 // Initial value of one data item from its VALUE clause
-static void lower_initial_value(IrProgram *ir, VarInfo *v) {
+static void lower_initial_value(IrProgram *ir, int idx) {
+    VarInfo *v = &vars[idx];
     AstNode *val = v->value;
-    if (!val) return;
+    if (!val || v->is_cond || v->is_index) return;
+    AstNode *ref = item_ref(idx, val->loc);
+    FieldRef f;
+    if (!resolve_ref(ir, ref, &f)) {
+        ast_free(ref);
+        return;
+    }
+    ast_free(ref);
+    bool numeric = v->is_numeric;
     int fig = figurative_char(val);
     if (fig >= 0) {
-        if (v->is_numeric) {
+        if (numeric) {
             emit_num(ir, IR_NUM_CONST, 0, 0);
-            emit_store(ir, v, false);
+            emit_store(ir, &f, false);
         } else {
-            append_instr(ir, new_instr(IR_CALL_MOVE_FILL, v->name, NULL, NULL, 0, v->size, 0,
-                                       (char)fig, v->usage_type));
+            emit_fill(ir, &f, fig);
         }
-    } else if (val->kind == AST_LITERAL_NUMBER && v->is_numeric) {
+    } else if (val->kind == AST_LITERAL_NUMBER && numeric) {
         if (!num_expr_valid(val)) return;
         int s = num_expr(ir, val, 0);
         emit_rescale(ir, v->decimal_places - s, false);
-        emit_store(ir, v, false);
-    } else if (val->kind == AST_STRING_LITERAL && !v->is_numeric) {
+        emit_store(ir, &f, false);
+    } else if (val->kind == AST_STRING_LITERAL && !numeric) {
         char lit_name[32];
-        int len = (int)strlen(val->name);
         emit_data_lit(ir, "initlit", val->name, lit_name, sizeof(lit_name));
-        append_instr(ir, new_instr(IR_CALL_MOVE_ALPHA, v->name, lit_name, NULL,
-                                   len > v->size ? v->size : len, v->size, 0, 0, v->usage_type));
+        emit_move_alpha(ir, &f, lit_name, (int)strlen(val->name));
     }
 }
 
@@ -1125,59 +1706,17 @@ IrProgram *lower_to_ir(AstNode *program) {
     if (!ir) return NULL;
 
     num_vars = 0;
+    num_records = 0;
     lit_counter = 0;
     if_counter = 0;
+    addr_slots = 0;
 
-    int last_item = -1;     // data item that level-88 entries belong to
-    for (AstNode *div = program->children; div; div = div->next) {
-        if (div->kind != AST_DIVISION || strcasecmp(div->name, "DATA") != 0) continue;
-        for (AstNode *sec = div->children; sec; sec = sec->next) {
-            if (sec->kind != AST_SECTION) continue;
-            for (AstNode *decl = sec->children; decl; decl = decl->next) {
-                if (decl->kind != AST_VAR_DECL) continue;
-                if (num_vars >= 512) {
-                    cobalt_error("Internal variable table full (512 limit)");
-                    break;
-                }
-                if (decl->text && atoi(decl->text) == 88) {
-                    if (last_item < 0) {
-                        cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
-                                         "Condition-name '%s' has no data item", decl->name);
-                        continue;
-                    }
-                    VarInfo *cv = &vars[num_vars++];
-                    memset(cv, 0, sizeof(VarInfo));
-                    cv->name = strdup(decl->name);
-                    cv->is_cond = true;
-                    cv->parent = last_item;
-                    cv->cond_values = decl->children;
-                    continue;
-                }
-                last_item = num_vars;
-                // sema.c has already populated the semantic fields
-                VarInfo *v = &vars[num_vars++];
-                memset(v, 0, sizeof(VarInfo));
-                v->name = strdup(decl->name);
-                v->size = (int)decl->data_size;
-                v->decimal_places = decl->decimal_places;
-                v->digits = decl->digits;
-                v->is_numeric = decl->is_numeric;
-                v->is_signed = decl->is_signed;
-                v->usage_type = decl->usage_type;
-                for (AstNode *c = decl->children; c; c = c->next) {
-                    if (c->kind == AST_STRING_LITERAL || c->kind == AST_LITERAL_NUMBER ||
-                        c->kind == AST_FIGURATIVE_CONSTANT) v->value = c;
-                }
-                append_instr(ir, new_instr(IR_DATA_VAR, v->name, NULL, NULL, 0, v->size,
-                                           v->decimal_places, 0, v->usage_type));
-            }
-        }
-    }
+    build_data(ir, program);
 
     // Emit initializations
     append_instr(ir, new_instr(IR_CALL_INIT, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
     emit(ir, IR_SIZE_ERR_CLEAR);
-    for (int i = 0; i < num_vars; i++) lower_initial_value(ir, &vars[i]);
+    for (int i = 0; i < num_vars; i++) lower_initial_value(ir, i);
 
     // Lower PROCEDURE DIVISION: procedures laid out in source order
     num_procs = 0;

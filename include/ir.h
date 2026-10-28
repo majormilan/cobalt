@@ -12,14 +12,15 @@ typedef struct IrInstr IrInstr;
 #define IR_NUM_KEEP   2     // ON SIZE ERROR given: keep the field on size error
 
 typedef enum {
-    IR_DATA_VAR,            // var_name, size
+    IR_DATA_VAR,            // storage of one record: var_name ("%r<n>"), size
     IR_DATA_LIT,            // lit_name, content
     IR_CALL_INIT,           // no args (runtime_init)
     IR_CALL_DISPLAY_STR,    // lit_name
     IR_CALL_DISPLAY_NUM,    // var_name, size, decimal_places (scale), usage_type, flags
     IR_CALL_DISPLAY_VAR_STR, // var_name, size, usage_type
     IR_EMIT_NEWLINE,        // no args (for DISPLAY statement newline)
-    IR_CALL_MOVE_ALPHA,     // dest var_name, src lit_name, lit_len = src length, size = dest size
+    IR_CALL_MOVE_ALPHA,     // dest var_name, src lit_name, lit_len = src length, size = dest size;
+                            //   flags = 1 for a JUSTIFIED RIGHT receiver
     IR_CALL_MOVE_NUM,       // same fields: alphanumeric source into a numeric DISPLAY field
     IR_CALL_DISPLAY_FILL,   // pad_char, size
     IR_CALL_MOVE_FILL,      // var_name, pad_char, size, usage_type
@@ -57,6 +58,15 @@ typedef enum {
                                 //   (pad_char repeated); jump unless (a cmp_op b)
     IR_CLASS_JUMP,          // class test of var_name/size, class code imm; jump to
                             //   jump_target when the result equals flags (1 or 0)
+    // Field addresses computed at run time (subscripts, reference modification).
+    // Field operands name their storage as "%r<record>+<offset>", or as
+    // "*A_<slot>[+<offset>]" when the address is in address slot A_<slot>.
+    // A negative size -(k+1) means the length is in length slot N_<k>.
+    IR_ADDR_SET,            // A_<imm> = address of var_name
+    IR_ADDR_ADD,            // pop v; A_<imm> += (v - 1) * size
+    IR_LEN_SET,             // pop v; N_<imm> = v
+    IR_CALL_REPLICATE,      // copy the first size bytes of var_name over the
+                            //   following imm - 1 occurrences
     IR_SIZE_ERR_CLEAR,      // start of a statement that stores numeric results
     IR_JUMP_IF_NO_SIZE_ERR, // jump to jump_target if no size error since the clear
 } IrOpcode;

@@ -232,7 +232,10 @@ void symtab_check_unused_symbols(SymbolTable *table) {
             while (current) {
                 // Only warn for data items: procedures are also entered by
                 // falling through, and PROGRAM-ID is the entry point
-                if (current->is_declared && !current->is_used && current->kind == SYM_VAR) {
+                // Group items (no PICTURE) are normally used through their
+                // subordinate items, so only elementary items are reported
+                if (current->is_declared && !current->is_used && current->kind == SYM_VAR &&
+                    current->pic_string) {
                     cobalt_warn_loc(current->loc.filename, current->loc.line, current->loc.column, "Unused symbol '%s'.", current->name);
                 }
                 current = current->next;

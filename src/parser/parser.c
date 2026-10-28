@@ -54,6 +54,8 @@ static void synchronize() {
             case TOK_EVALUATE:
             case TOK_GO:
             case TOK_SET:
+            case TOK_INITIALIZE:
+            case TOK_SEARCH:
                 parser_panic_mode = false; // Reset panic mode
                 return; 
             default:
@@ -216,21 +218,24 @@ static AstNode *parse_var_decl(void) {
     int level_num = atoi(level_str);
     next();
 
+    // data-name, FILLER, or nothing (an implicit FILLER)
     char *name = NULL;
     if (tok.kind == TOK_IDENT) {
         name = tok_to_str();
         next();
     } else {
-        free(level_str);
-        synchronize(); // No identifier after level, error
-        return NULL;
+        if (tok.kind == TOK_FILLER) next();
+        name = strdup("FILLER");
     }
 
     AstNode *var = ast_new(AST_VAR_DECL, name, loc);
-    // Declare the symbol
-    Symbol *sym = symtab_declare_symbol(current_symtab, name, SYM_VAR, loc);
-    if (sym) {
-        sym->level = level_num;
+    // Data names may repeat in different groups; references are qualified
+    // and resolved during IR lowering
+    Symbol *sym = NULL;
+    if (strcasecmp(name, "FILLER") != 0) {
+        sym = symtab_resolve_symbol(current_symtab, name);
+        if (!sym) sym = symtab_declare_symbol(current_symtab, name, SYM_VAR, loc);
+        if (sym) sym->level = level_num;
     }
 
     free(name);
@@ -336,6 +341,67 @@ static AstNode *parse_var_decl(void) {
             free(val);
             append_child(var, &tail, val_node);
             next();
+        } else if (tok.kind == TOK_REDEFINES) {
+            next();
+            if (tok.kind != TOK_IDENT) { ast_free(var); arith_error("Expected data-name after REDEFINES"); return NULL; }
+            char *target = tok_to_str();
+            Symbol *tsym = symtab_resolve_symbol(current_symtab, target);
+            if (tsym) symtab_mark_symbol_as_used(tsym);
+            append_child(var, &tail, ast_new(AST_REDEFINES, target, cl_loc));
+            free(target);
+            next();
+        } else if (tok.kind == TOK_OCCURS) {
+            // OCCURS n [TIMES] [{ASCENDING|DESCENDING} [KEY] [IS] name...]...
+            //   [INDEXED [BY] name...]
+            next();
+            if (tok.kind != TOK_NUMBER) { ast_free(var); arith_error("Expected integer after OCCURS"); return NULL; }
+            char *count = tok_to_str();
+            AstNode *occurs = ast_new(AST_OCCURS, count, cl_loc);
+            free(count);
+            append_child(var, &tail, occurs);
+            next();
+            if (tok.kind == TOK_TO || tok.kind == TOK_DEPENDING) {
+                ast_free(var);
+                arith_error("OCCURS ... DEPENDING ON is not supported yet");
+                return NULL;
+            }
+            if (tok.kind == TOK_TIMES) next();
+            while (tok.kind == TOK_ASCENDING || tok.kind == TOK_DESCENDING) {
+                next();
+                if (tok.kind == TOK_KEY) next();
+                if (tok.kind == TOK_IS) next();
+                while (tok.kind == TOK_IDENT) next();   // keys only matter to SEARCH ALL ordering
+            }
+            if (tok.kind == TOK_INDEXED) {
+                next();
+                if (tok.kind == TOK_BY) next();
+                AstNode *idx_tail = NULL;
+                while (tok.kind == TOK_IDENT) {
+                    char *idx = tok_to_str();
+                    SourceLocation iloc = {current_lexer->filename, tok.line, tok.column};
+                    if (!symtab_resolve_symbol(current_symtab, idx)) {
+                        Symbol *isym = symtab_declare_symbol(current_symtab, idx, SYM_VAR, iloc);
+                        if (isym) symtab_mark_symbol_as_used(isym);
+                    }
+                    list_append(&occurs->children, &idx_tail, ast_new(AST_IDENTIFIER, idx, iloc));
+                    free(idx);
+                    next();
+                }
+            }
+        } else if (tok.kind == TOK_JUSTIFIED) {
+            next();
+            if (tok.kind == TOK_RIGHT) next();
+            append_child(var, &tail, ast_new(AST_JUSTIFIED, NULL, cl_loc));
+        } else if (tok.kind == TOK_SYNCHRONIZED) {
+            next();                             // alignment is not needed on x86_64
+            if (tok.kind == TOK_LEFT || tok.kind == TOK_RIGHT) next();
+        } else if (tok.kind == TOK_BLANK || tok.kind == TOK_SIGN) {
+            const char *clause = tok.kind == TOK_BLANK ? "BLANK WHEN ZERO" : "SIGN";
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                             "%s clause is not supported yet", clause);
+            synchronize();
+            ast_free(var);
+            return NULL;
         } else {
             cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
                              "Unexpected '%.*s' in data description of '%s'", (int)tok.length, tok.lexeme, var->name);
@@ -356,6 +422,75 @@ static AstNode *parse_statement(void);
 static AstNode *parse_expr(void);
 static AstNode *parse_term(void);
 static AstNode *parse_factor(void);
+
+// identifier := name {OF|IN name}... [(subscript...)] [(start:[length])]
+// AST_IDENTIFIER: children = subscripts, extra = qualifiers (innermost
+// first), loop = AST_REFMOD with children start and optional length.
+static AstNode *parse_identifier(void) {
+    SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
+    char *name = tok_to_str();
+    AstNode *id = ast_new(AST_IDENTIFIER, name, loc);
+    Symbol *sym = symtab_resolve_symbol(current_symtab, name);
+    if (sym) symtab_mark_symbol_as_used(sym);
+    else cobalt_error_loc(current_lexer->original_source, loc.line, loc.column, "Undeclared identifier '%s'.", name);
+    free(name);
+    next();
+
+    AstNode *qual_tail = NULL;
+    while ((tok.kind == TOK_OF || tok.kind == TOK_IN) && !parser_panic_mode) {
+        next();
+        if (tok.kind != TOK_IDENT) { arith_error("Expected a name after OF/IN"); return id; }
+        char *q = tok_to_str();
+        Symbol *qsym = symtab_resolve_symbol(current_symtab, q);
+        if (qsym) symtab_mark_symbol_as_used(qsym);
+        list_append(&id->extra, &qual_tail, ast_new(AST_IDENTIFIER, q, (SourceLocation){current_lexer->filename, tok.line, tok.column}));
+        free(q);
+        next();
+    }
+
+    for (int part = 0; part < 2 && tok.kind == TOK_LPAREN && !id->loop && !parser_panic_mode; part++) {
+        SourceLocation ploc = {current_lexer->filename, tok.line, tok.column};
+        next();
+        AstNode *first = parse_expr();
+        if (!first) { arith_error("Expected subscript or reference modifier"); return id; }
+        if (tok.kind == TOK_COLON) {
+            next();
+            AstNode *refmod = ast_new(AST_REFMOD, NULL, ploc);
+            refmod->children = first;
+            if (tok.kind != TOK_RPAREN) first->next = parse_expr();
+            id->loop = refmod;
+        } else {
+            if (id->children) { ast_free(first); arith_error("Unexpected second subscript list"); return id; }
+            AstNode *tail = first;
+            id->children = first;
+            while (tok.kind != TOK_RPAREN && tok.kind != TOK_EOF && !parser_panic_mode) {
+                AstNode *sub = parse_expr();
+                if (!sub) break;
+                tail->next = sub;
+                tail = sub;
+            }
+        }
+        if (tok.kind != TOK_RPAREN) { arith_error("Expected ')'"); return id; }
+        next();
+    }
+    return id;
+}
+
+// Identifier, literal or figurative constant (DISPLAY and MOVE operands)
+static AstNode *parse_value_operand(void) {
+    if (tok.kind == TOK_IDENT) return parse_identifier();
+    SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
+    AstKind kind;
+    if (tok.kind == TOK_STRING) kind = AST_STRING_LITERAL;
+    else if (tok.kind == TOK_NUMBER) kind = AST_LITERAL_NUMBER;
+    else if (is_figurative(tok.kind)) kind = AST_FIGURATIVE_CONSTANT;
+    else return NULL;
+    char *val = tok_to_str();
+    AstNode *node = ast_new(kind, val, loc);
+    free(val);
+    next();
+    return node;
+}
 
 static AstNode *parse_factor(void) {
     SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
@@ -401,17 +536,7 @@ static AstNode *parse_factor(void) {
         return node;
     }
 
-    if (tok.kind == TOK_IDENT) {
-        char *name = tok_to_str();
-        AstNode *node = ast_new(AST_IDENTIFIER, name, loc);
-        Symbol *sym = symtab_resolve_symbol(current_symtab, name);
-        if (sym) symtab_mark_symbol_as_used(sym);
-        else cobalt_error_loc(current_lexer->original_source, loc.line, loc.column,
-                              "Undeclared identifier '%s' in expression", name);
-        free(name);
-        next();
-        return node;
-    }
+    if (tok.kind == TOK_IDENT) return parse_identifier();
 
     return NULL;
 }
@@ -829,11 +954,9 @@ static AstNode *parse_when_object(AstNode *subject) {
 // Parse an arithmetic operand (identifier or numeric literal).
 // Returns NULL, consuming nothing, if the token is not an operand.
 static AstNode *parse_arith_operand(void) {
-    if (tok.kind != TOK_IDENT && tok.kind != TOK_NUMBER) return NULL;
+    if (tok.kind == TOK_IDENT) return parse_identifier();
+    if (tok.kind != TOK_NUMBER) return NULL;
     char *val = tok_to_str();
-    if (tok.kind == TOK_IDENT && !symtab_resolve_symbol(current_symtab, val))
-        cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                         "Undeclared identifier '%s'.", val);
     AstNode *op = make_operand_node(val, tok.kind);
     free(val);
     next();
@@ -889,7 +1012,7 @@ static int parse_operands_or_receivers(AstNode **head, AstNode **tail, bool *all
 static bool is_scope_terminator(TokenKind kind) {
     return kind == TOK_END_IF || kind == TOK_END_ADD || kind == TOK_END_SUBTRACT ||
            kind == TOK_END_MULTIPLY || kind == TOK_END_DIVIDE || kind == TOK_END_COMPUTE ||
-           kind == TOK_END_PERFORM || kind == TOK_END_EVALUATE;
+           kind == TOK_END_PERFORM || kind == TOK_END_EVALUATE || kind == TOK_END_SEARCH;
 }
 
 // True where a statement sequence ends: end of sentence, a phrase keyword of
@@ -952,38 +1075,9 @@ static AstNode *parse_statement(void) {
     if (tok.kind == TOK_DISPLAY) {
         next();
         AstNode *display = ast_new(AST_STATEMENT_DISPLAY, NULL, loc);
-        AstNode *last = NULL;
-
-        while ((tok.kind == TOK_STRING || tok.kind == TOK_IDENT || tok.kind == TOK_NUMBER ||
-                is_figurative(tok.kind)) && !parser_panic_mode) {
-            {
-                char *val = tok_to_str();
-                AstNode *arg = NULL;
-                if (tok.kind == TOK_STRING) {
-                    arg = ast_new(AST_STRING_LITERAL, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
-                } else if (tok.kind == TOK_NUMBER) {
-                    arg = ast_new(AST_LITERAL_NUMBER, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
-                } else if (is_figurative(tok.kind)) {
-                    arg = ast_new(AST_FIGURATIVE_CONSTANT, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
-                            } else { 
-                                arg = ast_new(AST_IDENTIFIER, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
-                                // Resolve and mark as used
-                                Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, val);
-                                if (!resolved_sym) {
-                                    cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", val);
-                                } else {
-                                    symtab_mark_symbol_as_used(resolved_sym);
-                                    // Optionally, attach symbol to AST node for later use
-                                    // arg->symbol = resolved_sym; 
-                                }
-                            }                free(val);
-                if (!display->children) display->children = arg;
-                else last->next = arg;
-                last = arg;
-            }
-            next();
-        }
-
+        AstNode *last = NULL, *arg;
+        while (!parser_panic_mode && (arg = parse_value_operand()))
+            list_append(&display->children, &last, arg);
         return display;
     }
     else if (tok.kind == TOK_STOP) {
@@ -992,61 +1086,20 @@ static AstNode *parse_statement(void) {
         if (parser_panic_mode) return NULL;
         return ast_new(AST_STATEMENT_STOP, NULL, loc);
     }
+    // ─── MOVE ────────────────────────────────────────────────────────────────
+    // MOVE source TO identifier+; children: [source, dest1,...]
     else if (tok.kind == TOK_MOVE) {
         next();
         AstNode *move = ast_new(AST_STATEMENT_MOVE, NULL, loc);
-
-        if (tok.kind == TOK_STRING || tok.kind == TOK_NUMBER || tok.kind == TOK_IDENT ||
-            is_figurative(tok.kind)) { 
-            char *val = tok_to_str();
-            AstNode *src = NULL;
-            if (tok.kind == TOK_STRING) {
-                src = ast_new(AST_STRING_LITERAL, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
-            } else if (tok.kind == TOK_NUMBER) {
-                src = ast_new(AST_LITERAL_NUMBER, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
-            } else if (is_figurative(tok.kind)) {
-                src = ast_new(AST_FIGURATIVE_CONSTANT, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
-            } else { 
-                src = ast_new(AST_IDENTIFIER, val, (SourceLocation){current_lexer->filename, tok.line, tok.column});
-                // Resolve and mark source as used
-                Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, val);
-                if (!resolved_sym) {
-                    cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", val);
-                } else {
-                    symtab_mark_symbol_as_used(resolved_sym);
-                    // src->symbol = resolved_sym; 
-                }
-            }
-            free(val);
-            move->children = src;
-            next();
-        }
-
-        expect(TOK_TO, "TO");
-        if (parser_panic_mode) return NULL;
-
-        // Collect one or more target identifiers
-        if (tok.kind != TOK_IDENT) {
-            synchronize();
-            return NULL;
-        }
-        AstNode *tgt_tail = move->children; // currently points to src; we'll extend it
-        while (tok.kind == TOK_IDENT && !parser_panic_mode) {
-            char *target = tok_to_str();
-            AstNode *tgt = ast_new(AST_IDENTIFIER, target,
-                                   (SourceLocation){current_lexer->filename, tok.line, tok.column});
-            Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, target);
-            if (!resolved_sym) {
-                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", target);
-            } else {
-                symtab_mark_symbol_as_used(resolved_sym);
-            }
-            free(target);
-            tgt_tail->next = tgt;
-            tgt_tail = tgt;
-            next();
-        }
-
+        AstNode *tail = NULL;
+        AstNode *src = parse_value_operand();
+        if (!src) { ast_free(move); arith_error("Expected MOVE source"); return NULL; }
+        list_append(&move->children, &tail, src);
+        if (tok.kind != TOK_TO) { ast_free(move); arith_error("Expected TO"); return NULL; }
+        next();
+        while (tok.kind == TOK_IDENT && !parser_panic_mode)
+            list_append(&move->children, &tail, parse_identifier());
+        if (!src->next) { ast_free(move); arith_error("Expected MOVE receiver"); return NULL; }
         return move;
     }
     // ─── ADD ─────────────────────────────────────────────────────────────────
@@ -1427,43 +1480,99 @@ static AstNode *parse_statement(void) {
         return eval;
     }
     // ─── SET ─────────────────────────────────────────────────────────────────
-    // SET condition-name+ TO TRUE
+    // SET condition-name+ TO TRUE          (name TRUE)
+    // SET identifier+ TO operand           (name TO)
+    // SET index-name+ UP|DOWN BY operand   (name UP / DOWN)
+    // children: receivers; extra: sending operand
     else if (tok.kind == TOK_SET) {
         next();
         AstNode *set = ast_new(AST_STATEMENT_SET, NULL, loc);
         AstNode *tail = NULL;
-        while (tok.kind == TOK_IDENT) {
-            AstNode *name = parse_procedure_name();
-            if (!is_condition_name(name)) {
-                cobalt_error_loc(current_lexer->original_source, name->loc.line, name->loc.column,
-                                 "'%s' is not a condition-name (only SET condition-name TO TRUE is supported yet)", name->name);
+        while (tok.kind == TOK_IDENT && !parser_panic_mode)
+            list_append(&set->children, &tail, parse_identifier());
+        if (!set->children) { ast_free(set); arith_error("Expected identifier after SET"); return NULL; }
+        if (tok.kind == TOK_TO) {
+            next();
+            if (tok.kind == TOK_TRUE) {
+                next();
+                set->name = strdup("TRUE");
+                for (AstNode *c = set->children; c; c = c->next) {
+                    if (!is_condition_name(c))
+                        cobalt_error_loc(current_lexer->original_source, c->loc.line, c->loc.column,
+                                         "'%s' is not a condition-name", c->name);
+                }
+                return set;
             }
-            list_append(&set->children, &tail, name);
+            set->name = strdup("TO");
+        } else if (tok.kind == TOK_UP || tok.kind == TOK_DOWN) {
+            set->name = strdup(tok.kind == TOK_UP ? "UP" : "DOWN");
+            next();
+            if (tok.kind != TOK_BY) { ast_free(set); arith_error("Expected BY"); return NULL; }
+            next();
+        } else {
+            ast_free(set);
+            arith_error("Expected TO, UP BY or DOWN BY");
+            return NULL;
         }
-        if (!set->children || tok.kind != TOK_TO) { ast_free(set); arith_error("Expected condition-name TO TRUE"); return NULL; }
-        next();
-        if (tok.kind != TOK_TRUE) { ast_free(set); arith_error("Expected TRUE"); return NULL; }
-        next();
+        set->extra = parse_arith_operand();
+        if (!set->extra) { ast_free(set); arith_error("Expected SET operand"); return NULL; }
         return set;
+    }
+    // ─── INITIALIZE ──────────────────────────────────────────────────────────
+    // INITIALIZE identifier+ (numeric items to zero, others to spaces)
+    else if (tok.kind == TOK_INITIALIZE) {
+        next();
+        AstNode *init = ast_new(AST_STATEMENT_INITIALIZE, NULL, loc);
+        AstNode *tail = NULL;
+        while (tok.kind == TOK_IDENT && !parser_panic_mode)
+            list_append(&init->children, &tail, parse_identifier());
+        if (!init->children) { ast_free(init); arith_error("Expected identifier after INITIALIZE"); return NULL; }
+        return init;
+    }
+    // ─── SEARCH ──────────────────────────────────────────────────────────────
+    // SEARCH table [VARYING identifier] [AT END statements]
+    //     {WHEN condition statements}... [END-SEARCH]
+    // SEARCH ALL table [AT END statements] WHEN condition statements [END-SEARCH]
+    else if (tok.kind == TOK_SEARCH) {
+        next();
+        AstNode *search = ast_new(AST_STATEMENT_SEARCH, NULL, loc);
+        if (tok.kind == TOK_ALL) {
+            next();
+            search->name = strdup("ALL");
+        }
+        if (tok.kind != TOK_IDENT) { ast_free(search); arith_error("Expected table name after SEARCH"); return NULL; }
+        search->extra = parse_identifier();
+        if (tok.kind == TOK_VARYING) {
+            next();
+            search->loop = parse_arith_operand();
+        }
+        if (tok.kind == TOK_AT || tok.kind == TOK_END) {
+            if (tok.kind == TOK_AT) next();
+            if (tok.kind != TOK_END) { ast_free(search); arith_error("Expected END after AT"); return NULL; }
+            next();
+            search->on_error = parse_block();
+            if (!search->on_error) search->on_error = ast_new(AST_STATEMENT_CONTINUE, NULL, loc);
+        }
+        AstNode *tail = NULL;
+        while (tok.kind == TOK_WHEN && !parser_panic_mode) {
+            SourceLocation wloc = {current_lexer->filename, tok.line, tok.column};
+            next();
+            AstNode *when = ast_new(AST_WHEN, NULL, wloc);
+            when->extra = parse_condition();
+            if (!when->extra) { ast_free(when); ast_free(search); return NULL; }
+            when->children = parse_block();
+            list_append(&search->children, &tail, when);
+        }
+        if (!search->children) { ast_free(search); arith_error("Expected WHEN in SEARCH"); return NULL; }
+        if (tok.kind == TOK_END_SEARCH) next();
+        return search;
     }
     else if (tok.kind == TOK_ACCEPT) {
         next(); 
         AstNode *accept_stmt = ast_new(AST_STATEMENT_ACCEPT, NULL, loc);
 
         if (tok.kind == TOK_IDENT) {
-            char *var_name = tok_to_str();
-            AstNode *target = ast_new(AST_IDENTIFIER, var_name, (SourceLocation){current_lexer->filename, tok.line, tok.column});
-            // Resolve and mark ACCEPT target as used
-            Symbol *resolved_sym = symtab_resolve_symbol(current_symtab, var_name);
-            if (!resolved_sym) {
-                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Undeclared identifier '%s'.", var_name);
-            } else {
-                symtab_mark_symbol_as_used(resolved_sym);
-                // target->symbol = resolved_sym;
-            }
-            free(var_name);
-            accept_stmt->children = target;
-            next();
+            accept_stmt->children = parse_identifier();
         } else {
             cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "ACCEPT statement requires a variable name");
             synchronize(); // Error, enter panic mode

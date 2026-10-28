@@ -106,8 +106,10 @@ static void sema_analyze_var_decl(AstNode *var_decl, SemaContext *ctx) {
     }
 
     if (!pic_node || !pic_node->name) {
-        cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
-                         "Variable '%s' missing PIC clause", var_decl->name);
+        // A group item: its size comes from its subordinate items (IR lowering)
+        if (usage_clause_node && usage_clause_node->usage_type != USAGE_DISPLAY)
+            cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
+                             "USAGE on group item '%s' is not supported yet", var_decl->name);
         return;
     }
     if (usage_clause_node) var_decl->usage_type = usage_clause_node->usage_type;

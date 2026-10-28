@@ -39,6 +39,11 @@ static char *sanitize_label_name(const char *name) {
         sprintf(sanitized, "L_%s", name + 1);
         return sanitized;
     }
+    if (name[0] == '%') {
+        // Record storage: "%r3+12" becomes "D_3+12"
+        sprintf(sanitized, "D_%s", name + 2);
+        return sanitized;
+    }
     *d++ = 'c';
     *d++ = '_';
     for (const char *p = name; *p; p++) *d++ = (*p == '-') ? '_' : (char)toupper((unsigned char)*p);
@@ -67,6 +72,27 @@ static const char *const runtime_routines[] = {
 // - cobrt_tgt_err collects errors (overflow, division by zero) while one
 //   receiver's value is computed; cobrt_stmt_err collects size errors of the
 //   whole statement for ON SIZE ERROR.
+
+// Load the address of a field operand into reg. Operands are static
+// ("%r3+12", literal labels) or held in an address slot ("*A_5[+offset]").
+static void emit_addr(FILE *f, const char *reg, const char *name) {
+    if (name[0] == '*') {
+        char *rest;
+        long slot = strtol(name + 3, &rest, 10);    // after "*A_"
+        fprintf(f, "    mov %s, [rel A_%ld]\n", reg, slot);
+        if (*rest) fprintf(f, "    add %s, 0%s\n", reg, rest);
+        return;
+    }
+    char *label = sanitize_label_name(name);
+    fprintf(f, "    lea %s, [%s]\n", reg, label);
+    free(label);
+}
+
+// Load a field length into reg; -(k+1) means the length is in slot N_<k>
+static void emit_size(FILE *f, const char *reg, int size) {
+    if (size >= 0) fprintf(f, "    mov %s, %d\n", reg, size);
+    else fprintf(f, "    mov %s, [rel N_%d]\n", reg, -size - 1);
+}
 
 // Numeric stack: push rax / pop into reg, one 16-byte slot per value
 static void emit_push(FILE *f) {
@@ -122,6 +148,11 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
     for (i = ir->head; i; i = i->next)
         if (i->op == IR_PROC_ENTRY && i->imm + 1 > num_procs) num_procs = (int)i->imm + 1;
     for (int p = 0; p < num_procs; p++) fprintf(f, "R_%d: resq 1\n", p);
+    // Address and length slots of field references computed at run time
+    int num_slots = 0;
+    for (i = ir->head; i; i = i->next)
+        if (i->op == IR_ADDR_SET && i->imm + 1 > num_slots) num_slots = (int)i->imm + 1;
+    for (int k = 0; k < num_slots; k++) fprintf(f, "A_%d: resq 1\nN_%d: resq 1\n", k, k);
     fprintf(f, "cobrt_tgt_err: resb 1\n");
     fprintf(f, "cobrt_stmt_err: resb 1\n");
     fprintf(f, "\n");
@@ -158,12 +189,12 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
 
         switch (i->op) {
             case IR_CALL_DISPLAY_STR:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_lit_name);
+                emit_addr(f, "rdi", i->lit_name);
                 fprintf(f, "    call runtime_display_string\n");
                 break;
             case IR_CALL_DISPLAY_NUM:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
-                fprintf(f, "    mov rsi, %d\n", i->size);
+                emit_addr(f, "rdi", i->var_name);
+                emit_size(f, "rsi", i->size);
                 fprintf(f, "    mov rdx, %d\n", i->decimal_places);
                 fprintf(f, "    mov rcx, %d\n", i->usage_type);
                 fprintf(f, "    mov r8, %d\n", i->flags);
@@ -171,13 +202,13 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 break;
             case IR_CALL_DISPLAY_FILL:
                 fprintf(f, "    mov rdi, %d\n", i->pad_char);
-                fprintf(f, "    mov rsi, %d\n", i->size);
+                emit_size(f, "rsi", i->size);
                 fprintf(f, "    mov rdx, %d\n", i->usage_type);
                 fprintf(f, "    call runtime_display_fill\n");
                 break;
             case IR_CALL_DISPLAY_VAR_STR:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
-                fprintf(f, "    mov rsi, %d\n", i->size);
+                emit_addr(f, "rdi", i->var_name);
+                emit_size(f, "rsi", i->size);
                 fprintf(f, "    mov rdx, %d\n", i->usage_type);
                 fprintf(f, "    call runtime_display_var_string\n");
                 break;
@@ -186,32 +217,32 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 break;
             case IR_CALL_MOVE_ALPHA:
             case IR_CALL_MOVE_NUM:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
-                fprintf(f, "    lea rsi, [%s]\n", sanitized_lit_name);
-                fprintf(f, "    mov rdx, %d\n", i->lit_len);
-                fprintf(f, "    mov rcx, %d\n", i->size);
-                fprintf(f, "    mov r8, %d\n", i->usage_type);
+                emit_addr(f, "rdi", i->var_name);
+                emit_addr(f, "rsi", i->lit_name);
+                emit_size(f, "rdx", i->lit_len);
+                emit_size(f, "rcx", i->size);
+                fprintf(f, "    mov r8, %d\n", i->flags);  // JUSTIFIED RIGHT
                 fprintf(f, "    call runtime_move_%s\n\n",
                         i->op == IR_CALL_MOVE_NUM ? "numeric" : "alphanum");
                 break;
             case IR_CALL_MOVE_FILL:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
+                emit_addr(f, "rdi", i->var_name);
                 fprintf(f, "    mov rsi, %d\n", i->pad_char);
-                fprintf(f, "    mov rdx, %d\n", i->size);
+                emit_size(f, "rdx", i->size);
                 fprintf(f, "    mov rcx, %d\n", i->usage_type);
                 fprintf(f, "    call runtime_move_fill\n\n");
                 break;
             case IR_CALL_ACCEPT:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
-                fprintf(f, "    mov rsi, %d\n", i->size);
+                emit_addr(f, "rdi", i->var_name);
+                emit_size(f, "rsi", i->size);
                 fprintf(f, "    xor edx, edx\n");
                 fprintf(f, "    xor ecx, ecx\n");
                 fprintf(f, "    mov r8, %d\n", (int)(unsigned char)i->pad_char);
                 fprintf(f, "    call runtime_accept\n");
                 break;
             case IR_CALL_ACCEPT_NUM:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
-                fprintf(f, "    mov rsi, %d\n", i->size);
+                emit_addr(f, "rdi", i->var_name);
+                emit_size(f, "rsi", i->size);
                 fprintf(f, "    mov rdx, %d\n", i->digits);
                 fprintf(f, "    mov rcx, %d\n", i->decimal_places);
                 fprintf(f, "    mov r8, %d\n", i->usage_type);
@@ -272,8 +303,8 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 fprintf(f, "    jmp %s\n\n", sanitized_jump);
                 break;
             case IR_NUM_LOAD:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
-                fprintf(f, "    mov rsi, %d\n", i->size);
+                emit_addr(f, "rdi", i->var_name);
+                emit_size(f, "rsi", i->size);
                 fprintf(f, "    mov rdx, %d\n", i->usage_type);
                 fprintf(f, "    mov rcx, %d\n", i->flags);
                 fprintf(f, "    call runtime_num_load\n");
@@ -317,8 +348,8 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 emit_pop(f, "r9");
                 fprintf(f, "    cmp byte [rel cobrt_tgt_err], 0\n");
                 fprintf(f, "    jne L_store_%d\n", store_counter);
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
-                fprintf(f, "    mov rsi, %d\n", i->size);
+                emit_addr(f, "rdi", i->var_name);
+                emit_size(f, "rsi", i->size);
                 fprintf(f, "    mov rdx, %d\n", i->digits);
                 fprintf(f, "    mov rcx, %d\n", i->usage_type);
                 fprintf(f, "    mov r8, %d\n", i->flags);
@@ -337,29 +368,49 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 fprintf(f, "    %s %s\n\n", false_jump(i->cmp_op), sanitized_jump);
                 break;
             case IR_ALNUM_CMP_JUMP_IF_FALSE:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
-                fprintf(f, "    mov rsi, %d\n", i->size);
-                fprintf(f, "    lea rdx, [%s]\n", sanitized_lit_name);
-                fprintf(f, "    mov rcx, %d\n", i->lit_len);
+                emit_addr(f, "rdi", i->var_name);
+                emit_size(f, "rsi", i->size);
+                emit_addr(f, "rdx", i->lit_name);
+                emit_size(f, "rcx", i->lit_len);
                 fprintf(f, "    call runtime_compare_alnum\n");
                 fprintf(f, "    cmp rax, 0\n");
                 fprintf(f, "    %s %s\n\n", false_jump(i->cmp_op), sanitized_jump);
                 break;
             case IR_FILL_CMP_JUMP_IF_FALSE:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
-                fprintf(f, "    mov rsi, %d\n", i->size);
+                emit_addr(f, "rdi", i->var_name);
+                emit_size(f, "rsi", i->size);
                 fprintf(f, "    mov rdx, %d\n", (int)(unsigned char)i->pad_char);
                 fprintf(f, "    call runtime_compare_fill\n");
                 fprintf(f, "    cmp rax, 0\n");
                 fprintf(f, "    %s %s\n\n", false_jump(i->cmp_op), sanitized_jump);
                 break;
             case IR_CLASS_JUMP:
-                fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
-                fprintf(f, "    mov rsi, %d\n", i->size);
+                emit_addr(f, "rdi", i->var_name);
+                emit_size(f, "rsi", i->size);
                 fprintf(f, "    mov rdx, %lld\n", i->imm);
                 fprintf(f, "    call runtime_class_test\n");
                 fprintf(f, "    test rax, rax\n");
                 fprintf(f, "    %s %s\n\n", i->flags ? "jnz" : "jz", sanitized_jump);
+                break;
+            case IR_ADDR_SET:
+                emit_addr(f, "rax", i->var_name);
+                fprintf(f, "    mov [rel A_%lld], rax\n", i->imm);
+                break;
+            case IR_ADDR_ADD:
+                emit_pop(f, "rax");
+                fprintf(f, "    dec rax\n");
+                fprintf(f, "    imul rax, rax, %d\n", i->size);
+                fprintf(f, "    add [rel A_%lld], rax\n", i->imm);
+                break;
+            case IR_LEN_SET:
+                emit_pop(f, "rax");
+                fprintf(f, "    mov [rel N_%lld], rax\n", i->imm);
+                break;
+            case IR_CALL_REPLICATE:
+                emit_addr(f, "rdi", i->var_name);
+                fprintf(f, "    mov rsi, %d\n", i->size);
+                fprintf(f, "    mov rdx, %lld\n", i->imm);
+                fprintf(f, "    call runtime_replicate\n");
                 break;
             case IR_SIZE_ERR_CLEAR:
                 fprintf(f, "    mov byte [rel cobrt_tgt_err], 0\n");

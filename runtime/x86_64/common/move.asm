@@ -8,12 +8,13 @@ section .text
 global runtime_move_alphanum
 global runtime_move_numeric
 global runtime_move_fill
+global runtime_replicate
 
 ; ARG0 = dest buffer
 ; ARG1 = src buffer / literal
 ; ARG2 = src length
 ; ARG3 = dest size
-; ARG4 = usage_type
+; ARG4 = 1 for a JUSTIFIED RIGHT receiver (right-aligned, truncated on the left)
 runtime_move_alphanum:
     push rbp
     mov rbp, rsp
@@ -22,7 +23,7 @@ runtime_move_alphanum:
     push ARG1                           ; [rbp-16] = src
     push ARG2                           ; [rbp-24] = src_len
     push ARG3                           ; [rbp-32] = dest_size
-    push ARG4                           ; [rbp-40] = usage_type
+    push ARG4                           ; [rbp-40] = justified
 
     cld ; Clear direction flag for rep stosb
 
@@ -32,6 +33,30 @@ runtime_move_alphanum:
     mov rcx, [rbp-32]                   ; dest_size from stack
     rep stosb
 
+    cmp qword [rbp-40], 0
+    je .left
+    ; JUSTIFIED RIGHT: the rightmost min(src_len, dest_size) characters of the
+    ; source end at the right edge of the receiver
+    mov rcx, [rbp-24]                   ; src_len
+    mov rdx, [rbp-32]                   ; dest_size
+    mov rsi, [rbp-16]
+    mov rdi, [rbp-8]
+    cmp rcx, rdx
+    jbe .short_src
+    add rsi, rcx                        ; long source: drop its leftmost characters
+    sub rsi, rdx
+    mov rcx, rdx
+    rep movsb
+    leave
+    ret
+.short_src:
+    add rdi, rdx                        ; short source: pad on the left
+    sub rdi, rcx
+    rep movsb
+    leave
+    ret
+
+.left:
     ; Copy source
     mov rdi, [rbp-8]                    ; dest_var
     mov rsi, [rbp-16]                   ; src_buffer
@@ -99,4 +124,26 @@ runtime_move_fill:
     rep stosb
 
     leave
+    ret
+
+; Copy the first occurrence of a table over the following ones.
+; ARG0 = first occurrence, ARG1 = occurrence size, ARG2 = number of occurrences
+runtime_replicate:
+    mov r10, ARG0
+    mov r11, ARG1
+    mov r9, ARG2
+    cmp r9, 1
+    jbe .done
+    dec r9
+    imul r9, r11                        ; bytes to fill after the first occurrence
+    xor ecx, ecx
+.copy:
+    cmp rcx, r9
+    jae .done
+    mov al, [r10]                       ; each byte repeats one occurrence later
+    mov [r10 + r11], al
+    inc r10
+    inc rcx
+    jmp .copy
+.done:
     ret

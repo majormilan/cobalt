@@ -125,6 +125,12 @@ void ast_dump(AstNode *node, FILE *out, int indent) {
         case AST_STATEMENT_EVALUATE:        kind_name = "EVALUATE"; break;
         case AST_WHEN:                      kind_name = "WHEN"; break;
         case AST_STATEMENT_SET:             kind_name = "SET"; break;
+        case AST_OCCURS:                    kind_name = "OCCURS"; break;
+        case AST_REDEFINES:                 kind_name = "REDEFINES"; break;
+        case AST_JUSTIFIED:                 kind_name = "JUSTIFIED"; break;
+        case AST_REFMOD:                    kind_name = "REFMOD"; break;
+        case AST_STATEMENT_INITIALIZE:      kind_name = "INITIALIZE"; break;
+        case AST_STATEMENT_SEARCH:          kind_name = "SEARCH"; break;
         default:                            kind_name = "UNKNOWN"; break;
     }
 

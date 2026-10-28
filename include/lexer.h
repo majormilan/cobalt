@@ -143,6 +143,27 @@ typedef enum {
     TOK_HIGH_VALUES,
     TOK_LOW_VALUES,
     TOK_QUOTES,
+    TOK_OF,
+    TOK_IN,
+    TOK_FILLER,
+    TOK_REDEFINES,
+    TOK_OCCURS,
+    TOK_INDEXED,
+    TOK_ASCENDING,
+    TOK_DESCENDING,
+    TOK_KEY,
+    TOK_JUSTIFIED,
+    TOK_RIGHT,
+    TOK_LEFT,
+    TOK_SYNCHRONIZED,
+    TOK_BLANK,
+    TOK_SIGN,
+    TOK_INITIALIZE,
+    TOK_SEARCH,
+    TOK_ALL,
+    TOK_END_SEARCH,
+    TOK_UP,
+    TOK_DOWN,
 
     // Operators
     TOK_GT,
@@ -156,6 +177,7 @@ typedef enum {
     TOK_MUL,
     TOK_DIV,
     TOK_POW,        // **
+    TOK_COLON,      // : (reference modification)
 
     // Add more as needed...
 } TokenKind;
