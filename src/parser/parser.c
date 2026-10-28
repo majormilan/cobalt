@@ -1059,6 +1059,11 @@ static AstNode *parse_when_object(AstNode *subject) {
 // Returns NULL, consuming nothing, if the token is not an operand.
 static AstNode *parse_arith_operand(void) {
     if (tok.kind == TOK_IDENT) return parse_identifier();
+    if (tok.kind == TOK_ZEROS) {                // ZERO is the number 0
+        SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
+        next();
+        return ast_new(AST_LITERAL_NUMBER, "0", loc);
+    }
     if (tok.kind != TOK_NUMBER) return NULL;
     char *val = tok_to_str();
     AstNode *op = make_operand_node(val, tok.kind);
@@ -1085,6 +1090,15 @@ static AstNode *parse_procedure_name(void) {
     if (sym) symtab_mark_symbol_as_used(sym);
     free(name);
     next();
+    // paragraph-name OF|IN section-name (extra = the section)
+    if ((tok.kind == TOK_OF || tok.kind == TOK_IN) &&
+        (peek_token().kind == TOK_IDENT || peek_token().kind == TOK_NUMBER)) {
+        next();
+        char *sec = tok_to_str();
+        proc->extra = ast_new(AST_IDENTIFIER, sec, (SourceLocation){current_lexer->filename, tok.line, tok.column});
+        free(sec);
+        next();
+    }
     return proc;
 }
 
@@ -1908,6 +1922,16 @@ static AstNode *parse_statement(void) {
 
         if (tok.kind == TOK_IDENT) {
             accept_stmt->children = parse_identifier();
+            if (tok.kind == TOK_FROM) {
+                // FROM DATE | DAY | DAY-OF-WEEK | TIME, or a device (the console)
+                next();
+                if (tok.kind == TOK_DATE) accept_stmt->name = strdup("DATE");
+                else if (tok.kind == TOK_DAY) accept_stmt->name = strdup("DAY");
+                else if (tok.kind == TOK_DAY_OF_WEEK) accept_stmt->name = strdup("DAY-OF-WEEK");
+                else if (tok.kind == TOK_TIME) accept_stmt->name = strdup("TIME");
+                else if (tok.kind != TOK_IDENT) { ast_free(accept_stmt); arith_error("Expected DATE, DAY, DAY-OF-WEEK, TIME or a device"); return NULL; }
+                next();
+            }
         } else {
             cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "ACCEPT statement requires a variable name");
             synchronize(); // Error, enter panic mode

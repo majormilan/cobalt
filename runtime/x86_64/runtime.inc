@@ -18,6 +18,8 @@
 ;   cobrt_os_close(ARG0 = handle)                     -> RET0 = 0 or <0
 ;   cobrt_os_seek (ARG0 = handle, ARG1 = offset from the current position)
 ;                                                     -> RET0 = new position or <0
+;   cobrt_os_time (ARG0 = 16-byte buffer)             -> seconds since 1970-01-01 UTC
+;                                                        and nanoseconds, as two qwords
 ; They follow the normal ABI rules (caller-saved registers may be clobbered).
 ; Callers need not align the stack; an OS layer that calls into a system
 ; library must realign it itself.
@@ -29,6 +31,7 @@
     extern cobrt_os_open
     extern cobrt_os_close
     extern cobrt_os_seek
+    extern cobrt_os_time
 %endif
 
 %define COBRT_STDIN  0

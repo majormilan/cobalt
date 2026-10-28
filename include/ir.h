@@ -29,6 +29,8 @@ typedef enum {
                             //   that pattern repeated (ALL "literal")
     IR_CALL_ACCEPT,         // var_name, size (alphanumeric field)
     IR_CALL_ACCEPT_NUM,     // var_name, size, digits, decimal_places (scale), usage_type, flags
+    IR_CALL_ACCEPT_DATE,    // current date or time into the "$numtext" buffer:
+                            //   imm 0 DATE, 1 DAY, 2 TIME, 3 DAY-OF-WEEK
     IR_LABEL,               // branch label; var_name = label name
     IR_CALL_EXIT,           // no args
     IR_JUMP,                // unconditional jump; jump_target = label name
@@ -53,7 +55,8 @@ typedef enum {
     IR_NUM_MUL,             // pop b, pop a, push (a * b) / 10^imm
     IR_NUM_DIV,             // pop b, pop a, push (a * 10^imm) / b
     IR_NUM_NEG,             // top = -top
-    IR_NUM_TO_TEXT,         // pop v; write |v| as imm digits to the "$numtext" buffer
+    IR_NUM_TO_TEXT,         // pop v; write |v| as imm digits to buffer var_name
+    IR_NUM_TRUNC,           // top = top rem 10^imm (keep the low-order imm digits)
     IR_NUM_DUP,             // push a copy of the top
     IR_NUM_DROP,            // pop and discard
     IR_NUM_SWAP,            // exchange the two top values

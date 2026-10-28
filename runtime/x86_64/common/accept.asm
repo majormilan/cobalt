@@ -229,3 +229,234 @@ runtime_accept_numeric:
     call runtime_num_store
     leave
     ret
+
+global runtime_accept_date
+
+; Write n digits of value rax at [rdi + rcx], advancing rcx (n in r8)
+put_digits:
+    push rbx
+    mov rbx, 10
+    lea r9, [rcx + r8]                  ; end
+    mov r10, r9
+.pd_loop:
+    cmp r10, rcx
+    jbe .pd_done
+    dec r10
+    xor edx, edx
+    div rbx
+    add dl, '0'
+    mov [rdi + r10], dl
+    jmp .pd_loop
+.pd_done:
+    mov rcx, r9
+    pop rbx
+    ret
+
+; Current date or time (UTC) as digits.
+; ARG0 = buffer, ARG1 = 0 DATE (YYMMDD), 1 DAY (YYDDD), 2 TIME (HHMMSShh),
+; 3 DAY-OF-WEEK (1 = Monday ... 7 = Sunday)
+runtime_accept_date:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 24
+    mov r12, ARG0                       ; buffer
+    mov r13, ARG1                       ; kind
+    lea ARG0, [rsp]
+    call cobrt_os_time
+    mov rax, [rsp]                      ; seconds
+    xor edx, edx
+    mov rcx, 86400
+    div rcx
+    mov r14, rax                        ; days since 1970-01-01
+    mov r15, rdx                        ; seconds of the day
+
+    cmp r13, 2
+    je .time
+    cmp r13, 3
+    je .weekday
+
+    ; Civil date from days (Howard Hinnant's algorithm), days >= 0
+    lea rax, [r14 + 719468]             ; z
+    xor edx, edx
+    mov rcx, 146097
+    div rcx                             ; rax = era, rdx = doe
+    mov rbx, rax                        ; era
+    mov r8, rdx                         ; doe
+    ; yoe = (doe - doe/1460 + doe/36524 - doe/146096) / 365
+    mov rax, r8
+    xor edx, edx
+    mov rcx, 1460
+    div rcx
+    mov r9, r8
+    sub r9, rax
+    mov rax, r8
+    xor edx, edx
+    mov rcx, 36524
+    div rcx
+    add r9, rax
+    mov rax, r8
+    xor edx, edx
+    mov rcx, 146096
+    div rcx
+    sub r9, rax
+    mov rax, r9
+    xor edx, edx
+    mov rcx, 365
+    div rcx
+    mov r9, rax                         ; yoe
+    imul r10, rbx, 400
+    add r10, r9                         ; y = yoe + era * 400
+    ; doy = doe - (365*yoe + yoe/4 - yoe/100)
+    imul r11, r9, 365
+    mov rax, r9
+    shr rax, 2
+    add r11, rax
+    mov rax, r9
+    xor edx, edx
+    mov rcx, 100
+    div rcx
+    sub r11, rax
+    mov rax, r8
+    sub rax, r11                        ; doy
+    mov [rsp + 16], rax
+    ; mp = (5*doy + 2) / 153
+    imul rax, rax, 5
+    add rax, 2
+    xor edx, edx
+    mov rcx, 153
+    div rcx
+    mov r11, rax                        ; mp
+    ; d = doy - (153*mp + 2)/5 + 1
+    imul rax, r11, 153
+    add rax, 2
+    xor edx, edx
+    mov rcx, 5
+    div rcx
+    mov rbx, [rsp + 16]
+    sub rbx, rax
+    inc rbx                             ; d
+    ; m = mp < 10 ? mp + 3 : mp - 9; y += (m <= 2)
+    lea rax, [r11 + 3]
+    cmp r11, 10
+    jb .month
+    lea rax, [r11 - 9]
+.month:
+    mov r11, rax                        ; m
+    cmp r11, 2
+    ja .year_ok
+    inc r10
+.year_ok:
+    cmp r13, 1
+    je .day
+    ; DATE: YYMMDD
+    xor ecx, ecx
+    mov rdi, r12
+    mov rax, r10
+    xor edx, edx
+    push rcx
+    mov rcx, 100
+    div rcx
+    pop rcx
+    mov rax, rdx
+    mov r8, 2
+    call put_digits
+    mov rax, r11
+    mov r8, 2
+    call put_digits
+    mov rax, rbx
+    mov r8, 2
+    call put_digits
+    jmp .done
+
+.day:
+    ; DAY: YYDDD; day of year = days - days(y-01-01) + 1
+    lea rax, [r10 - 1]                  ; y - 1 (January counts in the year before)
+    xor edx, edx
+    mov rcx, 400
+    div rcx                             ; rax = era, rdx = yoe
+    imul rbx, rax, 146097
+    mov r8, rdx
+    imul r9, r8, 365
+    mov rax, r8
+    shr rax, 2
+    add r9, rax
+    mov rax, r8
+    xor edx, edx
+    mov rcx, 100
+    div rcx
+    sub r9, rax
+    add r9, 306                         ; day of the "March year" of January 1
+    add rbx, r9
+    sub rbx, 719468                     ; days of January 1
+    mov rax, r14
+    sub rax, rbx
+    inc rax
+    push rax
+    mov rax, r10
+    xor edx, edx
+    mov rcx, 100
+    div rcx
+    mov rax, rdx
+    xor ecx, ecx
+    mov rdi, r12
+    mov r8, 2
+    call put_digits
+    pop rax
+    mov r8, 3
+    call put_digits
+    jmp .done
+
+.weekday:
+    lea rax, [r14 + 3]                  ; 1970-01-01 was a Thursday
+    xor edx, edx
+    mov rcx, 7
+    div rcx
+    lea rax, [rdx + 1]
+    xor ecx, ecx
+    mov rdi, r12
+    mov r8, 1
+    call put_digits
+    jmp .done
+
+.time:
+    ; HHMMSShh
+    xor ecx, ecx
+    mov rdi, r12
+    mov rax, r15
+    xor edx, edx
+    mov rbx, 3600
+    div rbx
+    mov r14, rdx                        ; seconds within the hour
+    mov r8, 2
+    call put_digits
+    mov rax, r14
+    xor edx, edx
+    mov rbx, 60
+    div rbx
+    mov r14, rdx
+    mov r8, 2
+    call put_digits
+    mov rax, r14
+    mov r8, 2
+    call put_digits
+    mov rax, [rsp + 8]                  ; nanoseconds
+    xor edx, edx
+    mov rbx, 10000000
+    div rbx
+    mov r8, 2
+    call put_digits
+
+.done:
+    add rsp, 24
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret

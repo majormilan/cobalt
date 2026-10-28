@@ -103,6 +103,11 @@ char *lexer_reference_format(const char *src) {
             size_t skip = 0;
             while (skip < text_len && text[skip] == ' ') skip++;
             char q = open_literal(prev->buf);
+            // A literal ending in column 72 with a quote, continued by a line
+            // starting with two quotes, splits a doubled quote: still open
+            if (!q && prev->len == 72 && (prev->buf[71] == '"' || prev->buf[71] == '\'') &&
+                skip + 1 < text_len && text[skip] == prev->buf[71] && text[skip + 1] == prev->buf[71])
+                q = prev->buf[71];
             if (q) {
                 // A literal continues: the previous line counts up to column
                 // 72, and the continuation starts after a quote character

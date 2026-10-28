@@ -1,0 +1,25 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. G96.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  GROUP-1000.
+           02  FILLER  PIC X.
+           02  GROUP-X1000.
+               03  GROUP-1000-1 PIC X(500) VALUE ZERO.
+               03  XNAME        PICTURE X(100) VALUE QUOTE.
+               03  GROUP-1000-2 PICTURE X(399) VALUE SPACE.
+               03  GROUP-1000-3 PICTURE X VALUE ".".
+           02  GROUP-X500-2.
+               03  GROUP-X500-A        PICTURE X(500) VALUE ZERO.
+               03  GROUP-X500-1.
+                   04  GROUP-X500-1-1  PICTURE X(50) VALUE QUOTE.
+                   04  GROUP-X500-1-2  PICTURE X(50) VALUE QUOTE.
+                   04  GROUP-X500-1-3  PICTURE X(398) VALUE SPACE.
+                   04  GROUP-X500-1-4  PICTURE XX VALUE " .".
+       PROCEDURE DIVISION.
+       M.
+           IF GROUP-X1000 EQUAL TO GROUP-X500-2 DISPLAY "EQUAL"
+           ELSE DISPLAY "NOT EQUAL".
+           DISPLAY GROUP-X1000(495:10) "|" GROUP-X500-2(495:10).
+           DISPLAY GROUP-X1000(995:6) "|" GROUP-X500-2(995:6).
+           STOP RUN.

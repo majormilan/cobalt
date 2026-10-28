@@ -18,7 +18,7 @@ typedef struct {
     int scale;          // digits after the (implied) decimal point; P scaling
                         // makes it larger than digits (PP99) or negative (99PP)
     int length;         // character positions (bytes) of the item
-    char mask[256];     // edited pictures: one symbol per character position
+    char mask[1024];    // edited pictures: one symbol per character position
     char float_char;    // floating $, + or - in a numeric edited picture
     char bad;           // first symbol that is not valid here, or 0
 } PicInfo;
@@ -30,15 +30,15 @@ typedef struct {
 //   c r = CR, d b = DB; alphanumeric edited: X (any character), B 0 /.
 static PicInfo analyze_pic(const char *pic) {
     PicInfo info = {0};
-    char sym[256];
+    // Symbols with their repeat factors; CR and DB become c r / d b
+    char sym[128];
+    int rep[128];
     int n = 0;
-
-    // Expand repeat factors; CR and DB become two-position symbols c r / d b
-    for (const char *p = pic; *p && n < 250; ) {
+    for (const char *p = pic; *p && n < 126; ) {
         char c = toupper((unsigned char)*p++);
         if ((c == 'C' && toupper((unsigned char)*p) == 'R') || (c == 'D' && toupper((unsigned char)*p) == 'B')) {
-            sym[n++] = c == 'C' ? 'c' : 'd';
-            sym[n++] = c == 'C' ? 'r' : 'b';
+            sym[n] = c == 'C' ? 'c' : 'd'; rep[n++] = 1;
+            sym[n] = c == 'C' ? 'r' : 'b'; rep[n++] = 1;
             p++;
             continue;
         }
@@ -49,7 +49,8 @@ static PicInfo analyze_pic(const char *pic) {
             while (isdigit((unsigned char)*p)) repeat = repeat * 10 + (*p++ - '0');
             if (*p == ')') p++;
         }
-        while (repeat-- > 0 && n < 250) sym[n++] = c;
+        sym[n] = c;
+        rep[n++] = repeat;
     }
 
     bool has_x = false, has_edit = false;
@@ -61,9 +62,9 @@ static PicInfo analyze_pic(const char *pic) {
             case 'B': case '0': case '/': case ',': case '.': case 'Z': case '*':
             case 'c': case 'r': case 'd': case 'b':
                 has_edit = true; break;
-            case '$': count_dollar++; has_edit = true; break;
-            case '+': count_plus++; has_edit = true; break;
-            case '-': count_minus++; has_edit = true; break;
+            case '$': count_dollar += rep[i]; has_edit = true; break;
+            case '+': count_plus += rep[i]; has_edit = true; break;
+            case '-': count_minus += rep[i]; has_edit = true; break;
             default: if (!info.bad) info.bad = sym[i]; break;
         }
     }
@@ -73,13 +74,22 @@ static PicInfo analyze_pic(const char *pic) {
         bool edited = false;
         for (int i = 0; i < n; i++) {
             char c = sym[i];
-            if (c == 'B' || c == '0' || c == '/') { edited = true; info.mask[i] = c; }
-            else if (c == 'X' || c == 'A' || c == '9') info.mask[i] = 'X';
-            else if (!info.bad) info.bad = c;
+            if (c == 'B' || c == '0' || c == '/') edited = true;
+            else if (c != 'X' && c != 'A' && c != '9' && !info.bad) info.bad = c;
+            info.length += rep[i];
         }
-        info.length = n;
         info.cls = edited ? PIC_ALNUM_EDITED : PIC_ALNUM;
-        if (!edited) info.mask[0] = '\0';
+        if (edited) {
+            if (info.length >= (int)sizeof(info.mask)) {
+                info.bad = '(';                 // edit mask too long
+                return info;
+            }
+            int m = 0;
+            for (int i = 0; i < n; i++)
+                for (int k = 0; k < rep[i]; k++)
+                    info.mask[m++] = (sym[i] == 'B' || sym[i] == '0' || sym[i] == '/') ? sym[i] : 'X';
+            info.mask[m] = '\0';
+        }
         return info;
     }
 
@@ -89,10 +99,10 @@ static PicInfo analyze_pic(const char *pic) {
         bool seen_v = false, p_left = false;
         for (int i = 0; i < n; i++) {
             switch (sym[i]) {
-                case '9': nines++; if (seen_v) after_v++; break;
+                case '9': nines += rep[i]; if (seen_v) after_v += rep[i]; break;
                 case 'S': info.is_signed = true; break;
                 case 'V': seen_v = true; break;
-                case 'P': p_count++; if (nines == 0) p_left = true; break;
+                case 'P': p_count += rep[i]; if (nines == 0) p_left = true; break;
             }
         }
         info.cls = nines ? PIC_NUMERIC : PIC_INVALID;
@@ -110,34 +120,39 @@ static PicInfo analyze_pic(const char *pic) {
     bool seen_point = false, seen_float = false;
     int m = 0, p_left = 0, p_right = 0;
     for (int i = 0; i < n; i++) {
-        char c = sym[i], out = 0;
-        bool digit = false;
-        switch (c) {
-            case '9': case 'Z': case '*': out = c; digit = true; break;
-            case 'B': case '0': case '/': case ',': out = c; break;
-            case 'c': case 'r': case 'd': case 'b': out = c; info.is_signed = true; break;
-            case '.': out = '.'; seen_point = true; break;
-            case 'V': seen_point = true; break;                 // implied: no position
-            case 'P':                                           // scaling: no position
-                if (info.digits == 0) p_left++;
-                else p_right++;
-                break;
-            case '$': case '+': case '-':
-                if (c == floating) {
-                    out = seen_float ? 'f' : 'F';
-                    digit = seen_float;
-                    seen_float = true;
-                } else {
-                    out = c == '$' ? '$' : c == '+' ? 'S' : 'M';
-                }
-                if (c != '$') info.is_signed = true;
-                break;
-            default: break;
-        }
-        if (out) info.mask[m++] = out;
-        if (digit) {
-            info.digits++;
-            if (seen_point) info.scale++;
+        for (int k = 0; k < rep[i]; k++) {
+            char c = sym[i], out = 0;
+            bool digit = false;
+            switch (c) {
+                case '9': case 'Z': case '*': out = c; digit = true; break;
+                case 'B': case '0': case '/': case ',': out = c; break;
+                case 'c': case 'r': case 'd': case 'b': out = c; info.is_signed = true; break;
+                case '.': out = '.'; seen_point = true; break;
+                case 'V': seen_point = true; break;             // implied: no position
+                case 'P':                                       // scaling: no position
+                    if (info.digits == 0) p_left++;
+                    else p_right++;
+                    break;
+                case '$': case '+': case '-':
+                    if (c == floating) {
+                        out = seen_float ? 'f' : 'F';
+                        digit = seen_float;
+                        seen_float = true;
+                    } else {
+                        out = c == '$' ? '$' : c == '+' ? 'S' : 'M';
+                    }
+                    if (c != '$') info.is_signed = true;
+                    break;
+                default: break;
+            }
+            if (out) {
+                if (m >= (int)sizeof(info.mask) - 1) { info.bad = '('; return info; }
+                info.mask[m++] = out;
+            }
+            if (digit) {
+                info.digits++;
+                if (seen_point) info.scale++;
+            }
         }
     }
     info.mask[m] = '\0';
@@ -197,7 +212,7 @@ static void sema_analyze_var_decl(AstNode *var_decl, SemaContext *ctx) {
                  c->kind == AST_FIGURATIVE_CONSTANT) value_literal_node = c;
     }
 
-    if (!pic_node && usage_clause_node && usage_clause_node->name &&
+    if (!pic_node && !var_decl->is_group && usage_clause_node && usage_clause_node->name &&
         strcasecmp(usage_clause_node->name, "INDEX") == 0) {
         // USAGE INDEX: an 8-byte binary occurrence number
         var_decl->usage_type = USAGE_COMP5;
@@ -208,10 +223,9 @@ static void sema_analyze_var_decl(AstNode *var_decl, SemaContext *ctx) {
         return;
     }
     if (!pic_node || !pic_node->name) {
-        // A group item: its size comes from its subordinate items (IR lowering)
-        if (usage_clause_node && usage_clause_node->usage_type != USAGE_DISPLAY)
-            cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
-                             "USAGE on group item '%s' is not supported yet", var_decl->name);
+        // A group item: its size comes from its subordinate items (IR
+        // lowering); its USAGE has been passed down to them
+        var_decl->usage_type = USAGE_DISPLAY;
         return;
     }
     if (usage_clause_node) var_decl->usage_type = usage_clause_node->usage_type;
@@ -324,10 +338,52 @@ static void sema_analyze_var_decl(AstNode *var_decl, SemaContext *ctx) {
     }
 }
 
+static AstNode *usage_clause_of(AstNode *decl) {
+    for (AstNode *c = decl->children; c; c = c->next)
+        if (c->kind == AST_USAGE_CLAUSE) return c;
+    return NULL;
+}
+
+// A group's USAGE applies to every elementary item below it without one.
+// Entries arrive as a flat list in source order; levels give the hierarchy.
+static void inherit_group_usage(AstNode *first) {
+    AstNode *stack[64];
+    int levels[64], depth = 0;
+    for (AstNode *d = first; d; d = d->next) {
+        if (d->kind != AST_VAR_DECL || !d->text) continue;
+        int level = atoi(d->text);
+        if (level == 88 || level == 66) continue;
+        if (level == 1 || level == 77) depth = 0;
+        while (depth > 0 && levels[depth - 1] >= level) depth--;
+        // A group: the next data entry has a higher level number
+        AstNode *n = d->next;
+        while (n && (n->kind != AST_VAR_DECL || !n->text || atoi(n->text) == 88)) n = n->next;
+        d->is_group = n && level != 77 && atoi(n->text) > level && atoi(n->text) != 66 &&
+                      atoi(n->text) != 77 && atoi(n->text) != 1;
+        if (!usage_clause_of(d)) {
+            for (int k = depth - 1; k >= 0; k--) {
+                AstNode *u = usage_clause_of(stack[k]);
+                if (u) {
+                    AstNode *copy = ast_new(AST_USAGE_CLAUSE, u->name, d->loc);
+                    copy->usage_type = u->usage_type;
+                    copy->next = d->children;
+                    d->children = copy;
+                    break;
+                }
+            }
+        }
+        if (depth < 64) { stack[depth] = d; levels[depth] = level; depth++; }
+    }
+}
+
 static void sema_walk_ast(AstNode *node, SemaContext *ctx) {
     if (!node) return;
 
     switch (node->kind) {
+        case AST_SECTION:
+        case AST_FILE_DECL:
+            inherit_group_usage(node->children);
+            break;
         case AST_VAR_DECL:
             sema_analyze_var_decl(node, ctx);
             break;

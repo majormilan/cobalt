@@ -731,6 +731,7 @@ static bool num_expr_valid(AstNode *e) {
             cobalt_error_loc(NULL, e->loc.line, e->loc.column, "%s is not numeric", e->name);
             return false;
         case AST_EXPR_NEG:
+        case AST_EXPR_RESCALE:
             return num_expr_valid(e->children);
         case AST_EXPR_POW: {
             AstNode *exp = e->children ? e->children->next : NULL;
@@ -848,6 +849,11 @@ static int num_expr(IrProgram *ir, AstNode *e, int W) {
             if (ir) emit_num(ir, IR_NUM_NEG, 0, 0);
             return s;
         }
+        case AST_EXPR_RESCALE: {        // truncate to decimal_places digits after the point
+            int s = num_expr(ir, e->children, W);
+            if (ir) emit_rescale(ir, e->decimal_places - s, false);
+            return e->decimal_places;
+        }
         case AST_EXPR_ADD:
         case AST_EXPR_SUB: {
             AstNode *l = e->children, *r = l->next;
@@ -955,6 +961,17 @@ static void lower_block(IrProgram *ir, AstNode *block);
 // Resolve a procedure name: a paragraph of the current section first, then a
 // section or a paragraph whose name is unique in the program.
 static int resolve_proc(AstNode *ref) {
+    if (ref->extra) {
+        // paragraph OF section
+        for (int i = 0; i < num_procs; i++) {
+            if (!procs[i].is_section && procs[i].section &&
+                strcasecmp(procs[i].section, ref->extra->name) == 0 &&
+                strcasecmp(procs[i].name, ref->name) == 0) return i;
+        }
+        cobalt_error_loc(NULL, ref->loc.line, ref->loc.column, "Procedure '%s' not found in section '%s'",
+                         ref->name, ref->extra->name);
+        return -1;
+    }
     if (current_section) {
         for (int i = 0; i < num_procs; i++) {
             if (!procs[i].is_section && procs[i].section &&
@@ -1204,9 +1221,14 @@ static void lower_arith_node(IrProgram *ir, AstNode *node) {
             lower_giving(ir, tree, ops + 2, last_dest - 2, keep);
             ast_free(tree);
             if (has_rem) {
-                // remainder = dividend - quotient * divisor, using the stored quotient
+                // remainder = dividend - q * divisor, where q is the quotient
+                // truncated to the scale of the quotient receiver
+                VarInfo *qv = find_item(ops[2], false);
+                AstNode *q = ast_new(AST_EXPR_RESCALE, NULL, node->loc);
+                q->decimal_places = qv ? qv->decimal_places : 0;
+                q->children = mk_bin(AST_EXPR_DIV, ast_clone(dividend), ast_clone(divisor));
                 AstNode *rem = mk_bin(AST_EXPR_SUB, ast_clone(dividend),
-                                      mk_bin(AST_EXPR_MUL, ast_clone(ops[2]), ast_clone(divisor)));
+                                      mk_bin(AST_EXPR_MUL, q, ast_clone(divisor)));
                 lower_assign(ir, rem, ops[n - 1], keep);
                 ast_free(rem);
             }
@@ -1259,14 +1281,23 @@ static bool is_numeric_operand(AstNode *n) {
     return false;
 }
 
-// Address and length of an operand compared as alphanumeric
-static bool alnum_operand(IrProgram *ir, AstNode *n, FieldRef *f) {
+// Address and length of an operand compared as alphanumeric. A numeric
+// item compares as its unsigned digits (P positions as zeros), converted
+// into the text buffer named buf.
+static bool alnum_operand(IrProgram *ir, AstNode *n, FieldRef *f, const char *buf) {
     if (n->kind == AST_IDENTIFIER) {
         if (!resolve_ref(ir, n, f)) return false;
-        if (f->var->is_numeric && f->var->usage_type != USAGE_DISPLAY && !f->refmod) {
-            cobalt_error_loc(NULL, n->loc.line, n->loc.column,
-                             "Comparing non-DISPLAY numeric '%s' with a nonnumeric operand is not supported", n->name);
-            return false;
+        VarInfo *v = f->var;
+        if (v->is_numeric && !f->refmod) {
+            int s = v->decimal_places;
+            int ndig = s < 0 ? v->digits - s : (s > v->digits ? s : v->digits);
+            emit_load(ir, f);
+            if (s < 0) emit_rescale(ir, -s, false);
+            IrInstr *t = emit(ir, IR_NUM_TO_TEXT);
+            t->imm = ndig;
+            t->var_name = strdup(buf);
+            snprintf(f->label, sizeof(f->label), "%s", buf);
+            f->size = ndig;
         }
         return true;
     }
@@ -1311,7 +1342,7 @@ static void emit_relation_false_jump(IrProgram *ir, AstNode *left, AstNode *righ
                 op = mirror_op(op);
             }
             FieldRef f;
-            if (alnum_operand(ir, left, &f)) {
+            if (alnum_operand(ir, left, &f, "$numtext")) {
                 jump = emit(ir, IR_FILL_CMP_JUMP_IF_FALSE);
                 jump->var_name = strdup(f.label);
                 jump->size = f.size;
@@ -1327,7 +1358,7 @@ static void emit_relation_false_jump(IrProgram *ir, AstNode *left, AstNode *righ
         }
     } else {
         FieldRef lf, rf;
-        if (alnum_operand(ir, left, &lf) && alnum_operand(ir, right, &rf)) {
+        if (alnum_operand(ir, left, &lf, "$numtext") && alnum_operand(ir, right, &rf, "$numtext2")) {
             jump = emit(ir, IR_ALNUM_CMP_JUMP_IF_FALSE);
             jump->var_name = strdup(lf.label);
             jump->size = lf.size;
@@ -1363,9 +1394,11 @@ static AstNode *condition_name_tree(const VarInfo *cv, const AstNode *cond_ref) 
     AstNode *tree = NULL;
     for (AstNode *v = cv->cond_values; v; v = v->next) {
         AstNode *alt;
-        AstNode *lo = ast_new(v->kind, v->name, v->loc);
+        AstNode *lo = ast_clone(v);
+        ast_free(lo->extra);
+        lo->extra = NULL;
         if (v->extra) {
-            AstNode *hi = ast_new(v->extra->kind, v->extra->name, v->extra->loc);
+            AstNode *hi = ast_clone(v->extra);
             AstNode *ge = make_relation(condition_item_ref(cv, cond_ref), ">=", lo);
             AstNode *le = make_relation(condition_item_ref(cv, cond_ref), "<=", hi);
             alt = ast_new(AST_COND_AND, NULL, loc);
@@ -1549,6 +1582,17 @@ static int push_item_value(IrProgram *ir, AstNode *src, VarInfo *sv, bool *ok) {
     return sv->decimal_places;
 }
 
+// MOVE: the value on the stack (scale s) to the receiver's scale. Digits
+// the receiver cannot hold are dropped first, so scaling up cannot overflow.
+static void move_rescale(IrProgram *ir, const VarInfo *dv, int s) {
+    int shift = dv->decimal_places - s;
+    if (shift > 0) {
+        int keep = dv->digits - dv->decimal_places + s;     // receiver integer digits + s
+        if (keep >= 0 && keep < 19) emit_num(ir, IR_NUM_TRUNC, keep, 0);
+    }
+    emit_rescale(ir, shift, false);
+}
+
 // MOVE src TO dest (one receiver). Receiver subscripts are evaluated just
 // before the data is moved.
 static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const char *src_lit) {
@@ -1590,7 +1634,7 @@ static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const ch
     if (src->kind == AST_LITERAL_NUMBER) {
         if (!num_expr_valid(src)) return;
         int s = num_expr(ir, src, 0);
-        emit_rescale(ir, dv->decimal_places - s, false);
+        move_rescale(ir, dv, s);
         if (resolve_ref(ir, dest_node, &dest)) emit_store(ir, &dest, false);
         return;
     }
@@ -1606,9 +1650,9 @@ static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const ch
         bool ok;
         int s = push_item_value(ir, src, sv, &ok);
         if (!ok) return;
-        emit_rescale(ir, dv->decimal_places - s, false);
+        move_rescale(ir, dv, s);
         if (resolve_ref(ir, dest_node, &dest)) emit_store(ir, &dest, false);
-    } else if (!dest_numeric && sv->is_numeric && src_whole) {
+    } else if (!dest_numeric && !dest_num_edited && sv->is_numeric && src_whole) {
         // A numeric item moves as its unsigned digits, with P positions as
         // zeros (99PP holding 1200 moves as "1200", PP99 as "0012")
         int digits = sv->digits, s = sv->decimal_places;
@@ -1619,27 +1663,41 @@ static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const ch
         if (s < 0) emit_rescale(ir, -s, false);
         IrInstr *t = emit(ir, IR_NUM_TO_TEXT);
         t->imm = ndig;
+        t->var_name = strdup("$numtext");
         if (!resolve_ref(ir, dest_node, &dest)) return;
         if (dest_alnum_edited) emit_edit_alnum(ir, &dest, "$numtext", ndig);
         else emit_move_alpha(ir, &dest, "$numtext", ndig);
-    } else if (!dest_numeric) {
+    } else if (!dest_numeric && !dest_num_edited) {
         FieldRef sf;
         if (!resolve_ref(ir, src, &sf) || !resolve_ref(ir, dest_node, &dest)) return;
         if (dest_alnum_edited) emit_edit_alnum(ir, &dest, sf.label, sf.size);
         else emit_move_alpha(ir, &dest, sf.label, sf.size);
-    } else if (dv->usage_type == USAGE_DISPLAY && !dv->is_signed && dv->decimal_places == 0) {
+    } else {
+        // An alphanumeric source moves to a numeric item as an unsigned
+        // integer of its length (high-order digits beyond the receiver are lost)
         FieldRef sf;
-        if (!resolve_ref(ir, src, &sf) || !resolve_ref(ir, dest_node, &dest)) return;
-        if (sf.size < 0 || sf.size > dest.size) {
+        if (!resolve_ref(ir, src, &sf)) return;
+        if (sf.size < 0) {
             cobalt_error_loc(NULL, src->loc.line, src->loc.column,
-                             "MOVE of '%s' to the shorter numeric '%s' is not supported yet", sv->name, dv->name);
+                             "MOVE of a variable-length item to numeric '%s' is not supported yet", dv->name);
             return;
         }
-        append_instr(ir, new_instr(IR_CALL_MOVE_NUM, dest.label, sf.label, NULL,
-                                   sf.size, dest.size, 0, 0, USAGE_DISPLAY));
-    } else {
-        cobalt_error_loc(NULL, src->loc.line, src->loc.column,
-                         "MOVE of alphanumeric '%s' to this numeric item is not supported yet", sv->name);
+        static VarInfo text_view;
+        memset(&text_view, 0, sizeof(text_view));
+        text_view.usage_type = USAGE_DISPLAY;
+        text_view.is_numeric = true;
+        text_view.size = sf.size > 18 ? 18 : sf.size;
+        text_view.digits = text_view.size;
+        FieldRef tf = sf;
+        tf.var = &text_view;
+        if (sf.size > 18) {
+            char shifted[96];
+            snprintf(shifted, sizeof(shifted), "%s+%d", sf.label, sf.size - 18);
+            snprintf(tf.label, sizeof(tf.label), "%.63s", shifted);
+        }
+        emit_load(ir, &tf);
+        move_rescale(ir, dv, 0);
+        if (resolve_ref(ir, dest_node, &dest)) emit_store(ir, &dest, false);
     }
 }
 
@@ -2310,8 +2368,44 @@ static void lower_display(IrProgram *ir, AstNode *node) {
     append_instr(ir, new_instr(IR_EMIT_NEWLINE, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
 }
 
+// Move n unsigned digits from the "$numtext" buffer into a receiver, as from
+// an unsigned numeric DISPLAY item of n digits
+static void move_from_digits(IrProgram *ir, int n, AstNode *dest_node) {
+    VarInfo *dv = find_item(dest_node, true);
+    if (!dv) return;
+    FieldRef dest;
+    if ((dv->is_numeric || is_num_edited(dv)) && !dest_node->loop) {
+        static VarInfo digits_view;
+        memset(&digits_view, 0, sizeof(digits_view));
+        digits_view.usage_type = USAGE_DISPLAY;
+        digits_view.is_numeric = true;
+        digits_view.size = digits_view.digits = n;
+        FieldRef src = { .var = &digits_view, .size = n };
+        snprintf(src.label, sizeof(src.label), "$numtext");
+        emit(ir, IR_SIZE_ERR_CLEAR);
+        emit_load(ir, &src);
+        emit_rescale(ir, dv->decimal_places, false);
+        if (resolve_ref(ir, dest_node, &dest)) emit_store(ir, &dest, false);
+    } else if (resolve_ref(ir, dest_node, &dest)) {
+        if (is_alnum_edited(dv) && !dest_node->loop) emit_edit_alnum(ir, &dest, "$numtext", n);
+        else emit_move_alpha(ir, &dest, "$numtext", n);
+    }
+}
+
 static void lower_accept(IrProgram *ir, AstNode *node) {
     AstNode *var_node = node->children;
+    if (node->name && var_node) {
+        // ACCEPT FROM DATE (YYMMDD), DAY (YYDDD), TIME (HHMMSShh), DAY-OF-WEEK (1-7)
+        static const struct { const char *name; int kind, digits; } sources[] = {
+            { "DATE", 0, 6 }, { "DAY", 1, 5 }, { "TIME", 2, 8 }, { "DAY-OF-WEEK", 3, 1 },
+        };
+        for (size_t k = 0; k < sizeof(sources) / sizeof(sources[0]); k++) {
+            if (strcmp(node->name, sources[k].name) != 0) continue;
+            emit(ir, IR_CALL_ACCEPT_DATE)->imm = sources[k].kind;
+            move_from_digits(ir, sources[k].digits, var_node);
+            return;
+        }
+    }
     if (!var_node || var_node->kind != AST_IDENTIFIER) {
         cobalt_warn("ACCEPT statement requires a variable", NULL);
         return;
@@ -2477,7 +2571,7 @@ static void lower_initial_value(IrProgram *ir, int idx) {
     } else if (val->kind == AST_LITERAL_NUMBER && numeric) {
         if (!num_expr_valid(val)) return;
         int s = num_expr(ir, val, 0);
-        emit_rescale(ir, v->decimal_places - s, false);
+        move_rescale(ir, v, s);
         emit_store(ir, &f, false);
     } else if (val->kind == AST_STRING_LITERAL && !numeric) {
         char lit_name[32];

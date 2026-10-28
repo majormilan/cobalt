@@ -12,6 +12,7 @@ global cobrt_os_exit
 global cobrt_os_open
 global cobrt_os_close
 global cobrt_os_seek
+global cobrt_os_time
 
 ; ARG0 = fd, ARG1 = buf, ARG2 = len
 cobrt_os_write:
@@ -58,6 +59,14 @@ cobrt_os_close:
 cobrt_os_seek:
     mov rdx, 1                          ; SEEK_CUR
     mov rax, 8                          ; sys_lseek
+    syscall
+    ret
+
+; ARG0 = buffer for seconds and nanoseconds
+cobrt_os_time:
+    mov rsi, ARG0
+    xor edi, edi                        ; CLOCK_REALTIME
+    mov rax, 228                        ; sys_clock_gettime
     syscall
     ret
 

@@ -17,6 +17,7 @@ X_CARDS = {
     "055": '"report.log"',      # print file of every test program
     "082": "X86-64",            # SOURCE-COMPUTER
     "083": "X86-64",            # OBJECT-COMPUTER
+    "081": '"@#!%&~^`"',        # literal of characters outside the COBOL set
 }
 
 SUFFIX = {"COBOL": ".CBL", "CLBRY": ".CPY"}

@@ -57,6 +57,7 @@ typedef enum {
     AST_EXPR_DIV,
     AST_EXPR_POW,           // children[0] ** children[1]
     AST_EXPR_NEG,           // unary minus: children[0]
+    AST_EXPR_RESCALE,       // children[0] truncated to decimal_places digits after the point
 
     // Procedure structure
     AST_SENTENCE,           // statements up to a period: children
@@ -133,6 +134,7 @@ typedef struct AstNode {
     char float_char;        // numeric edited: floating $, + or -, else 0
     bool blank_when_zero;   // BLANK WHEN ZERO
     int sign_mode;          // SIGN clause: SIGN_* bits, 0 without the clause
+    bool is_group;          // data entry with subordinate entries (set by sema)
 
     // Arithmetic statements
     bool rounded;           // ROUNDED on this receiving identifier

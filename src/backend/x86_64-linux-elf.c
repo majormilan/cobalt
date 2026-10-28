@@ -151,6 +151,7 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
     }
     fprintf(f, "cobrt_io_status: resq 1\n");
     fprintf(f, "L_numtext: resb 40\n");
+    fprintf(f, "L_numtext2: resb 40\n");
     fprintf(f, "cobrt_tgt_err: resb 1\n");
     fprintf(f, "cobrt_val_err: resb 1\n");
     fprintf(f, "cobrt_stmt_err: resb 1\n");
@@ -257,6 +258,11 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 fprintf(f, "    xor ecx, ecx\n");
                 fprintf(f, "    mov r8, %d\n", (int)(unsigned char)i->pad_char);
                 fprintf(f, "    call runtime_accept\n");
+                break;
+            case IR_CALL_ACCEPT_DATE:
+                fprintf(f, "    lea rdi, [rel L_numtext]\n");
+                fprintf(f, "    mov rsi, %lld\n", i->imm);
+                fprintf(f, "    call runtime_accept_date\n");
                 break;
             case IR_CALL_ACCEPT_NUM:
                 emit_addr(f, "rdi", i->var_name);
@@ -374,10 +380,21 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 break;
             case IR_NUM_TO_TEXT:
                 emit_pop(f, "rdx");
-                fprintf(f, "    lea rdi, [rel L_numtext]\n");
+                emit_addr(f, "rdi", i->var_name);
                 fprintf(f, "    mov rsi, %lld\n", i->imm);
                 fprintf(f, "    call runtime_num_to_digits\n");
                 break;
+            case IR_NUM_TRUNC: {
+                // keep the low-order imm digits (the remainder keeps the sign)
+                long long p = 1;
+                for (long long k = 0; k < i->imm; k++) p *= 10;
+                fprintf(f, "    mov rax, [rsp]\n");
+                fprintf(f, "    cqo\n");
+                fprintf(f, "    mov rcx, %lld\n", p);
+                fprintf(f, "    idiv rcx\n");
+                fprintf(f, "    mov [rsp], rdx\n");
+                break;
+            }
             case IR_NUM_DUP:
                 fprintf(f, "    mov rax, [rsp]\n");
                 emit_push(f);
