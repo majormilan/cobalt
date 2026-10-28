@@ -145,6 +145,11 @@ positions in the PICTURE.
 | `runtime_inspect` | `subject, len, table, entries, counters` | INSPECT TALLYING / REPLACING / CONVERTING (section 9). |
 | `runtime_set_collation` | `table` | Sets the program collating sequence: a 256-byte weight table, or 0 for native (section 10). |
 | `runtime_switch_status` | `n` | Returns 1 if SWITCH-`n` (1 to 9) is on (section 10). |
+| `runtime_switch_set` | `n, on` | SET mnemonic-name TO ON (`on` 1) or OFF (0) for SWITCH-`n`. |
+| `runtime_num_pow` | `base, base_scale, exp, exp_scale, scale` | `base ** exp` at `scale` for an exponent known only at run time. The exponent must be an integer (it may be negative). `RET1` = 1 on a size error: a fractional exponent, `0 ** n` with `n <= 0`, or overflow. |
+| `runtime_string` | `target, len, table, entries, pointer` | STRING (section 11). Returns the new pointer; `RET1` = 1 on overflow. |
+| `runtime_unstring_start` | `state, pointer` | Starts an UNSTRING (section 11). Returns 0 when the pointer is out of range. |
+| `runtime_unstring_next` | `state, size` | The next UNSTRING field (section 11). Returns 0 when the sending item is exhausted. |
 
 `RET1` is the second return register (`rdx` under SysV).
 
@@ -210,6 +215,16 @@ starts at the offset of the item it redefines; the group is as long as its
 longest member. An item with `OCCURS n` takes `n` consecutive copies of its
 size; element `(i, j, ...)` is at the first occurrence's offset plus
 `(i-1) * outer size + (j-1) * inner size ...`.
+
+`OCCURS min TO max DEPENDING ON item` reserves `max` occurrences; the table
+ends its record. A group holding the table has a length known only at run
+time (the bytes before the table plus the current occurrences, in a length
+slot), except as the receiver of a MOVE when the group also holds the
+DEPENDING ON item: then it has its maximum length.
+
+A level-66 RENAMES item covers the storage from the first renamed item to
+the end of the THRU item and is a group; renaming one elementary item gives
+it that item's attributes.
 
 ### Numeric DISPLAY (`PIC 9`, `S`, `V`)
 
@@ -422,10 +437,51 @@ User CLASS: the compiler emits the list of member characters (THROUGH ranges
 expanded) and tests with `runtime_class_test` class 9.
 
 Switches: SWITCH-1 to SWITCH-9. A condition-name for ON STATUS is true when
-`runtime_switch_status` returns 1, OFF STATUS when it returns 0. On Linux a
-switch is on when the environment variable `COB_SWITCH_n` is `ON`.
+`runtime_switch_status` returns 1, OFF STATUS when it returns 0. A switch
+starts in the state the OS layer reports (on Linux: on when the environment
+variable `COB_SWITCH_n` is `ON`) and `runtime_switch_set` changes it (SET
+mnemonic-name TO ON / OFF).
+
+SYMBOLIC CHARACTERS are resolved by the compiler: the character at the given
+ordinal position (from 1) of the native set or of the named alphabet, used as
+a figurative constant.
 
 CURRENCY SIGN and DECIMAL-POINT IS COMMA are resolved by the compiler (PICTURE
 analysis and numeric literals) and passed to `runtime_edit_numeric` in its
 flags (section 8). DISPLAY UPON a mnemonic name writes to stdout.
+
+## 11. STRING and UNSTRING [implemented]
+
+`runtime_string` takes a table of 32-byte entries, one per sending operand in
+source order:
+
+| Offset | Field |
+|---|---|
+| 0, 8 | sending operand pointer and length |
+| 16, 24 | delimiter pointer and length, or 0 for DELIMITED BY SIZE |
+
+Each operand is sent up to the first occurrence of its delimiter (or whole)
+into the receiving item from `pointer` (from 1). An out-of-range pointer
+sends nothing; a full receiving item with characters left to send stops the
+statement. Both are an overflow.
+
+UNSTRING keeps its state in an 80-byte block the compiler sets up:
+
+| Offset | Field |
+|---|---|
+| 0, 8 | sending item pointer and length |
+| 16, 24 | delimiter table pointer and number of delimiters |
+| 32 | next position to examine (from 0) |
+| 40, 48 | out: the field found (pointer, length) |
+| 56, 64 | out: the delimiter found (pointer, length; 0 when none) |
+| 72 | overflow flag (set by the compiled code) |
+
+Delimiter table entries are 24 bytes: pointer, length and ALL (1: adjacent
+occurrences are one delimiter). `runtime_unstring_next` finds the next field:
+at each position the first delimiter (in table order) that matches ends it;
+without delimiters the field is as long as the receiving item. The compiled
+code moves each field and delimiter to the receivers through an address and
+length slot, so the receivers' MOVE rules apply, then stores COUNT IN,
+TALLYING IN and the pointer. Characters left unexamined after the last
+receiver are an overflow.
 

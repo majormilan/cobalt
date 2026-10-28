@@ -41,7 +41,14 @@ def substitute(line):
         return X_CARDS.get(m.group(1), m.group(0))
     if len(line) > 6 and line[6].isalpha() and line[6] not in "Dd":
         line = line[:6] + (" " if line[6] in OPTIONS else "*") + line[7:]
-    return re.sub(r"XXXXX(\d{3})", repl, line)
+    # Substitute in the program text area only, keeping the sequence field
+    # (columns 73-80) in place: a value of another length is padded with, or
+    # takes the place of, trailing spaces of the area
+    area, rest = line[:72], line[72:]
+    new = re.sub(r"XXXXX(\d{3})", repl, area)
+    if new != area and rest:
+        new = new.rstrip().ljust(72) if len(new.rstrip()) <= 72 else new
+    return new + rest
 
 
 def main():

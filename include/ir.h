@@ -41,6 +41,9 @@ typedef enum {
     IR_PROC_EXIT,           // end of procedure imm: return to a PERFORM if one waits
     IR_PERFORM,             // perform procedures imm THRU proc_end, then continue
     IR_GOTO,                // jump to procedure imm
+    IR_GOTO_ALTERABLE,      // jump through the target slot of paragraph imm (initially
+                            // procedure proc_end, or -1: GO TO without a procedure)
+    IR_ALTER,               // set the target slot of paragraph imm to procedure proc_end
     IR_TIMES_BEGIN,         // loop var_name (label) ... jump_target (exit label);
                             //   count = imm, or popped from the numeric stack if flags
     IR_TIMES_END,           // repeat loop var_name until the count is exhausted
@@ -107,6 +110,19 @@ typedef enum {
     IR_DATA_BYTES,          // initialized data var_name: size bytes of content
     IR_CALL_SET_COLLATION,  // program collating sequence: weight table var_name
     IR_SWITCH_JUMP,         // jump to jump_target if switch imm is on (flags 1) / off (0)
+    IR_NUM_POW,             // pop exponent (scale size), base (scale digits); push base ** exponent at scale imm
+    IR_CALL_STRING,         // pop pointer; STRING into var_name (size bytes) from the source
+                            // table lit_name (imm entries); push the new pointer, overflow
+                            // in cobrt_stmt_err
+    IR_CALL_UNSTRING_START, // pop pointer; start the UNSTRING state block var_name;
+                            // jump to jump_target when the pointer is out of range
+    IR_CALL_UNSTRING_NEXT,  // next field of state var_name for a receiver of size bytes;
+                            // jump to jump_target when the sending item is exhausted
+    IR_UNSTRING_SLOTS,      // A_<imm>/N_<imm> = the field (flags 0) or delimiter (flags 1)
+                            // found in state var_name
+    IR_UNSTRING_END,        // all receivers done: overflow if characters remain
+    IR_UNSTRING_OVERFLOW,   // cobrt_stmt_err = the overflow condition of state var_name
+    IR_SWITCH_SET,          // set switch imm on (flags 1) / off (0)
     IR_SIZE_ERR_CLEAR,      // start of a statement that stores numeric results
     IR_JUMP_IF_NO_SIZE_ERR, // jump to jump_target if no size error since the clear
 } IrOpcode;

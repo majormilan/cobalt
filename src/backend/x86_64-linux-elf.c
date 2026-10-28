@@ -141,7 +141,8 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
     // Address and length slots of field references computed at run time
     int num_slots = 0;
     for (i = ir->head; i; i = i->next)
-        if (i->op == IR_ADDR_SET && i->imm + 1 > num_slots) num_slots = (int)i->imm + 1;
+        if ((i->op == IR_ADDR_SET || i->op == IR_LEN_SET || i->op == IR_UNSTRING_SLOTS) && i->imm + 1 > num_slots)
+            num_slots = (int)i->imm + 1;
     for (int k = 0; k < num_slots; k++) fprintf(f, "A_%d: resq 1\nN_%d: resq 1\n", k, k);
     for (i = ir->head; i; i = i->next) {
         if (i->op != IR_DATA_BSS) continue;
@@ -175,6 +176,19 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
         for (int k = 0; k < i->size; k++)
             fprintf(f, "%u%s", (unsigned char)i->content[k], k + 1 < i->size ? ", " : "\n");
         free(label);
+    }
+
+    // Target slots of alterable GO TO statements: an unaltered GO TO without
+    // a procedure ends the run
+    {
+        static bool slot_done[1024];
+        memset(slot_done, 0, sizeof(slot_done));
+        for (i = ir->head; i; i = i->next) {
+            if (i->op != IR_GOTO_ALTERABLE || i->imm < 0 || i->imm >= 1024 || slot_done[i->imm]) continue;
+            slot_done[i->imm] = true;
+            if (i->proc_end >= 0) fprintf(f, "align 8\nG_%lld: dq P_%d\n", i->imm, i->proc_end);
+            else fprintf(f, "align 8\nG_%lld: dq runtime_exit\n", i->imm);
+        }
     }
 
     // File control blocks (runtime/ABI.md section 7)
@@ -313,6 +327,13 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
             case IR_GOTO:
                 fprintf(f, "    jmp P_%lld\n\n", i->imm);
                 break;
+            case IR_GOTO_ALTERABLE:
+                fprintf(f, "    jmp [rel G_%lld]\n\n", i->imm);
+                break;
+            case IR_ALTER:
+                fprintf(f, "    lea rax, [rel P_%d]\n", i->proc_end);
+                fprintf(f, "    mov [rel G_%lld], rax\n\n", i->imm);
+                break;
             case IR_TIMES_BEGIN:
                 if (i->flags) emit_pop(f, "rax");
                 else fprintf(f, "    mov rax, %lld\n", i->imm);
@@ -371,6 +392,16 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 emit_pop(f, "rdi");
                 fprintf(f, "    mov rdx, %lld\n", i->imm);
                 fprintf(f, "    call runtime_num_%s\n", i->op == IR_NUM_MUL ? "mul" : "div");
+                fprintf(f, "    or [rel cobrt_tgt_err], dl\n");
+                emit_push(f);
+                break;
+            case IR_NUM_POW:
+                emit_pop(f, "rdx");
+                emit_pop(f, "rdi");
+                fprintf(f, "    mov rsi, %d\n", i->digits);
+                fprintf(f, "    mov rcx, %d\n", i->size);
+                fprintf(f, "    mov r8, %lld\n", i->imm);
+                fprintf(f, "    call runtime_num_pow\n");
                 fprintf(f, "    or [rel cobrt_tgt_err], dl\n");
                 emit_push(f);
                 break;
@@ -586,6 +617,59 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 fprintf(f, "    call runtime_switch_status\n");
                 fprintf(f, "    cmp rax, %d\n", i->flags);
                 fprintf(f, "    je %s\n\n", sanitized_jump);
+                break;
+            case IR_CALL_STRING:
+                emit_pop(f, "r8");
+                emit_addr(f, "rdi", i->var_name);
+                emit_size(f, "rsi", i->size);
+                emit_addr(f, "rdx", i->lit_name);
+                fprintf(f, "    mov rcx, %lld\n", i->imm);
+                fprintf(f, "    call runtime_string\n");
+                fprintf(f, "    mov [rel cobrt_stmt_err], dl\n");
+                emit_push(f);
+                break;
+            // UNSTRING state block: runtime/ABI.md section 11
+            case IR_CALL_UNSTRING_START:
+                emit_pop(f, "rsi");
+                emit_addr(f, "rdi", i->var_name);
+                fprintf(f, "    call runtime_unstring_start\n");
+                emit_addr(f, "rcx", i->var_name);
+                fprintf(f, "    xor rax, 1\n");
+                fprintf(f, "    mov [rcx + 72], rax\n");     // overflow when out of range
+                fprintf(f, "    test rax, rax\n");
+                fprintf(f, "    jnz %s\n", sanitized_jump);
+                break;
+            case IR_CALL_UNSTRING_NEXT:
+                emit_addr(f, "rdi", i->var_name);
+                emit_size(f, "rsi", i->size);
+                fprintf(f, "    call runtime_unstring_next\n");
+                fprintf(f, "    test rax, rax\n");
+                fprintf(f, "    jz %s\n", sanitized_jump);
+                break;
+            case IR_UNSTRING_SLOTS:
+                emit_addr(f, "rcx", i->var_name);
+                fprintf(f, "    mov rax, [rcx + %d]\n", i->flags ? 56 : 40);
+                fprintf(f, "    mov [rel A_%lld], rax\n", i->imm);
+                fprintf(f, "    mov rax, [rcx + %d]\n", i->flags ? 64 : 48);
+                fprintf(f, "    mov [rel N_%lld], rax\n", i->imm);
+                break;
+            case IR_UNSTRING_END:
+                emit_addr(f, "rcx", i->var_name);
+                fprintf(f, "    mov rax, [rcx + 32]\n");
+                fprintf(f, "    cmp rax, [rcx + 8]\n");
+                fprintf(f, "    setb al\n");
+                fprintf(f, "    movzx eax, al\n");
+                fprintf(f, "    or [rcx + 72], rax\n");
+                break;
+            case IR_UNSTRING_OVERFLOW:
+                emit_addr(f, "rcx", i->var_name);
+                fprintf(f, "    mov al, [rcx + 72]\n");
+                fprintf(f, "    mov [rel cobrt_stmt_err], al\n");
+                break;
+            case IR_SWITCH_SET:
+                fprintf(f, "    mov rdi, %lld\n", i->imm);
+                fprintf(f, "    mov rsi, %d\n", i->flags);
+                fprintf(f, "    call runtime_switch_set\n\n");
                 break;
             case IR_CALL_SET_COLLATION:
                 emit_addr(f, "rdi", i->var_name);

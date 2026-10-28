@@ -15,6 +15,7 @@ global runtime_num_mul
 global runtime_num_div
 global cobrt_pow10
 global runtime_num_to_digits
+global runtime_num_pow
 
 ; ARG0 = field ptr, ARG1 = size, ARG2 = usage, ARG3 = flags
 ; Returns RET0 = the field's value as an unscaled signed integer.
@@ -548,6 +549,120 @@ runtime_num_div:
 .v_err:
     xor eax, eax
     mov edx, 1
+    ret
+
+; Exponentiation with an exponent known only at run time.
+; ARG0 = base, ARG1 = base scale, ARG2 = exponent, ARG3 = exponent scale,
+; ARG4 = result scale W (0..18).
+; Returns RET0 = base ** exponent at scale W; RET1 = 1 on a size error: the
+; exponent is not an integer, 0 ** n with n <= 0, or overflow.
+runtime_num_pow:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15                            ; rsp is 16-byte aligned here
+    mov r12, ARG0
+    mov r13, ARG1
+    mov r14, ARG2
+    mov r15, ARG3
+    mov rbx, ARG4
+
+    ; The exponent as an integer
+    test r15, r15
+    jz .p_exp_int
+    js .p_exp_up
+    cmp r15, 18
+    ja .p_err
+    lea rcx, [rel pow10]
+    mov rcx, [rcx + r15*8]
+    mov rax, r14
+    cqo
+    idiv rcx
+    test rdx, rdx
+    jnz .p_err                          ; a fraction: not supported
+    mov r14, rax
+    jmp .p_exp_int
+.p_exp_up:
+    mov ARG0, r14
+    mov ARG1, r15
+    neg ARG1
+    xor ARG2, ARG2
+    call runtime_num_rescale
+    test dl, dl
+    jnz .p_err
+    mov r14, rax
+.p_exp_int:
+    ; The base at scale W
+    mov ARG0, r12
+    mov ARG1, rbx
+    sub ARG1, r13
+    xor ARG2, ARG2
+    call runtime_num_rescale
+    test dl, dl
+    jnz .p_err
+    mov r12, rax
+    test r12, r12
+    jnz .p_nonzero
+    test r14, r14
+    jle .p_err                          ; 0 ** 0 and 0 ** negative
+    xor eax, eax
+    jmp .p_done
+.p_nonzero:
+    xor r15d, r15d                      ; r15 = 1 for a negative exponent
+    test r14, r14
+    jns .p_square
+    neg r14
+    mov r15d, 1
+.p_square:
+    lea rcx, [rel pow10]
+    mov r13, [rcx + rbx*8]              ; result = 1 at scale W
+.p_loop:
+    test r14, r14
+    jz .p_invert
+    test r14, 1
+    jz .p_next
+    mov ARG0, r13
+    mov ARG1, r12
+    mov ARG2, rbx
+    call runtime_num_mul
+    test dl, dl
+    jnz .p_err
+    mov r13, rax
+.p_next:
+    shr r14, 1
+    jz .p_invert
+    mov ARG0, r12
+    mov ARG1, r12
+    mov ARG2, rbx
+    call runtime_num_mul
+    test dl, dl
+    jnz .p_err
+    mov r12, rax
+    jmp .p_loop
+.p_invert:
+    mov rax, r13
+    test r15, r15
+    jz .p_done
+    lea rcx, [rel pow10]
+    mov ARG0, [rcx + rbx*8]             ; 1 / result: (10^W * 10^W) / result
+    mov ARG1, r13
+    mov ARG2, rbx
+    call runtime_num_div
+    test dl, dl
+    jnz .p_err
+.p_done:
+    xor edx, edx
+    jmp .p_ret
+.p_err:
+    xor eax, eax
+    mov edx, 1
+.p_ret:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
     ret
 
 ; ARG0 = buffer, ARG1 = number of digits, ARG2 = value

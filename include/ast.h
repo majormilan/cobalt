@@ -20,7 +20,7 @@ typedef enum {
     AST_SECTION,
     AST_STATEMENT_DISPLAY,
     AST_STATEMENT_STOP,
-    AST_VAR_DECL,
+    AST_VAR_DECL,           // level 66: on_error / not_on_error = RENAMES item [THRU item]
     AST_STRING_LITERAL,
     AST_IDENTIFIER,
 
@@ -91,6 +91,15 @@ typedef enum {
     AST_JUSTIFIED,          // JUSTIFIED RIGHT
     AST_REFMOD,             // reference modification: children: start, [length]
     AST_STATEMENT_INITIALIZE, // children: identifiers
+    AST_STATEMENT_STRING,   // children: sources, each with on_error: its delimiter (NULL: SIZE);
+                            //   extra: INTO identifier; loop: POINTER identifier;
+                            //   on_error / not_on_error: [NOT] ON OVERFLOW
+    AST_STATEMENT_UNSTRING, // extra: AST_UNSTRING_SPEC; children: receivers, each with
+                            //   on_error: DELIMITER IN, not_on_error: COUNT IN;
+                            //   on_error / not_on_error of the statement: [NOT] ON OVERFLOW
+    AST_UNSTRING_SPEC,      // extra: the source; children: delimiters (is_signed: ALL);
+                            //   loop: POINTER identifier; on_error: TALLYING IN identifier
+    AST_STATEMENT_ALTER,    // children: altered paragraphs, each with children: the new target
     AST_STATEMENT_INSPECT,  // extra: subject; children: AST_INSPECT_ITEM operands
     AST_INSPECT_ITEM,       // name: CHARACTERS, ALL, LEADING, FIRST or CONVERT;
                             //   loop: TALLYING counter (NULL when replacing);

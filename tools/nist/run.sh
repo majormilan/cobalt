@@ -43,9 +43,15 @@ for cbl in "$SRC"/$MODULE*.CBL; do
         # Summary lines: "093 OF 093  TESTS WERE EXECUTED SUCCESSFULLY",
         # "NO  TEST(S) FAILED" or "002 TEST(S) FAILED", likewise DELETED and
         # REQUIRE INSPECTION
-        ok=$(grep -o "[0-9]* OF *[0-9]* *TESTS WERE EXECUTED SUCCESSFULLY" "$dir/report.log" | head -1 | awk '{print $1}')
-        count() { grep -o "\(NO\|[0-9]*\) *TEST(S) $1" "$dir/report.log" | head -1 | awk '{print ($1 == "NO") ? 0 : $1}'; }
+        # (-a: a report can hold non-text bytes that tests wrote)
+        ok=$(grep -ao "[0-9]* OF *[0-9]* *TESTS WERE EXECUTED SUCCESSFULLY" "$dir/report.log" | head -1 | awk '{print $1}')
+        count() { grep -ao "\(NO\|[0-9]*\) *TEST(S) $1" "$dir/report.log" | head -1 | awk '{print ($1 == "NO") ? 0 : $1}'; }
         bad=$(count FAILED); del=$(count DELETED); insp=$(count "REQUIRE INSPECTION")
+        # Programs made only of visual checks: "15 TESTS REQUIRE VISUAL INSPECTION"
+        if [ -z "$ok" ]; then
+            insp=$(grep -ao "[0-9]* *TESTS REQUIRE VISUAL INSPECTION" "$dir/report.log" | head -1 | awk '{print $1}')
+            [ -n "$insp" ] && ok=0
+        fi
         p=$((10#${ok:-0})); b=$((10#${bad:-0})); d=$((10#${del:-0})); n=$((10#${insp:-0}))
         passed=$((passed + p)); failed=$((failed + b)); deleted=$((deleted + d)); inspect=$((inspect + n))
         if [ -z "$ok" ]; then
@@ -53,16 +59,20 @@ for cbl in "$SRC"/$MODULE*.CBL; do
         else
             printf "%-8s RAN           %3d passed, %3d failed, %3d deleted, %3d inspect\n" "$name" $p $b $d $n
         fi
-    elif grep -q "END OF TEST" "$dir/run.log"; then
+    elif grep -aq "END OF TEST" "$dir/run.log"; then
         # Monitor ("M") programs DISPLAY their results instead of writing a report
         ran=$((ran+1))
-        if grep -q "FAIL\*" "$dir/run.log" || ! grep -q "PASS" "$dir/run.log"; then
+        if grep -aq "FAIL\*" "$dir/run.log" || ! grep -aq "PASS" "$dir/run.log"; then
             failed=$((failed+1))
             printf "%-8s RAN (DISPLAY) see %s/run.log\n" "$name" "$dir"
         else
             passed=$((passed+1))
             printf "%-8s RAN (DISPLAY) PASS\n" "$name"
         fi
+    elif grep -aq "Message expected for above statement" "$SRC/$name.CBL"; then
+        # FIPS flagging programs check compiler messages (OBSOLETE,
+        # NON-CONFORMING ...), which COBALT does not issue: not counted
+        printf "%-8s FLAGGING      (checks compiler flagging messages: not applicable)\n" "$name"
     else
         printf "%-8s NO-REPORT     (program ran but wrote no report.log)\n" "$name"
     fi

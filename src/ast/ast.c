@@ -137,6 +137,10 @@ void ast_dump(AstNode *node, FILE *out, int indent) {
         case AST_STATEMENT_INITIALIZE:      kind_name = "INITIALIZE"; break;
         case AST_STATEMENT_SEARCH:          kind_name = "SEARCH"; break;
         case AST_STATEMENT_INSPECT:         kind_name = "INSPECT"; break;
+        case AST_STATEMENT_ALTER:           kind_name = "ALTER"; break;
+        case AST_STATEMENT_STRING:          kind_name = "STRING"; break;
+        case AST_STATEMENT_UNSTRING:        kind_name = "UNSTRING"; break;
+        case AST_UNSTRING_SPEC:             kind_name = "UNSTRING_SPEC"; break;
         case AST_INSPECT_ITEM:              kind_name = "INSPECT-ITEM"; break;
         case AST_STATEMENT_OPEN:            kind_name = "OPEN"; break;
         case AST_STATEMENT_CLOSE:           kind_name = "CLOSE"; break;

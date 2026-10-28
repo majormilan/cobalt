@@ -196,6 +196,16 @@ Token lexer_cobol85_keyword_or_ident(Lexer *l, const char *start, size_t len) {
     KW("CORRESPONDING",   TOK_CORRESPONDING);
     KW("CORR",            TOK_CORRESPONDING);
     KW("INSPECT",         TOK_INSPECT);
+    KW("ALTER",           TOK_ALTER);
+    KW("STRING",          TOK_STRING_KW);
+    KW("UNSTRING",        TOK_UNSTRING);
+    KW("DELIMITED",       TOK_DELIMITED);
+    KW("DELIMITER",       TOK_DELIMITER);
+    KW("POINTER",         TOK_POINTER);
+    KW("OVERFLOW",        TOK_OVERFLOW);
+    KW("COUNT",           TOK_COUNT);
+    KW("END-STRING",      TOK_END_STRING);
+    KW("END-UNSTRING",    TOK_END_UNSTRING);
     KW("TALLYING",        TOK_TALLYING);
     KW("REPLACING",       TOK_REPLACING);
     KW("CONVERTING",      TOK_CONVERTING);
@@ -206,5 +216,9 @@ Token lexer_cobol85_keyword_or_ident(Lexer *l, const char *start, size_t len) {
     KW("UPON",            TOK_UPON);
     #undef KW
 
+    // User-defined words are case-insensitive: fold them to upper case in the
+    // (writable) source buffer so every later comparison sees one form
+    for (size_t i = 0; i < len; i++)
+        ((char *)start)[i] = (char)toupper((unsigned char)start[i]);
     return make_token_public(l, TOK_IDENT, start, len);
 }
