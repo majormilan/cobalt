@@ -168,6 +168,15 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
         }
         i = i->next;
     }
+    for (i = ir->head; i; i = i->next) {
+        if (i->op != IR_DATA_BYTES) continue;
+        char *label = sanitize_label_name(i->var_name);
+        fprintf(f, "%s: db ", label);
+        for (int k = 0; k < i->size; k++)
+            fprintf(f, "%u%s", (unsigned char)i->content[k], k + 1 < i->size ? ", " : "\n");
+        free(label);
+    }
+
     // File control blocks (runtime/ABI.md section 7)
     for (i = ir->head; i; i = i->next) {
         if (i->op != IR_DATA_FILE) continue;
@@ -185,6 +194,7 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
     fprintf(f, "section .text\n");
     fprintf(f, "global %s\n", target->entry_symbol);
     fprintf(f, "%s:\n", target->entry_symbol);
+    fprintf(f, "    mov rdi, rsp\n");  // entry stack: argc, argv, environment
     fprintf(f, "    call runtime_init\n\n");
 
     i = ir->head;
@@ -486,6 +496,10 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 fprintf(f, "    %s %s\n\n", false_jump(i->cmp_op), sanitized_jump);
                 break;
             case IR_CLASS_JUMP:
+                if (i->lit_name) {
+                    emit_addr(f, "rcx", i->lit_name);
+                    fprintf(f, "    mov r8, %d\n", i->lit_len);
+                }
                 emit_addr(f, "rdi", i->var_name);
                 emit_size(f, "rsi", i->size);
                 fprintf(f, "    mov rdx, %lld\n", i->imm);
@@ -566,6 +580,16 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 fprintf(f, "    mov rcx, %lld\n", i->imm);
                 emit_addr(f, "r8", i->content);
                 fprintf(f, "    call runtime_inspect\n\n");
+                break;
+            case IR_SWITCH_JUMP:
+                fprintf(f, "    mov rdi, %lld\n", i->imm);
+                fprintf(f, "    call runtime_switch_status\n");
+                fprintf(f, "    cmp rax, %d\n", i->flags);
+                fprintf(f, "    je %s\n\n", sanitized_jump);
+                break;
+            case IR_CALL_SET_COLLATION:
+                emit_addr(f, "rdi", i->var_name);
+                fprintf(f, "    call runtime_set_collation\n");
                 break;
             case IR_SIZE_ERR_CLEAR:
                 fprintf(f, "    mov byte [rel cobrt_tgt_err], 0\n");

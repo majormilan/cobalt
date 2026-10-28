@@ -28,6 +28,10 @@ typedef struct {
 //   F floating symbol position (leftmost of a floating string),
 //   B 0 / , . insertion, S fixed + sign, M fixed - sign, $ fixed currency,
 //   c r = CR, d b = DB; alphanumeric edited: X (any character), B 0 /.
+// SPECIAL-NAMES: CURRENCY SIGN character, DECIMAL-POINT IS COMMA
+static char pic_currency = '$';
+static bool pic_decimal_comma = false;
+
 static PicInfo analyze_pic(const char *pic) {
     PicInfo info = {0};
     // Symbols with their repeat factors; CR and DB become c r / d b
@@ -35,7 +39,16 @@ static PicInfo analyze_pic(const char *pic) {
     int rep[128];
     int n = 0;
     for (const char *p = pic; *p && n < 126; ) {
+        char raw = *p;
         char c = toupper((unsigned char)*p++);
+        // The currency symbol plays the role of $; with DECIMAL-POINT IS
+        // COMMA the roles of '.' and ',' are exchanged
+        if (raw == pic_currency || c == toupper((unsigned char)pic_currency)) {
+            if (pic_currency != '$' || c == '$') c = '$';
+        } else if (c == '$' && pic_currency != '$') {
+            c = '?';                        // $ is not the currency symbol here
+        }
+        if (pic_decimal_comma && (c == '.' || c == ',')) c = (c == '.') ? ',' : '.';
         if ((c == 'C' && toupper((unsigned char)*p) == 'R') || (c == 'D' && toupper((unsigned char)*p) == 'B')) {
             sym[n] = c == 'C' ? 'c' : 'd'; rep[n++] = 1;
             sym[n] = c == 'C' ? 'r' : 'b'; rep[n++] = 1;
@@ -438,6 +451,17 @@ static AstNode *find_procedure_division(AstNode *program) {
 }
 
 void sema_basic_check(AstNode *program, SemaContext *ctx) {
+    pic_currency = '$';
+    pic_decimal_comma = false;
+    for (AstNode *div = program->children; div; div = div->next) {
+        if (div->kind != AST_DIVISION || strcasecmp(div->name, "ENVIRONMENT") != 0) continue;
+        for (AstNode *e = div->children; e; e = e->next) {
+            if (e->kind != AST_SPECIAL) continue;
+            if (strcmp(e->name, "CURRENCY") == 0 && e->text && e->text[0]) pic_currency = e->text[0];
+            if (strcmp(e->name, "DECIMAL-POINT") == 0) pic_decimal_comma = true;
+        }
+    }
+
     // Traverse the AST to perform variable semantic analysis first
     sema_walk_ast(program, ctx);
 

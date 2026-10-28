@@ -39,6 +39,12 @@ typedef enum {
     AST_LITERAL_NUMBER,     // numeric literal
     AST_FIGURATIVE_CONSTANT, // e.g., ZEROS, SPACES
     AST_FILE_DECL,          // FD: name = file; children = record description entries
+    AST_SPECIAL,            // SPECIAL-NAMES / OBJECT-COMPUTER entry; name: SWITCH, ALPHABET,
+                            //   CLASS, CURRENCY, DECIMAL-POINT or COLLATING; text: the
+                            //   alphabet / class name, currency character or collating
+                            //   alphabet; children: character specs (extra = THRU end,
+                            //   is_signed = ALSO); SWITCH: text = implementor name,
+                            //   on_error / not_on_error = ON / OFF condition-names
     AST_SELECT,             // SELECT: name = file; text = ASSIGN name; is_numeric =
                             //   ASSIGN literal; is_signed = OPTIONAL; decimal_places =
                             //   1 for LINE SEQUENTIAL; extra = FILE STATUS item

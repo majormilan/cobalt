@@ -194,6 +194,7 @@ void lexer_init(Lexer *l, const char *source, const CompilerMode *mode, const ch
     l->free_content_on_pop = false;
     l->prev = NULL;
     l->pic_next = false;
+    l->decimal_comma = false;
 
     // Set standard-specific keyword checker
     switch (l->mode->std) {
@@ -334,20 +335,29 @@ Token lexer_next(Lexer *l) {
     if (*l->src == '-') {
         negative = true;
         advance(l);
-    } else if (*l->src == '+' && (isdigit((unsigned char)l->src[1]) || l->src[1] == '.')) {
+    } else if (*l->src == '+' && (isdigit((unsigned char)l->src[1]) ||
+                                  l->src[1] == (l->decimal_comma ? ',' : '.'))) {
+        char plus_point = l->decimal_comma ? ',' : '.';
         advance(l);
+        if (*l->src == plus_point) { *(char *)l->src = '.'; advance(l); }
         while (isdigit(*l->src)) advance(l);
-        if (*l->src == '.' && isdigit(l->src[1])) {
+        if (*l->src == plus_point && isdigit(l->src[1])) {
+            *(char *)l->src = '.';
             advance(l);
             while (isdigit(*l->src)) advance(l);
         }
         return make_token_public(l, TOK_NUMBER, start, l->src - start);
     }
 
-    if (isdigit(*l->src) || (*l->src == '.' && isdigit(l->src[1]))) {
-        if (*l->src == '.') advance(l);  // for .56 style, but rare in COBOL
+    // The decimal point of a numeric literal is ',' with DECIMAL-POINT IS
+    // COMMA; it is rewritten to '.' in the (writable) source buffer, so the
+    // rest of the compiler sees one form
+    char point = l->decimal_comma ? ',' : '.';
+    if (isdigit(*l->src) || (*l->src == point && isdigit(l->src[1]))) {
+        if (*l->src == point) { *(char *)l->src = '.'; advance(l); }
         while (isdigit(*l->src)) advance(l);
-        if (*l->src == '.' && isdigit(l->src[1])) {
+        if (*l->src == point && isdigit(l->src[1])) {
+            *(char *)l->src = '.';
             advance(l);
             while (isdigit(*l->src)) advance(l);
         }

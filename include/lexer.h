@@ -202,6 +202,7 @@ typedef enum {
     TOK_FIRST,
     TOK_INITIAL,
     TOK_FOR,
+    TOK_UPON,
 
     // Operators
     TOK_GT,
@@ -244,6 +245,7 @@ typedef struct Lexer {
     struct Lexer *prev;             // Pointer to the previous lexer state (for COPY)
 
     bool pic_next;                  // next word is a PICTURE character-string
+    bool decimal_comma;             // DECIMAL-POINT IS COMMA: ',' is the decimal point
 } Lexer;
 
 void lexer_init(Lexer *l, const char *source, const CompilerMode *mode, const char *filename);

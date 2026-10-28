@@ -20,6 +20,8 @@
 ;                                                     -> RET0 = new position or <0
 ;   cobrt_os_time (ARG0 = 16-byte buffer)             -> seconds since 1970-01-01 UTC
 ;                                                        and nanoseconds, as two qwords
+;   cobrt_os_init (ARG0 = stack pointer at program entry) -> nothing
+;   cobrt_os_getenv(ARG0 = NUL-terminated name)       -> RET0 = value (NUL-terminated) or 0
 ; They follow the normal ABI rules (caller-saved registers may be clobbered).
 ; Callers need not align the stack; an OS layer that calls into a system
 ; library must realign it itself.
@@ -32,9 +34,12 @@
     extern cobrt_os_close
     extern cobrt_os_seek
     extern cobrt_os_time
+    extern cobrt_os_init
+    extern cobrt_os_getenv
 %endif
 
 %define COBRT_STDIN  0
+%define COBRT_CONSOLE_RECORD 80  ; device record size of the console for ACCEPT
 %define COBRT_STDOUT 1
 %define COBRT_STDERR 2
 

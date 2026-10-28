@@ -18,6 +18,12 @@ X_CARDS = {
     "082": "X86-64",            # SOURCE-COMPUTER
     "083": "X86-64",            # OBJECT-COMPUTER
     "081": '"@#!%&~^`"',        # literal of characters outside the COBOL set
+    "051": "SWITCH-1",          # implementor-names of switches
+    "052": "SWITCH-2",
+    "056": "CONSOLE",           # DISPLAY output device
+    "057": "CONSOLE",           # ACCEPT input device
+    "090": "66",                # ordinal position of "A" in the native (ASCII) set
+    "091": "69",                # ordinal position of "D"
 }
 
 SUFFIX = {"COBOL": ".CBL", "CLBRY": ".CPY"}
@@ -27,7 +33,7 @@ SUFFIX = {"COBOL": ".CBL", "CLBRY": ".CPY"}
 # P/C: file-system specific clauses). Letters listed here are enabled (the
 # letter becomes a space); all others are commented out. D is the standard
 # debugging-line indicator and is left alone.
-OPTIONS = set()
+OPTIONS = {"A"}                 # A: SPECIAL-NAMES switches
 
 
 def substitute(line):

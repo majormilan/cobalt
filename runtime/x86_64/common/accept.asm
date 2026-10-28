@@ -15,6 +15,9 @@ extern runtime_num_store
 ; Skips \r to handle Windows-style line endings gracefully.
 ; If the user types more than 'size' characters, excess chars are discarded
 ; until \n is reached.
+; A line of at least COBRT_CONSOLE_RECORD characters is a full device record:
+; when it does not fill an alphanumeric field, the transfer continues with the
+; next line (further input is requested). A shorter line ends the transfer.
 ;
 ; ARG0 = dest_var (pointer)
 ; ARG1 = size     (field size in bytes)
@@ -35,6 +38,7 @@ runtime_accept:
     mov r13, ARG1       ; r13 = field size
     mov r14, ARG4       ; r14b = pad_char
     xor r15, r15        ; r15 = bytes stored so far
+    mov dword [rbp-4], 0 ; characters in the current line
 
 .read_loop:
     mov ARG0, COBRT_STDIN
@@ -48,16 +52,27 @@ runtime_accept:
     movzx rbx, byte [rbp-8]
 
     cmp bl, 10          ; \n
-    je .pad_remaining
+    je .line_end
 
     cmp bl, 13          ; \r — skip (handle Windows/mixed line endings)
     je .read_loop
 
+    inc dword [rbp-4]
     cmp r15, r13        ; field already full?
     jge .read_loop      ; discard extra chars, keep draining until \n
 
     mov [r12 + r15], bl
     inc r15
+    jmp .read_loop
+
+.line_end:
+    cmp r14b, ' '                       ; only alphanumeric fields continue
+    jne .pad_remaining
+    cmp r15, r13
+    jge .pad_remaining
+    cmp dword [rbp-4], COBRT_CONSOLE_RECORD
+    jb .pad_remaining
+    mov dword [rbp-4], 0                ; full record: request further input
     jmp .read_loop
 
 .pad_remaining:

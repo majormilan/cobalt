@@ -30,7 +30,9 @@ global runtime_deedit
 ; ARG0 = item, ARG1 = edit mask, ARG2 = mask length (item size),
 ; ARG3 = value (unscaled, at the item's scale), ARG4 = flags
 ; (bit 0 BLANK WHEN ZERO, bit 1 keep on size error, bits 8-15 floating
-; character). Returns RET0 = 1 on size error (high-order digits lost).
+; character, bits 16-23 currency character (0: '$'), bit 24 DECIMAL-POINT IS
+; COMMA: '.' positions print ',' and ',' positions print '.').
+; Returns RET0 = 1 on size error (high-order digits lost).
 runtime_edit_numeric:
     push rbp
     mov rbp, rsp
@@ -206,11 +208,18 @@ runtime_edit_numeric:
 .insert:
     mov al, cl
     cmp cl, 'B'
-    jne .put
+    jne .insert_comma
     mov al, ' '
     jmp .put
-.literal:
-    mov al, cl
+.insert_comma:
+    cmp cl, ','
+    jne .put
+    bt r15, 24
+    jnc .put
+    mov al, '.'                         ; DECIMAL-POINT IS COMMA
+    jmp .put
+.literal:                               ; the currency symbol
+    call .currency
     jmp .put
 .digit:
     movzx eax, byte [rbp + L_DIG + r10]
@@ -250,6 +259,9 @@ runtime_edit_numeric:
     call .place_float
 .point_put:
     mov al, '.'
+    bt r15, 24
+    jnc .put
+    mov al, ','                         ; DECIMAL-POINT IS COMMA
     jmp .put
 .fixed_plus:
     mov al, '+'
@@ -284,7 +296,13 @@ runtime_edit_numeric:
     shr r11, 8
     and r11, 0xff                       ; floating character
     cmp r11b, '$'
-    je .pf_put
+    jne .pf_sign
+    push rax
+    call .currency
+    mov r11b, al
+    pop rax
+    jmp .pf_put
+.pf_sign:
     cmp qword [rbp + L_NEG], 0
     jne .pf_minus
     cmp r11b, '+'
@@ -296,6 +314,16 @@ runtime_edit_numeric:
 .pf_put:
     mov [rbp + L_OUT + rdx], r11b
 .pf_done:
+    ret
+
+    ; al = the currency character (bits 16-23 of the flags, '$' if zero)
+.currency:
+    mov rax, r15
+    shr rax, 16
+    and eax, 0xff
+    jnz .cur_done
+    mov al, '$'
+.cur_done:
     ret
 
 .copy:

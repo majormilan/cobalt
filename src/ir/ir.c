@@ -48,6 +48,8 @@ typedef struct {
     bool blank_zero;        // BLANK WHEN ZERO
     char mask_label[32];    // data literal holding the mask, once emitted
     int sign_mode;          // SIGN clause (own or inherited from a group): SIGN_* bits
+    int switch_value;       // condition-name of a switch: 1 for ON STATUS, 0 for OFF; else -1
+    int switch_number;      // its switch (SWITCH-n)
 } VarInfo;
 
 static bool is_num_edited(const VarInfo *v) { return v->mask && v->num_edited; }
@@ -61,6 +63,21 @@ static int num_records = 0;
 static int lit_counter = 0;
 static int if_counter = 0;
 static int addr_slots = 0;  // address/length slots used so far
+
+// SPECIAL-NAMES
+static char currency_char = '$';            // CURRENCY SIGN
+static bool decimal_comma = false;          // DECIMAL-POINT IS COMMA
+static bool has_collation = false;          // PROGRAM COLLATING SEQUENCE
+static unsigned char collate_weight[256];
+static int low_value = 0, high_value = 0xFF;   // LOW-VALUE / HIGH-VALUE characters
+
+typedef struct {
+    const char *name;
+    char members[257];      // the characters of a CLASS (NUL not supported)
+    int count;
+} ClassInfo;
+static ClassInfo classes[32];
+static int num_classes = 0;
 
 // Files (SELECT + FD)
 typedef struct {
@@ -145,15 +162,16 @@ static const char *emit_data_lit(IrProgram *ir, const char *prefix, const char *
 #define FIG_PATTERN (-2)   // ALL with a literal of several characters
 
 // Character of a figurative constant, FIG_PATTERN for ALL "multi-char", or
-// -1 if n is not a figurative constant
+// -1 if n is not a figurative constant. HIGH-VALUE and LOW-VALUE are the
+// highest and lowest characters of the program collating sequence.
 static int figurative_char(const AstNode *n) {
     if (n->kind != AST_FIGURATIVE_CONSTANT || !n->name) return -1;
     if (strcasecmp(n->name, "ALL") == 0)
         return (n->text && strlen(n->text) == 1) ? (unsigned char)n->text[0] : FIG_PATTERN;
     if (strncasecmp(n->name, "ZERO", 4) == 0)       return '0';
     if (strncasecmp(n->name, "SPACE", 5) == 0)      return ' ';
-    if (strncasecmp(n->name, "HIGH-VALUE", 10) == 0) return 0xFF;
-    if (strncasecmp(n->name, "LOW-VALUE", 9) == 0)  return 0;
+    if (strncasecmp(n->name, "HIGH-VALUE", 10) == 0) return high_value;
+    if (strncasecmp(n->name, "LOW-VALUE", 9) == 0)  return low_value;
     if (strncasecmp(n->name, "QUOTE", 5) == 0)      return '"';
     return -1;
 }
@@ -181,6 +199,7 @@ static VarInfo *new_var(const char *name) {
     memset(v, 0, sizeof(VarInfo));
     v->name = strdup(name);
     v->parent = v->first_child = v->next_sibling = v->redefines = v->first_index = v->file = -1;
+    v->switch_value = -1;
     return v;
 }
 
@@ -222,6 +241,119 @@ static int find_redefined(const char *name, int parent, int before) {
 }
 
 static VarInfo *find_item(const AstNode *ref, bool report);
+
+// Character of one ALPHABET / CLASS literal element: a character of a
+// nonnumeric literal, the ordinal position of a numeric one, or a figurative
+// constant in the native (ASCII) set
+static int spec_char(const AstNode *lit, int k) {
+    if (lit->kind == AST_LITERAL_NUMBER) return (atoi(lit->name) - 1) & 0xFF;
+    if (lit->kind == AST_FIGURATIVE_CONSTANT) {
+        if (strncasecmp(lit->name, "HIGH-VALUE", 10) == 0) return 0xFF;
+        if (strncasecmp(lit->name, "LOW-VALUE", 9) == 0) return 0;
+        if (strncasecmp(lit->name, "SPACE", 5) == 0) return ' ';
+        if (strncasecmp(lit->name, "QUOTE", 5) == 0) return '"';
+        return '0';
+    }
+    return (unsigned char)lit->name[k];
+}
+
+static int spec_length(const AstNode *lit) {
+    return lit->kind == AST_STRING_LITERAL ? (int)strlen(lit->name) : 1;
+}
+
+// SPECIAL-NAMES and OBJECT-COMPUTER entries
+static void build_special_names(AstNode *program) {
+    currency_char = '$';
+    decimal_comma = has_collation = false;
+    low_value = 0;
+    high_value = 0xFF;
+    num_classes = 0;
+    AstNode *env = NULL;
+    for (AstNode *div = program->children; div; div = div->next)
+        if (div->kind == AST_DIVISION && strcasecmp(div->name, "ENVIRONMENT") == 0) env = div;
+    if (!env) return;
+
+    const char *collating = NULL;
+    for (AstNode *e = env->children; e; e = e->next) {
+        if (e->kind != AST_SPECIAL) continue;
+        if (strcmp(e->name, "CURRENCY") == 0 && e->text[0]) currency_char = e->text[0];
+        else if (strcmp(e->name, "DECIMAL-POINT") == 0) decimal_comma = true;
+        else if (strcmp(e->name, "COLLATING") == 0) collating = e->text;
+        else if (strcmp(e->name, "CLASS") == 0 && num_classes < 32) {
+            ClassInfo *c = &classes[num_classes++];
+            c->name = e->text;
+            c->count = 0;
+            for (AstNode *lit = e->children; lit; lit = lit->next) {
+                if (lit->extra) {
+                    int from = spec_char(lit, 0), to = spec_char(lit->extra, 0);
+                    int step = from <= to ? 1 : -1;
+                    for (int ch = from; ; ch += step) {
+                        if (c->count < 256) c->members[c->count++] = (char)ch;
+                        if (ch == to) break;
+                    }
+                } else {
+                    for (int k = 0; k < spec_length(lit); k++)
+                        if (c->count < 256) c->members[c->count++] = (char)spec_char(lit, k);
+                }
+            }
+            c->members[c->count] = '\0';
+        } else if (strcmp(e->name, "SWITCH") == 0) {
+            // SWITCH-n: its state comes from the environment at run time
+            const char *digit = e->text + strlen(e->text);
+            while (digit > e->text && isdigit((unsigned char)digit[-1])) digit--;
+            int number = atoi(digit);
+            if ((e->on_error || e->not_on_error) && (number < 1 || number > 9)) {
+                cobalt_error_loc(NULL, e->loc.line, e->loc.column,
+                                 "Switch '%s' is not SWITCH-1 to SWITCH-9", e->text);
+                continue;
+            }
+            for (int on = 1; on >= 0; on--) {
+                AstNode *name = on ? e->on_error : e->not_on_error;
+                if (!name) continue;
+                VarInfo *cv = new_var(name->name);
+                if (cv) { cv->is_cond = true; cv->switch_value = on; cv->switch_number = number; }
+            }
+        }
+    }
+
+    // Program collating sequence from an ALPHABET with a character list
+    for (AstNode *e = env->children; collating && e; e = e->next) {
+        if (e->kind != AST_SPECIAL || strcmp(e->name, "ALPHABET") != 0 ||
+            strcasecmp(e->text, collating) != 0 || !e->children) continue;
+        bool listed[256] = {false};
+        int w = -1;
+        for (AstNode *lit = e->children; lit; lit = lit->next) {
+            if (lit->extra) {
+                int from = spec_char(lit, 0), to = spec_char(lit->extra, 0);
+                int step = from <= to ? 1 : -1;
+                for (int ch = from; ; ch += step) {
+                    if (!listed[ch]) { collate_weight[ch] = (unsigned char)++w; listed[ch] = true; }
+                    if (ch == to) break;
+                }
+            } else {
+                for (int k = 0; k < spec_length(lit); k++) {
+                    int ch = spec_char(lit, k);
+                    if (listed[ch]) continue;
+                    // ALSO: the same position as the character before it
+                    if (!(lit->is_signed && k == 0) || w < 0) w++;
+                    collate_weight[ch] = (unsigned char)w;
+                    listed[ch] = true;
+                }
+            }
+        }
+        // Characters not listed follow, in their native order
+        for (int ch = 0; ch < 256; ch++)
+            if (!listed[ch]) collate_weight[ch] = (unsigned char)(w < 255 ? ++w : 255);
+        has_collation = true;
+        int lo = 0, hi = 0;
+        for (int ch = 0; ch < 256; ch++) {
+            if (collate_weight[ch] < collate_weight[lo]) lo = ch;
+            if (collate_weight[ch] >= collate_weight[hi]) hi = ch;
+        }
+        low_value = lo;
+        high_value = hi;
+    }
+}
 
 static void build_data(IrProgram *ir, AstNode *program) {
     int stack[64];
@@ -808,7 +940,9 @@ static void emit_store(IrProgram *ir, const FieldRef *f, bool keep) {
         e->var_name = strdup(f->label);
         e->lit_name = strdup(mask_label(ir, f->var));
         e->size = (int)strlen(f->var->mask);
-        e->flags = (f->var->blank_zero ? 1 : 0) | (keep ? 2 : 0) | ((unsigned char)f->var->float_char << 8);
+        e->flags = (f->var->blank_zero ? 1 : 0) | (keep ? 2 : 0) | ((unsigned char)f->var->float_char << 8) |
+                   (currency_char != '$' ? (unsigned char)currency_char << 16 : 0) |
+                   (decimal_comma ? 1 << 24 : 0);
         return;
     }
     IrInstr *i = emit(ir, IR_NUM_STORE);
@@ -1391,6 +1525,7 @@ static AstNode *condition_item_ref(const VarInfo *cv, const AstNode *cond_ref) {
 // item = v1 OR item = v2 OR (item >= lo AND item <= hi) ...
 static AstNode *condition_name_tree(const VarInfo *cv, const AstNode *cond_ref) {
     SourceLocation loc = cond_ref->loc;
+
     AstNode *tree = NULL;
     for (AstNode *v = cv->cond_values; v; v = v->next) {
         AstNode *alt;
@@ -1433,6 +1568,26 @@ static void emit_class_jump(IrProgram *ir, AstNode *c, const char *target, bool 
     bool numeric = v->is_numeric && !f.refmod;
     // Class codes of runtime_class_test (runtime/ABI.md section 3)
     int code;
+    if (strcmp(c->name, "USER") == 0) {
+        ClassInfo *cls = NULL;
+        for (int k = 0; k < num_classes; k++)
+            if (strcasecmp(classes[k].name, c->text) == 0) cls = &classes[k];
+        if (!cls) {
+            cobalt_error_loc(NULL, c->loc.line, c->loc.column, "'%s' is not a class-name", c->text);
+            return;
+        }
+        char members[32];
+        emit_data_lit(ir, "class", cls->members, members, sizeof(members));
+        IrInstr *j = emit(ir, IR_CLASS_JUMP);
+        j->var_name = strdup(f.label);
+        j->size = f.size;
+        j->imm = 9;
+        j->lit_name = strdup(members);
+        j->lit_len = cls->count;
+        j->flags = when ? 1 : 0;
+        j->jump_target = strdup(target);
+        return;
+    }
     if (strcmp(c->name, "NUMERIC") == 0) {
         if (numeric && (v->usage_type == USAGE_COMP || v->usage_type == USAGE_COMP5)) {
             if (when) emit_jump(ir, IR_JUMP, target); // binary items are always numeric
@@ -1515,6 +1670,14 @@ static void emit_cond_jump(IrProgram *ir, AstNode *cond, const char *target, boo
             if (!cv) break;
             if (!cv->is_cond) {
                 cobalt_error_loc(NULL, cond->loc.line, cond->loc.column, "'%s' is not a condition-name", cond->name);
+                break;
+            }
+            if (cv->switch_value >= 0) {
+                // true when the switch is in the state the name stands for
+                IrInstr *j = emit(ir, IR_SWITCH_JUMP);
+                j->imm = cv->switch_number;
+                j->flags = when ? cv->switch_value : !cv->switch_value;
+                j->jump_target = strdup(target);
                 break;
             }
             AstNode *tree = condition_name_tree(cv, cond);
@@ -2365,7 +2528,8 @@ static void lower_display(IrProgram *ir, AstNode *node) {
             }
         }
     }
-    append_instr(ir, new_instr(IR_EMIT_NEWLINE, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+    if (!node->is_numeric)          // WITH NO ADVANCING keeps the line open
+        append_instr(ir, new_instr(IR_EMIT_NEWLINE, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
 }
 
 // Move n unsigned digits from the "$numtext" buffer into a receiver, as from
@@ -2591,10 +2755,20 @@ IrProgram *lower_to_ir(AstNode *program) {
     addr_slots = 0;
     inspect_counter = 0;
 
+    build_special_names(program);
     build_data(ir, program);
 
     // Emit initializations
     append_instr(ir, new_instr(IR_CALL_INIT, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+    if (has_collation) {
+        IrInstr *t = emit(ir, IR_DATA_BYTES);
+        t->var_name = strdup("$collate");
+        t->size = 256;
+        char *bytes = malloc(256);
+        memcpy(bytes, collate_weight, 256);
+        t->content = bytes;
+        emit(ir, IR_CALL_SET_COLLATION)->var_name = strdup("$collate");
+    }
     emit(ir, IR_SIZE_ERR_CLEAR);
     for (int i = 0; i < num_vars; i++) lower_initial_value(ir, i);
 

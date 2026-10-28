@@ -109,7 +109,7 @@ positions in the PICTURE.
 
 | Routine | Arguments | Behavior |
 |---|---|---|
-| `runtime_init` | none | Called once at program start. |
+| `runtime_init` | `entry_sp` | Called once at program start with the stack pointer at program entry (the OS layer finds the environment there). |
 | `runtime_exit` | none | Ends the program with status 0. Does not return. |
 | `runtime_display_string` | `ptr` (NUL-terminated) | Writes a literal to stdout. |
 | `runtime_display_numeric` | `ptr, size, scale, usage, flags` | Writes a numeric field: no leading zeros (one zero before the point), all `scale` decimals, a leading `-` when negative. |
@@ -130,16 +130,21 @@ positions in the PICTURE.
 | `runtime_file_read` | `fcb, area` | READ the next record into the record area. Returns the status code. |
 | `runtime_file_write` | `fcb, record, length, adv_mode, adv_lines` | WRITE, with ADVANCING (section 7). Returns the status code. |
 | `runtime_file_rewrite` | `fcb, record, length` | REWRITE the record last read. Returns the status code. |
-| `runtime_accept` | `dest, size, decimals, usage, pad_char` | Reads one line from stdin. `pad_char` `'0'`: right-justify and zero pad; otherwise left-justify and space pad. Excess input is discarded, `\r` is ignored, EOF ends the line. |
+| `runtime_accept` | `dest, size, decimals, usage, pad_char` | Reads one line from stdin. `pad_char` `'0'`: right-justify and zero pad; otherwise left-justify and space pad. Excess input is discarded, `\r` is ignored, EOF ends the line. A line of at least `COBRT_CONSOLE_RECORD` (80) characters is a full device record: when it does not fill an alphanumeric field, the next line continues the field. |
+| `runtime_accept_date` | `buffer, kind` | Current UTC date or time as digits: 0 DATE `YYMMDD`, 1 DAY `YYDDD`, 2 TIME `HHMMSShh`, 3 DAY-OF-WEEK (1 Monday to 7 Sunday). |
 | `runtime_accept_numeric` | `ptr, size, digits, scale, usage, flags` | Reads one line and stores it as a number: optional spaces, optional sign, digits and an optional point; the first other character ends the number; extra decimals are dropped. |
 | `runtime_num_load` | `ptr, size, usage, flags` | Returns the field's value as an unscaled signed integer in `RET0`. |
 | `runtime_num_store` | `ptr, size, digits, usage, flags, value` | Stores an unscaled value (already at the field's scale). Returns 1 in `RET0` on size error, after truncating, or without storing when `NUM_KEEP` is set. |
+| `runtime_num_to_digits` | `buffer, count, value` | Writes `|value|` as `count` digits, zero padded on the left (the low-order digits when it has more). |
 | `runtime_num_rescale` | `value, shift, rounded` | `value * 10^shift`; a negative shift truncates, or rounds half away from zero when `rounded` is non-zero. `RET1` = 1 on overflow. |
 | `runtime_num_mul` | `a, b, shift` | `(a * b) / 10^shift` with a 128-bit product, truncated. `RET1` = 1 on overflow. |
 | `runtime_num_div` | `a, b, shift` | `(a * 10^shift) / b` with a 128-bit dividend, truncated. `RET1` = 1 on overflow or division by zero. |
-| `runtime_compare_alnum` | `a, a_len, b, b_len` | Compares in the ASCII collating sequence, padding the shorter operand with spaces. Returns -1, 0 or 1. |
+| `runtime_compare_alnum` | `a, a_len, b, b_len` | Compares in the program collating sequence (section 10), padding the shorter operand with spaces. Returns -1, 0 or 1. |
 | `runtime_compare_fill` | `ptr, len, char` | Compares a field with a figurative constant (`char` repeated): ZERO `'0'`, SPACE `' '`, HIGH-VALUE `0xFF`, LOW-VALUE `0x00`, QUOTE `'"'`. Returns -1, 0 or 1. |
-| `runtime_class_test` | `ptr, len, class` | Returns 1 if every character is in the class: 0 NUMERIC (digits), 1 NUMERIC signed DISPLAY (trailing overpunch allowed), 2 ALPHABETIC, 3 ALPHABETIC-LOWER, 4 ALPHABETIC-UPPER (letters and spaces), 5 NUMERIC packed decimal (digit nibbles, sign C, D or F). |
+| `runtime_class_test` | `ptr, len, class` | Returns 1 if every character is in the class: 0 NUMERIC (digits), 1 NUMERIC signed DISPLAY (trailing overpunch allowed), 2 ALPHABETIC, 3 ALPHABETIC-LOWER, 4 ALPHABETIC-UPPER (letters and spaces), 5 NUMERIC packed decimal (digit nibbles, sign C, D or F), 6 NUMERIC SIGN LEADING (overpunch on the first digit), 7 NUMERIC SIGN TRAILING SEPARATE, 8 NUMERIC SIGN LEADING SEPARATE, 9 user CLASS (`members, count` follow: every character must be one of the members). |
+| `runtime_inspect` | `subject, len, table, entries, counters` | INSPECT TALLYING / REPLACING / CONVERTING (section 9). |
+| `runtime_set_collation` | `table` | Sets the program collating sequence: a 256-byte weight table, or 0 for native (section 10). |
+| `runtime_switch_status` | `n` | Returns 1 if SWITCH-`n` (1 to 9) is on (section 10). |
 
 `RET1` is the second return register (`rdx` under SysV).
 
@@ -157,6 +162,9 @@ never calls them. The `cobrt_` prefix keeps them apart from COBOL names.
 | `cobrt_os_open` | `path, mode` | handle, or `OS_ERR_NOT_FOUND` (-1) / `OS_ERR_OTHER` (-2) |
 | `cobrt_os_close` | `handle` | 0, or negative on error |
 | `cobrt_os_seek` | `handle, offset` | new position (offset relative to the current one), or negative |
+| `cobrt_os_time` | `buffer` (16 bytes) | seconds since 1970-01-01 UTC and nanoseconds, as two qwords |
+| `cobrt_os_init` | `entry_sp` | nothing; records what the OS layer needs from the entry stack |
+| `cobrt_os_getenv` | `name` (NUL-terminated) | the value (NUL-terminated), or 0 when not set |
 
 `cobrt_os_open` modes are OS independent: `OS_OPEN_READ` (0, existing file),
 `OS_OPEN_WRITE` (1, create or truncate), `OS_OPEN_READWRITE` (2, existing),
@@ -368,8 +376,56 @@ character position (repeat factors expanded, `V` and `P` dropped):
 
 `runtime_edit_numeric` takes the value already scaled to the item (digits
 after the point or `V`) and flags: bit 0 BLANK WHEN ZERO, bit 1 keep the item
-on size error, bits 8-15 the floating character. Zero suppression ends at the
+on size error, bits 8-15 the floating character, bits 16-23 the CURRENCY SIGN
+character (0 for `$`), bit 24 DECIMAL-POINT IS COMMA (`.` and `,` exchange
+roles in the output). The mask always uses `.` for the decimal point and `$`
+for the currency symbol. Zero suppression ends at the
 first non-zero digit, a `9` position or the decimal point. A zero value in an
 item without `9` positions is all spaces, or all `*` except the decimal point
 with check protection. A numeric DISPLAY item with BLANK WHEN ZERO is edited
 with a mask of `9`s.
+
+## 9. INSPECT [implemented]
+
+`runtime_inspect` takes a table of operand entries, 96 bytes each, in source
+order:
+
+| Offset | Field |
+|---|---|
+| 0 | kind: 0 CHARACTERS, 1 ALL, 2 LEADING, 3 FIRST |
+| 8 | TALLYING counter index, or -1 for a REPLACING operand |
+| 16, 24 | pattern pointer and length (for CHARACTERS: the length is 1) |
+| 32 | replacement pointer (pattern length characters) |
+| 40, 48 | BEFORE INITIAL delimiter pointer and length, or 0 |
+| 56, 64 | AFTER INITIAL delimiter pointer and length, or 0 |
+| 72-95 | scratch for the runtime |
+
+`counters` points to one signed qword per TALLYING counter; the runtime adds
+the tallies, and the compiler stores the counters back into their items. The
+regions are fixed from the BEFORE / AFTER delimiters before the scan. The scan
+moves left to right; at each position the first entry (in table order) whose
+pattern matches inside its region is applied and the scan skips the matched
+characters. A program with both TALLYING and REPLACING calls the routine
+twice, tallying first. CONVERTING is compiled as one ALL entry per character
+of the first operand (a character listed twice keeps its first replacement).
+
+## 10. SPECIAL-NAMES [implemented]
+
+PROGRAM COLLATING SEQUENCE: the compiler builds a 256-byte weight table from
+the alphabet (STANDARD-1 and STANDARD-2 are ASCII, NATIVE is the table being
+absent; a literal alphabet gives listed characters ascending weights in order,
+ALSO giving equal weights, and unlisted characters follow in native order) and
+calls `runtime_set_collation` at program start. Alphanumeric comparisons
+compare weights; class tests, INSPECT and moves are not affected.
+
+User CLASS: the compiler emits the list of member characters (THROUGH ranges
+expanded) and tests with `runtime_class_test` class 9.
+
+Switches: SWITCH-1 to SWITCH-9. A condition-name for ON STATUS is true when
+`runtime_switch_status` returns 1, OFF STATUS when it returns 0. On Linux a
+switch is on when the environment variable `COB_SWITCH_n` is `ON`.
+
+CURRENCY SIGN and DECIMAL-POINT IS COMMA are resolved by the compiler (PICTURE
+analysis and numeric literals) and passed to `runtime_edit_numeric` in its
+flags (section 8). DISPLAY UPON a mnemonic name writes to stdout.
+

@@ -75,7 +75,8 @@ typedef enum {
                                 //   (pad_char repeated, or the lit_name/lit_len
                                 //   pattern repeated); jump unless (a cmp_op b)
     IR_CLASS_JUMP,          // class test of var_name/size, class code imm; jump to
-                            //   jump_target when the result equals flags (1 or 0)
+                            //   jump_target when the result equals flags (1 or 0);
+                            //   class 9: members lit_name, lit_len characters
     // Field addresses computed at run time (subscripts, reference modification).
     // Field operands name their storage as "%r<record>+<offset>", or as
     // "*A_<slot>[+<offset>]" when the address is in address slot A_<slot>.
@@ -103,6 +104,9 @@ typedef enum {
                             //   1: the address of lit_name, 2: the length size
     IR_CALL_INSPECT,        // subject var_name (size bytes), operand table lit_name
                             //   with imm entries, counters content (runtime/ABI.md 9)
+    IR_DATA_BYTES,          // initialized data var_name: size bytes of content
+    IR_CALL_SET_COLLATION,  // program collating sequence: weight table var_name
+    IR_SWITCH_JUMP,         // jump to jump_target if switch imm is on (flags 1) / off (0)
     IR_SIZE_ERR_CLEAR,      // start of a statement that stores numeric results
     IR_JUMP_IF_NO_SIZE_ERR, // jump to jump_target if no size error since the clear
 } IrOpcode;

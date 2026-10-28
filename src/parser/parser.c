@@ -215,6 +215,7 @@ static AstNode *parse_rel_operand(void);
 static AstNode *parse_all_literal(void);
 static AstNode *parse_identifier(void);
 static AstNode *parse_value_operand(void);
+static void parse_special_names(AstNode *div, AstNode **tail);
 static AstNode *parse_arith_operand(void);
 static AstNode *parse_procedure_name(void);
 static AstNode *parse_imperative_block(void);
@@ -712,9 +713,20 @@ static bool is_relop_start(TokenKind kind) {
            kind == TOK_EQ || kind == TOK_NE;
 }
 
+static bool is_class_name_token(void) {
+    if (tok.kind != TOK_IDENT) return false;
+    char name[64];
+    size_t n = tok.length < sizeof(name) - 1 ? tok.length : sizeof(name) - 1;
+    memcpy(name, tok.lexeme, n);
+    name[n] = '\0';
+    Symbol *sym = symtab_resolve_symbol(current_symtab, name);
+    return sym && sym->level == -2;
+}
+
 static bool is_class_or_sign(TokenKind kind) {
     return kind == TOK_NUMERIC || kind == TOK_ALPHABETIC || kind == TOK_ALPHABETIC_LOWER ||
-           kind == TOK_ALPHABETIC_UPPER || kind == TOK_POSITIVE || kind == TOK_NEGATIVE;
+           kind == TOK_ALPHABETIC_UPPER || kind == TOK_POSITIVE || kind == TOK_NEGATIVE ||
+           (kind == TOK_IDENT && is_class_name_token());
 }
 
 static const char *negate_relop(const char *op) {
@@ -824,6 +836,16 @@ static AstNode *parse_condition_tail(AstNode *subject) {
 
     const char *word;
     AstKind kind = AST_COND_CLASS;
+    if (tok.kind == TOK_IDENT) {
+        // A class-name from SPECIAL-NAMES
+        char *cls = tok_to_str();
+        next();
+        cond = make_cond(AST_COND_CLASS, subject, NULL, subject->loc);
+        cond->name = strdup("USER");
+        cond->text = cls;
+        if (negated) cond = make_cond(AST_COND_NOT, cond, NULL, cond->loc);
+        return cond;
+    }
     switch (tok.kind) {
         case TOK_NUMERIC:          word = "NUMERIC"; break;
         case TOK_ALPHABETIC:       word = "ALPHABETIC"; break;
@@ -1226,8 +1248,19 @@ static AstNode *parse_statement(void) {
         next();
         AstNode *display = ast_new(AST_STATEMENT_DISPLAY, NULL, loc);
         AstNode *last = NULL, *arg;
-        while (!parser_panic_mode && (arg = parse_value_operand()))
+        while (!parser_panic_mode && !(tok.kind == TOK_IDENT && tok_is_word("NO")) &&
+               (arg = parse_value_operand()))
             list_append(&display->children, &last, arg);
+        if (tok.kind == TOK_UPON) {         // the console is the only device
+            next();
+            if (tok.kind == TOK_IDENT) next();
+        }
+        if (tok.kind == TOK_WITH || tok_is_word("NO")) {
+            if (tok.kind == TOK_WITH) next();
+            if (tok_is_word("NO")) next();
+            if (tok.kind == TOK_ADVANCING) next();
+            display->is_numeric = true;     // WITH NO ADVANCING
+        }
         return display;
     }
     else if (tok.kind == TOK_STOP) {
@@ -2102,6 +2135,108 @@ static bool tok_is_word(const char *word) {
     return tok.kind == TOK_IDENT && tok.length == n && strncasecmp(tok.lexeme, word, n) == 0;
 }
 
+static void declare_special_name(const char *name, int level, SourceLocation loc) {
+    Symbol *sym = symtab_resolve_symbol(current_symtab, name);
+    if (!sym) sym = symtab_declare_symbol(current_symtab, name, SYM_VAR, loc);
+    if (sym) {
+        sym->level = level;
+        symtab_mark_symbol_as_used(sym);
+    }
+}
+
+// Character specification of ALPHABET and CLASS:
+// {literal [THRU literal | {ALSO literal}...]}...
+static void parse_char_specs(AstNode *entry, bool allow_also) {
+    AstNode *tail = NULL;
+    while (tok.kind == TOK_STRING || tok.kind == TOK_NUMBER || is_figurative(tok.kind) ||
+           (allow_also && tok.kind == TOK_ALSO)) {
+        bool also = false;
+        if (tok.kind == TOK_ALSO) {
+            also = true;
+            next();
+        }
+        AstNode *lit = parse_rel_operand();
+        if (!lit) break;
+        lit->is_signed = also;
+        if (tok.kind == TOK_THROUGH) {
+            next();
+            lit->extra = parse_rel_operand();
+        }
+        list_append(&entry->children, &tail, lit);
+    }
+}
+
+// SPECIAL-NAMES clauses up to the period
+static void parse_special_names(AstNode *div, AstNode **tail) {
+    while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF && !is_division_start(tok.kind) &&
+           !tok_is_word("INPUT-OUTPUT") && !tok_is_word("FILE-CONTROL")) {
+        SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
+        if (tok_is_word("ALPHABET") || tok_is_word("CLASS")) {
+            bool alphabet = tok_is_word("ALPHABET");
+            next();
+            if (tok.kind != TOK_IDENT) { arith_error("Expected a name"); return; }
+            AstNode *e = ast_new(AST_SPECIAL, alphabet ? "ALPHABET" : "CLASS", loc);
+            e->text = tok_to_str();
+            declare_special_name(e->text, alphabet ? -3 : -2, loc);
+            next();
+            if (tok.kind == TOK_IS) next();
+            if (alphabet && (tok_is_word("NATIVE") || tok_is_word("STANDARD-1") || tok_is_word("STANDARD-2")))
+                next();                     // the native (ASCII) order
+            else
+                parse_char_specs(e, alphabet);
+            list_append(&div->children, tail, e);
+        } else if (tok_is_word("CURRENCY")) {
+            next();
+            if (tok.kind == TOK_SIGN) next();
+            if (tok.kind == TOK_IS) next();
+            if (tok.kind != TOK_STRING) { arith_error("Expected the currency literal"); return; }
+            AstNode *e = ast_new(AST_SPECIAL, "CURRENCY", loc);
+            e->text = tok_value();
+            list_append(&div->children, tail, e);
+            next();
+        } else if (tok_is_word("DECIMAL-POINT")) {
+            next();
+            if (tok.kind == TOK_IS) next();
+            if (tok_is_word("COMMA")) next();
+            list_append(&div->children, tail, ast_new(AST_SPECIAL, "DECIMAL-POINT", loc));
+            current_lexer->decimal_comma = true;
+        } else if (tok_is_word("SYMBOLIC")) {
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                             "SYMBOLIC CHARACTERS is not supported yet");
+            next();
+        } else if (tok.kind == TOK_IDENT) {
+            // implementor-name [IS mnemonic-name] [ON [STATUS] [IS] cond] [OFF [STATUS] [IS] cond]
+            AstNode *e = ast_new(AST_SPECIAL, "SWITCH", loc);
+            e->text = tok_to_str();
+            next();
+            if (tok.kind == TOK_IS) {
+                next();
+                if (tok.kind == TOK_IDENT) {
+                    char *mnemonic = tok_to_str();
+                    declare_special_name(mnemonic, -1, loc);
+                    free(mnemonic);
+                    next();
+                }
+            }
+            while (tok.kind == TOK_ON || tok_is_word("OFF")) {
+                bool on = tok.kind == TOK_ON;
+                next();
+                if (tok.kind == TOK_STATUS) next();
+                if (tok.kind == TOK_IS) next();
+                if (tok.kind != TOK_IDENT) { arith_error("Expected a condition-name"); ast_free(e); return; }
+                AstNode *cond = parse_procedure_name();
+                declare_special_name(cond->name, 88, loc);
+                if (on) e->on_error = cond;
+                else e->not_on_error = cond;
+            }
+            list_append(&div->children, tail, e);
+        } else {
+            next();
+        }
+    }
+    if (tok.kind == TOK_PERIOD) next();
+}
+
 // SELECT [OPTIONAL] file ASSIGN [TO] name [ORGANIZATION [IS] [LINE|RECORD]
 //   SEQUENTIAL] [ACCESS [MODE] [IS] SEQUENTIAL] [[FILE] STATUS [IS] item]
 //   [RESERVE n [AREA|AREAS]] ... .
@@ -2283,9 +2418,27 @@ static AstNode *parse_division(void) {
                 if (sel) list_append(&div->children, &sel_tail, sel);
                 continue;
             }
-            if (tok_is_word("SPECIAL-NAMES"))
-                cobalt_warn_loc(current_lexer->original_source, tok.line, tok.column,
-                                "SPECIAL-NAMES entries are ignored");
+            if (tok_is_word("SPECIAL-NAMES")) {
+                next();
+                if (tok.kind == TOK_PERIOD) next();
+                parse_special_names(div, &sel_tail);
+                continue;
+            }
+            if (tok_is_word("PROGRAM") && peek_token().kind == TOK_IDENT) {
+                // OBJECT-COMPUTER: PROGRAM COLLATING SEQUENCE IS alphabet-name
+                SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
+                next();
+                if (tok_is_word("COLLATING")) next();
+                if (tok_is_word("SEQUENCE")) next();
+                if (tok.kind == TOK_IS) next();
+                if (tok.kind == TOK_IDENT) {
+                    AstNode *coll = ast_new(AST_SPECIAL, "COLLATING", loc);
+                    coll->text = tok_to_str();
+                    list_append(&div->children, &sel_tail, coll);
+                    next();
+                }
+                continue;
+            }
             next();
         }
     }

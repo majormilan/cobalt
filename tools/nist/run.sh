@@ -36,7 +36,8 @@ for cbl in "$SRC"/$MODULE*.CBL; do
     # Programs that ACCEPT input get the suite's data member on stdin
     input=/dev/null
     [ -f "$SRC/$name.DAT" ] && input="$ROOT/$SRC/$name.DAT"
-    (cd "$dir" && timeout 10 "./$name" < "$input" > run.log 2>&1)
+    # The operator's switch settings the suite expects: SWITCH-1 on
+    (cd "$dir" && COB_SWITCH_1=ON timeout 10 "./$name" < "$input" > run.log 2>&1)
     if [ -f "$dir/report.log" ]; then
         ran=$((ran+1))
         # Summary lines: "093 OF 093  TESTS WERE EXECUTED SUCCESSFULLY",

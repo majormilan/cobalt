@@ -9,6 +9,7 @@ global runtime_compare_alnum
 global runtime_compare_fill
 global runtime_class_test
 global runtime_compare_pattern
+global runtime_set_collation
 
 ; Alphanumeric comparison in the native (ASCII) collating sequence; the
 ; shorter operand is padded with spaces.
@@ -38,6 +39,7 @@ runtime_compare_alnum:
     jae .b_done
     mov cl, [r9 + rdx]
 .b_done:
+    call collate_pair
     cmp al, cl
     jb .less
     ja .greater
@@ -65,7 +67,9 @@ runtime_compare_fill:
     cmp rdx, r11
     jae .equal
     mov al, [r10 + rdx]
-    cmp al, r9b
+    mov cl, r9b
+    call collate_pair
+    cmp al, cl
     jb .less
     ja .greater
     inc rdx
@@ -93,6 +97,8 @@ runtime_class_test:
     mov r11, ARG1
     mov r9, ARG2
     xor edx, edx                        ; index
+    cmp r9, 9
+    je .user_class
     cmp r9, 5
     je .packed
     cmp r9, 6
@@ -214,6 +220,28 @@ runtime_class_test:
     mov eax, 1
     ret
 
+    ; CLASS from SPECIAL-NAMES: every character in the member list
+    ; (ARG3 = members, ARG4 = number of members)
+.user_class:
+    mov rax, ARG4                       ; read before ARG3 (ARG4 is r8 under SysV)
+    mov r8, ARG3
+    mov r9, rax
+.uc_loop:
+    cmp rdx, r11
+    jae .yes
+    mov al, [r10 + rdx]
+    xor ecx, ecx
+.uc_member:
+    cmp rcx, r9
+    jae .no
+    cmp al, [r8 + rcx]
+    je .uc_next
+    inc rcx
+    jmp .uc_member
+.uc_next:
+    inc rdx
+    jmp .uc_loop
+
 .packed:                                ; every nibble a digit, last nibble C, D or F
     cmp rdx, r11
     jae .yes
@@ -260,7 +288,11 @@ runtime_compare_pattern:
     cmp rcx, r11
     jae .cp_equal
     mov al, [r10 + rcx]
-    mov bl, [r9 + rdx]
+    push rcx
+    mov cl, [r9 + rdx]
+    call collate_pair
+    mov bl, cl
+    pop rcx
     cmp al, bl
     jb .cp_less
     ja .cp_greater
@@ -282,3 +314,26 @@ runtime_compare_pattern:
     pop rbx
     mov eax, 1
     ret
+
+; Program collating sequence: ARG0 = 256-byte weight table (0 for native)
+runtime_set_collation:
+    mov [rel cobrt_collation], ARG0
+    ret
+
+; Translate al and cl to their collating weights (unchanged when native).
+; Preserves every other register.
+collate_pair:
+    push r11
+    mov r11, [rel cobrt_collation]
+    test r11, r11
+    jz .cp_native
+    movzx eax, al
+    movzx ecx, cl
+    mov al, [r11 + rax]
+    mov cl, [r11 + rcx]
+.cp_native:
+    pop r11
+    ret
+
+section .bss
+cobrt_collation: resq 1

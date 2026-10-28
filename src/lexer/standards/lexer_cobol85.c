@@ -203,6 +203,7 @@ Token lexer_cobol85_keyword_or_ident(Lexer *l, const char *start, size_t len) {
     KW("FIRST",           TOK_FIRST);
     KW("INITIAL",         TOK_INITIAL);
     KW("FOR",             TOK_FOR);
+    KW("UPON",            TOK_UPON);
     #undef KW
 
     return make_token_public(l, TOK_IDENT, start, len);
