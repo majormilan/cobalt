@@ -6,6 +6,7 @@
 # Build artifacts go to obj/test/<triple>/ and are kept for inspection.
 # If tests/<name>.input exists it is fed to the program on stdin,
 # otherwise stdin is empty (so ACCEPT never blocks).
+# A program running longer than TEST_TIMEOUT seconds (default 10) fails.
 
 if [ "$#" -ne 1 ]; then
     echo "Usage: [TARGET=<triple>] $0 <cbl_file>"
@@ -13,6 +14,7 @@ if [ "$#" -ne 1 ]; then
 fi
 
 TARGET=${TARGET:-x86_64-linux-elf}
+TEST_TIMEOUT=${TEST_TIMEOUT:-10}
 
 case "$TARGET" in
     x86_64-linux-elf) NASM_FMT=elf64 ;;
@@ -64,9 +66,13 @@ fi
 
 # 4. Run and capture output
 if [ -f "$INPUT_FILE" ]; then
-    OUTPUT=$("$BIN_FILE" < "$INPUT_FILE")
+    OUTPUT=$(timeout "$TEST_TIMEOUT" "$BIN_FILE" < "$INPUT_FILE")
 else
-    OUTPUT=$("$BIN_FILE" < /dev/null)
+    OUTPUT=$(timeout "$TEST_TIMEOUT" "$BIN_FILE" < /dev/null)
+fi
+if [ $? -eq 124 ]; then
+    echo "Error: $BIN_FILE did not finish within ${TEST_TIMEOUT}s"
+    exit 1
 fi
 
 # 5. Verify Output

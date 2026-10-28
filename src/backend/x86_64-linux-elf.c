@@ -44,6 +44,23 @@ static const char *const runtime_routines[] = {
 #undef RUNTIME_ROUTINE
 };
 
+// Stack and register discipline of generated code (see runtime/ABI.md):
+// - rsp is 16-byte aligned throughout _start and every paragraph body, so
+//   every runtime call is made with an aligned stack. _start is entered
+//   aligned; a paragraph call pads the stack by 8 bytes so the callee is
+//   entered the same way.
+// - rbx holds the PERFORM ... TIMES counter. Each loop saves the previous
+//   value on the stack (which also serves as the call padding), so loops nest.
+// - r12 holds the left operand of a comparison across the runtime call that
+//   loads the right one. It is never live across a paragraph call.
+
+// Call a paragraph from aligned code
+static void emit_para_call(FILE *f, const char *para) {
+    fprintf(f, "    sub rsp, 8\n");
+    fprintf(f, "    call %s\n", para);
+    fprintf(f, "    add rsp, 8\n\n");
+}
+
 int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *target) {
     int perform_counter = 0; // unique label suffix for PERFORM TIMES loops
 
@@ -191,7 +208,7 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 fprintf(f, "\n%s:\n", sanitized_var_name);
                 break;
             case IR_CALL_PARA:
-                fprintf(f, "    call %s\n\n", sanitized_var_name);
+                emit_para_call(f, sanitized_var_name);
                 break;
             case IR_RET:
                 fprintf(f, "    ret\n\n");
@@ -199,17 +216,21 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
             case IR_PERFORM_TIMES:
                 if (!sanitized_lit_name) {
                     // Literal count: PERFORM para N TIMES
+                    if (i->size <= 0) break; // zero iterations: nothing to emit
+                    fprintf(f, "    push rbx\n"); // save outer counter; pads the calls below
                     fprintf(f, "    mov rbx, %d\n", i->size);
                     fprintf(f, ".perform_%d:\n", perform_counter);
                     fprintf(f, "    call %s\n", sanitized_var_name);
                     fprintf(f, "    dec rbx\n");
-                    fprintf(f, "    jnz .perform_%d\n\n", perform_counter);
+                    fprintf(f, "    jnz .perform_%d\n", perform_counter);
+                    fprintf(f, "    pop rbx\n\n");
                     perform_counter++;
                 } else {
                     // Variable count: PERFORM para var TIMES
                     fprintf(f, "    lea rdi, [%s]\n", sanitized_lit_name);
                     fprintf(f, "    mov rsi, %d\n", i->lit_len);
                     fprintf(f, "    call runtime_load_int\n");
+                    fprintf(f, "    push rbx\n"); // save outer counter; pads the calls below
                     fprintf(f, "    mov rbx, rax\n");
                     fprintf(f, "    test rbx, rbx\n");
                     fprintf(f, "    jz .perform_%d_done\n", perform_counter);
@@ -217,7 +238,8 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                     fprintf(f, "    call %s\n", sanitized_var_name);
                     fprintf(f, "    dec rbx\n");
                     fprintf(f, "    jnz .perform_%d\n", perform_counter);
-                    fprintf(f, ".perform_%d_done:\n\n", perform_counter);
+                    fprintf(f, ".perform_%d_done:\n", perform_counter);
+                    fprintf(f, "    pop rbx\n\n");
                     perform_counter++;
                 }
                 break;
@@ -228,14 +250,14 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 fprintf(f, "    jmp %s\n\n", i->jump_target ? i->jump_target : "");
                 break;
             case IR_CMP_JUMP_IF_FALSE: {
-                // Load left operand into r11
+                // Load left operand into r12 (callee-saved, survives the call below)
                 if (i->left_is_literal) {
-                    fprintf(f, "    mov r11, %s\n", i->var_name ? i->var_name : "0");
+                    fprintf(f, "    mov r12, %s\n", i->var_name ? i->var_name : "0");
                 } else if (sanitized_var_name) {
                     fprintf(f, "    lea rdi, [%s]\n", sanitized_var_name);
                     fprintf(f, "    mov rsi, %d\n", i->size);
                     fprintf(f, "    call runtime_load_int\n");
-                    fprintf(f, "    mov r11, rax\n");
+                    fprintf(f, "    mov r12, rax\n");
                 }
                 // Load right operand into rax
                 if (i->right_is_literal) {
@@ -245,7 +267,7 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                     fprintf(f, "    mov rsi, %d\n", i->lit_len);
                     fprintf(f, "    call runtime_load_int\n");
                 }
-                fprintf(f, "    cmp r11, rax\n");
+                fprintf(f, "    cmp r12, rax\n");
                 // Emit the INVERTED conditional jump (we jump when condition is FALSE)
                 const char *jmp_instr = "jne"; // default: "=" inverted
                 if (i->cmp_op) {
