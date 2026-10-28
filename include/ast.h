@@ -118,6 +118,9 @@ typedef struct AstNode {
     bool is_signed;         // True if the data item is signed
     int decimal_places;     // Number of decimal places for numeric items (V in PIC)
     int digits;             // Number of digit positions (9s) for numeric items
+    char *mask;             // edited items: edit mask (see sema.c), else NULL
+    char float_char;        // numeric edited: floating $, + or -, else 0
+    bool blank_when_zero;   // BLANK WHEN ZERO
 
     // Arithmetic statements
     bool rounded;           // ROUNDED on this receiving identifier

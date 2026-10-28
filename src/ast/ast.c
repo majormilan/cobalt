@@ -32,6 +32,9 @@ AstNode *ast_clone(const AstNode *node) {
     c->is_signed = node->is_signed;
     c->decimal_places = node->decimal_places;
     c->digits = node->digits;
+    if (node->mask) c->mask = strdup(node->mask);
+    c->float_char = node->float_char;
+    c->blank_when_zero = node->blank_when_zero;
     c->rounded = node->rounded;
     c->children = ast_clone_list(node->children);
     c->on_error = ast_clone_list(node->on_error);
@@ -57,6 +60,7 @@ void ast_free(AstNode *node) {
 
     free(node->name);
     free(node->text);
+    free(node->mask);
 
     ast_free(node->children);
     ast_free(node->on_error);

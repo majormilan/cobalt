@@ -51,7 +51,12 @@ typedef enum {
     IR_NUM_MUL,             // pop b, pop a, push (a * b) / 10^imm
     IR_NUM_DIV,             // pop b, pop a, push (a * 10^imm) / b
     IR_NUM_NEG,             // top = -top
-    IR_NUM_STORE,           // pop into a field: var_name, size, digits, usage_type, flags
+    IR_NUM_STORE,           // pop into a field: var_name, size, digits, usage_type, flags;
+                            //   with lit_name: edit into a numeric edited item using
+                            //   that edit mask (size = mask length, flags = edit flags)
+    IR_NUM_DEEDIT,          // push the value of numeric edited item var_name (size)
+    IR_CALL_EDIT_ALNUM,     // edit lit_name (lit_len bytes) into var_name (size bytes)
+                            //   using the alphanumeric edit mask content
     IR_NUM_CMP_JUMP_IF_FALSE,   // pop b, pop a; jump to jump_target unless (a cmp_op b)
     IR_ALNUM_CMP_JUMP_IF_FALSE, // var_name/size vs lit_name/lit_len (data labels);
                                 //   jump to jump_target unless (a cmp_op b)

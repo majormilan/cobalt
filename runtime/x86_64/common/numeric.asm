@@ -13,6 +13,7 @@ global runtime_num_store
 global runtime_num_rescale
 global runtime_num_mul
 global runtime_num_div
+global cobrt_pow10
 
 ; ARG0 = field ptr, ARG1 = size, ARG2 = usage, ARG3 = flags
 ; Returns RET0 = the field's value as an unscaled signed integer.
@@ -495,6 +496,7 @@ runtime_num_div:
 
 section .rodata
 align 8
+cobrt_pow10:
 pow10:
     dq 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000
     dq 1000000000, 10000000000, 100000000000, 1000000000000

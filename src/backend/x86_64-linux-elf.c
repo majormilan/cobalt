@@ -350,14 +350,43 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 fprintf(f, "    or [rel cobrt_tgt_err], dl\n");
                 emit_push(f);
                 break;
+            case IR_NUM_DEEDIT:
+                emit_addr(f, "rdi", i->var_name);
+                emit_size(f, "rsi", i->size);
+                fprintf(f, "    call runtime_deedit\n");
+                emit_push(f);
+                break;
+            case IR_CALL_EDIT_ALNUM:
+                emit_addr(f, "rdi", i->var_name);
+                emit_addr(f, "rsi", i->lit_name);
+                emit_size(f, "rdx", i->lit_len);
+                emit_addr(f, "rcx", i->content);
+                emit_size(f, "r8", i->size);
+                fprintf(f, "    call runtime_edit_alnum\n\n");
+                break;
             case IR_NUM_NEG:
                 fprintf(f, "    neg qword [rsp]\n");
                 break;
             case IR_NUM_STORE:
                 // An error while computing the value: leave the receiver unchanged
-                emit_pop(f, "r9");
+                emit_pop(f, i->lit_name ? "rcx" : "r9");
                 fprintf(f, "    cmp byte [rel cobrt_tgt_err], 0\n");
                 fprintf(f, "    jne L_store_%d\n", store_counter);
+                if (i->lit_name) {
+                    // Numeric edited receiver
+                    emit_addr(f, "rdi", i->var_name);
+                    emit_addr(f, "rsi", i->lit_name);
+                    fprintf(f, "    mov rdx, %d\n", i->size);
+                    fprintf(f, "    mov r8, %d\n", i->flags);
+                    fprintf(f, "    call runtime_edit_numeric\n");
+                    fprintf(f, "    or [rel cobrt_tgt_err], al\n");
+                    fprintf(f, "L_store_%d:\n", store_counter);
+                    fprintf(f, "    mov al, [rel cobrt_tgt_err]\n");
+                    fprintf(f, "    or [rel cobrt_stmt_err], al\n");
+                    fprintf(f, "    mov byte [rel cobrt_tgt_err], 0\n\n");
+                    store_counter++;
+                    break;
+                }
                 emit_addr(f, "rdi", i->var_name);
                 emit_size(f, "rsi", i->size);
                 fprintf(f, "    mov rdx, %d\n", i->digits);

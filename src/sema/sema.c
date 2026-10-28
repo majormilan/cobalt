@@ -9,23 +9,39 @@
 #include <ctype.h>  // For toupper, isdigit
 
 // Result of analyzing a PICTURE character-string
+typedef enum { PIC_NUMERIC, PIC_NUMERIC_EDITED, PIC_ALNUM, PIC_ALNUM_EDITED, PIC_INVALID } PicClass;
+
 typedef struct {
-    bool numeric;       // only 9, S, V
-    bool alphanumeric;  // only X, A, 9 with at least one X or A
-    bool is_signed;     // S present
-    int digits;         // number of 9 positions (numeric)
-    int scale;          // 9 positions after V
-    int length;         // character positions (alphanumeric)
-    char unsupported;   // first PICTURE symbol not supported yet, or 0
+    PicClass cls;
+    bool is_signed;     // S, or + - CR DB in an edited picture
+    int digits;         // numeric: 9 positions; edited: all digit positions
+    int scale;          // digits after the (implied) decimal point; P scaling
+                        // makes it larger than digits (PP99) or negative (99PP)
+    int length;         // character positions (bytes) of the item
+    char mask[256];     // edited pictures: one symbol per character position
+    char float_char;    // floating $, + or - in a numeric edited picture
+    char bad;           // first symbol that is not valid here, or 0
 } PicInfo;
 
+// Edit masks (runtime/ABI.md section 8) use one symbol per position:
+//   9 digit, Z digit or space, * digit or asterisk, f floating digit,
+//   F floating symbol position (leftmost of a floating string),
+//   B 0 / , . insertion, S fixed + sign, M fixed - sign, $ fixed currency,
+//   c r = CR, d b = DB; alphanumeric edited: X (any character), B 0 /.
 static PicInfo analyze_pic(const char *pic) {
     PicInfo info = {0};
-    bool seen_v = false, seen_x = false;
-    const char *p = pic;
+    char sym[256];
+    int n = 0;
 
-    while (*p) {
+    // Expand repeat factors; CR and DB become two-position symbols c r / d b
+    for (const char *p = pic; *p && n < 250; ) {
         char c = toupper((unsigned char)*p++);
+        if ((c == 'C' && toupper((unsigned char)*p) == 'R') || (c == 'D' && toupper((unsigned char)*p) == 'B')) {
+            sym[n++] = c == 'C' ? 'c' : 'd';
+            sym[n++] = c == 'C' ? 'r' : 'b';
+            p++;
+            continue;
+        }
         int repeat = 1;
         if (*p == '(') {
             p++;
@@ -33,26 +49,97 @@ static PicInfo analyze_pic(const char *pic) {
             while (isdigit((unsigned char)*p)) repeat = repeat * 10 + (*p++ - '0');
             if (*p == ')') p++;
         }
-        switch (c) {
-            case '9':
-                info.digits += repeat;
-                info.length += repeat;
-                if (seen_v) info.scale += repeat;
-                break;
-            case 'X':
-            case 'A':
-                seen_x = true;
-                info.length += repeat;
-                break;
-            case 'S': info.is_signed = true; break;
-            case 'V': seen_v = true; break;
-            default:
-                if (!info.unsupported) info.unsupported = c;
-                break;
+        while (repeat-- > 0 && n < 250) sym[n++] = c;
+    }
+
+    bool has_x = false, has_edit = false;
+    int count_dollar = 0, count_plus = 0, count_minus = 0;
+    for (int i = 0; i < n; i++) {
+        switch (sym[i]) {
+            case 'X': case 'A': has_x = true; break;
+            case '9': case 'S': case 'V': case 'P': break;
+            case 'B': case '0': case '/': case ',': case '.': case 'Z': case '*':
+            case 'c': case 'r': case 'd': case 'b':
+                has_edit = true; break;
+            case '$': count_dollar++; has_edit = true; break;
+            case '+': count_plus++; has_edit = true; break;
+            case '-': count_minus++; has_edit = true; break;
+            default: if (!info.bad) info.bad = sym[i]; break;
         }
     }
-    info.alphanumeric = seen_x;
-    info.numeric = !seen_x && info.digits > 0;
+
+    if (has_x) {
+        // Alphanumeric (X, A, 9) or alphanumeric edited (with B 0 /)
+        bool edited = false;
+        for (int i = 0; i < n; i++) {
+            char c = sym[i];
+            if (c == 'B' || c == '0' || c == '/') { edited = true; info.mask[i] = c; }
+            else if (c == 'X' || c == 'A' || c == '9') info.mask[i] = 'X';
+            else if (!info.bad) info.bad = c;
+        }
+        info.length = n;
+        info.cls = edited ? PIC_ALNUM_EDITED : PIC_ALNUM;
+        if (!edited) info.mask[0] = '\0';
+        return info;
+    }
+
+    if (!has_edit) {
+        // Numeric: 9, S, V, P
+        int nines = 0, after_v = 0, p_count = 0;
+        bool seen_v = false, p_left = false;
+        for (int i = 0; i < n; i++) {
+            switch (sym[i]) {
+                case '9': nines++; if (seen_v) after_v++; break;
+                case 'S': info.is_signed = true; break;
+                case 'V': seen_v = true; break;
+                case 'P': p_count++; if (nines == 0) p_left = true; break;
+            }
+        }
+        info.cls = nines ? PIC_NUMERIC : PIC_INVALID;
+        info.digits = nines;
+        info.length = nines;
+        if (p_count && p_left) info.scale = p_count + nines;     // PP99: all fractional
+        else if (p_count) info.scale = -p_count;                 // 99PP: scaled up
+        else info.scale = after_v;
+        return info;
+    }
+
+    // Numeric edited. A symbol + - $ that appears more than once is floating.
+    char floating = count_dollar > 1 ? '$' : count_plus > 1 ? '+' : count_minus > 1 ? '-' : 0;
+    info.float_char = floating;
+    bool seen_point = false, seen_float = false;
+    int m = 0;
+    for (int i = 0; i < n; i++) {
+        char c = sym[i], out = 0;
+        bool digit = false;
+        switch (c) {
+            case '9': case 'Z': case '*': out = c; digit = true; break;
+            case 'B': case '0': case '/': case ',': out = c; break;
+            case 'c': case 'r': case 'd': case 'b': out = c; info.is_signed = true; break;
+            case '.': out = '.'; seen_point = true; break;
+            case 'V': seen_point = true; break;                 // implied: no position
+            case 'P': break;                                    // scaling: no position
+            case '$': case '+': case '-':
+                if (c == floating) {
+                    out = seen_float ? 'f' : 'F';
+                    digit = seen_float;
+                    seen_float = true;
+                } else {
+                    out = c == '$' ? '$' : c == '+' ? 'S' : 'M';
+                }
+                if (c != '$') info.is_signed = true;
+                break;
+            default: break;
+        }
+        if (out) info.mask[m++] = out;
+        if (digit) {
+            info.digits++;
+            if (seen_point) info.scale++;
+        }
+    }
+    info.mask[m] = '\0';
+    info.length = m;
+    info.cls = PIC_NUMERIC_EDITED;
     return info;
 }
 
@@ -127,24 +214,35 @@ static void sema_analyze_var_decl(AstNode *var_decl, SemaContext *ctx) {
     const char *pic_str = pic_node->name;
     PicInfo pic = analyze_pic(pic_str);
 
-    if (pic.unsupported) {
+    if (pic.bad || pic.cls == PIC_INVALID) {
         cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
-                         "PICTURE symbol '%c' in '%s' of '%s' is not supported yet",
-                         pic.unsupported, pic_str, var_decl->name);
+                         "PICTURE '%s' of '%s' is not valid (symbol '%c')",
+                         pic_str, var_decl->name, pic.bad ? pic.bad : '?');
         return;
     }
 
-    if (pic.alphanumeric) {
-        if (pic.is_signed || pic.scale) {
-            cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
-                             "PICTURE '%s' of '%s' mixes S or V with X or A", pic_str, var_decl->name);
-        }
+    if (pic.cls == PIC_ALNUM || pic.cls == PIC_ALNUM_EDITED) {
         var_decl->data_size = pic.length;
+        if (pic.cls == PIC_ALNUM_EDITED) var_decl->mask = strdup(pic.mask);
         if (var_decl->usage_type != USAGE_DISPLAY) {
             cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
                              "USAGE COMP cannot be used with alphanumeric PIC '%s'", pic_str);
         }
-    } else if (pic.numeric) {
+    } else if (pic.cls == PIC_NUMERIC_EDITED) {
+        // Stored as characters: an alphanumeric item that numeric values are
+        // edited into
+        if (pic.digits > 18) {
+            cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
+                             "PICTURE '%s' of '%s' has %d digit positions; the maximum is 18",
+                             pic_str, var_decl->name, pic.digits);
+        }
+        var_decl->data_size = pic.length;
+        var_decl->mask = strdup(pic.mask);
+        var_decl->float_char = pic.float_char;
+        var_decl->digits = pic.digits;
+        var_decl->decimal_places = pic.scale;
+        var_decl->is_signed = pic.is_signed;
+    } else {
         if (pic.digits > 18) {
             cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
                              "PICTURE '%s' of '%s' has %d digits; the maximum is 18",
@@ -155,10 +253,28 @@ static void sema_analyze_var_decl(AstNode *var_decl, SemaContext *ctx) {
         var_decl->decimal_places = pic.scale;
         var_decl->digits = pic.digits;
         var_decl->data_size = numeric_size(var_decl->usage_type, pic.digits);
-    } else {
+        if (var_decl->blank_when_zero && var_decl->usage_type == USAGE_DISPLAY) {
+            // BLANK WHEN ZERO on a numeric item makes it numeric edited
+            char mask[64];
+            int k = 0;
+            for (int i = 0; i < pic.digits && k < 60; i++) {
+                if (i == pic.digits - pic.scale && pic.scale > 0) mask[k++] = 'V';
+                mask[k++] = '9';
+            }
+            mask[k] = '\0';
+            // V has no position in a mask: keep only the 9s
+            char m2[64];
+            int j = 0;
+            for (int i = 0; mask[i]; i++) if (mask[i] == '9') m2[j++] = '9';
+            m2[j] = '\0';
+            var_decl->mask = strdup(m2);
+            var_decl->is_numeric = false;
+            var_decl->is_signed = false;
+        }
+    }
+    if (var_decl->blank_when_zero && !var_decl->mask) {
         cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
-                         "Variable '%s' has unsupported PIC string '%s'", var_decl->name, pic_str);
-        return;
+                         "BLANK WHEN ZERO requires a numeric DISPLAY or numeric edited item");
     }
 
     // Semantic validation for VALUE clause
@@ -186,7 +302,10 @@ static void sema_analyze_var_decl(AstNode *var_decl, SemaContext *ctx) {
                 const char *p = value_literal_node->name;
                 while (*p == '+' || *p == '-') p++;
                 while (*p == '0' && int_digits > 0) { p++; int_digits--; }
-                if (int_digits > pic.digits - pic.scale || frac_digits > pic.scale) {
+                int int_capacity = pic.digits - pic.scale;  // P scaling: 99PP holds 4 digits
+                if (pic.scale < 0) int_capacity = pic.digits - pic.scale;
+                if (int_capacity < 0) int_capacity = 0;
+                if (int_digits > int_capacity || frac_digits > (pic.scale > 0 ? pic.scale : 0)) {
                     cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
                                      "VALUE %s does not fit PICTURE '%s' of '%s'",
                                      value_literal_node->name, pic_str, var_decl->name);

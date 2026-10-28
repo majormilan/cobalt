@@ -122,6 +122,9 @@ positions in the PICTURE.
 | `runtime_replicate` | `ptr, size, count` | Copies the first `size` bytes at `ptr` over the following `count - 1` occurrences (INITIALIZE of a table). |
 | `runtime_move_pattern` | `ptr, size, pattern, pattern_len` | Fills a field with a pattern repeated (MOVE ALL "literal"). |
 | `runtime_compare_pattern` | `ptr, len, pattern, pattern_len` | Compares a field with a pattern repeated. Returns -1, 0 or 1. |
+| `runtime_edit_numeric` | `ptr, mask, mask_len, value, flags` | Edits a value (at the item's scale) into a numeric edited item (section 8). Returns 1 on size error. |
+| `runtime_edit_alnum` | `ptr, src, src_len, mask, mask_len` | Alphanumeric editing: source characters fill the `X` positions, `B 0 /` are inserted. |
+| `runtime_deedit` | `ptr, len` | Value of a numeric edited item's digits, negative if it shows `-`, `CR` or `DB` (MOVE numeric edited to numeric). |
 | `runtime_file_open` | `fcb, mode` | OPEN (section 7). Returns the status code. |
 | `runtime_file_close` | `fcb` | CLOSE. Returns the status code. |
 | `runtime_file_read` | `fcb, area` | READ the next record into the record area. Returns the status code. |
@@ -183,6 +186,13 @@ per byte. EBCDIC is not supported.
 
 `n` bytes, left-justified, padded with spaces (right-justified with
 JUSTIFIED RIGHT).
+
+### Edited items and P scaling [implemented]
+
+Numeric edited and alphanumeric edited items are stored as characters, one
+byte per position of the PICTURE. `P` (scaling) has no position: `99PPP`
+stores two digits worth thousands (scale -3) and `PPP99` two digits after
+three implied zeros (scale 5).
 
 ### Groups and tables [implemented]
 
@@ -336,3 +346,30 @@ open line.
 Not yet supported: RELATIVE and INDEXED organization, ACCESS RANDOM and
 DYNAMIC, LINAGE, SD and SORT/MERGE, USE declaratives, and ASSIGN to a data
 item.
+
+## 8. Editing [implemented]
+
+The compiler turns an edited PICTURE into an edit mask with one symbol per
+character position (repeat factors expanded, `V` and `P` dropped):
+
+| Mask | PICTURE | Output |
+|---|---|---|
+| `9` | `9` | the digit |
+| `Z` | `Z` | the digit, or a space while zeros are suppressed |
+| `*` | `*` | the digit, or `*` while zeros are suppressed (check protection) |
+| `F` `f` | floating `$$..`, `++..`, `--..` | `F` is the leftmost symbol of the floating string, `f` its other (digit) positions; the floating symbol is printed in the last suppressed position |
+| `B` `0` `/` `,` | same | inserted (space for `B`); inside a suppressed string replaced by the suppression character |
+| `.` | `.` | the decimal point; suppression ends here |
+| `S` | fixed `+` | `+` or `-` |
+| `M` | fixed `-` | space or `-` |
+| `$` | fixed `$` | `$` |
+| `c r` / `d b` | `CR` / `DB` | `CR` / `DB` when negative, else spaces |
+| `X` | `X` `A` `9` in alphanumeric edited | the next source character |
+
+`runtime_edit_numeric` takes the value already scaled to the item (digits
+after the point or `V`) and flags: bit 0 BLANK WHEN ZERO, bit 1 keep the item
+on size error, bits 8-15 the floating character. Zero suppression ends at the
+first non-zero digit, a `9` position or the decimal point. A zero value in an
+item without `9` positions is all spaces, or all `*` except the decimal point
+with check protection. A numeric DISPLAY item with BLANK WHEN ZERO is edited
+with a mask of `9`s.

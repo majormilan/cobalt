@@ -42,7 +42,15 @@ typedef struct {
     AstNode *cond_values;   // condition-name: literals (THRU upper bound in extra)
     AstNode *decl;
     int file;               // record description of this file (FD), or -1
+    const char *mask;       // edited item: edit mask (owned by the AST), else NULL
+    bool num_edited;        // numeric edited (values are edited into it)
+    char float_char;        // numeric edited: floating $ + or -
+    bool blank_zero;        // BLANK WHEN ZERO
+    char mask_label[32];    // data literal holding the mask, once emitted
 } VarInfo;
+
+static bool is_num_edited(const VarInfo *v) { return v->mask && v->num_edited; }
+static bool is_alnum_edited(const VarInfo *v) { return v->mask && !v->num_edited; }
 
 #define MAX_VARS 4096
 static VarInfo vars[MAX_VARS];
@@ -302,6 +310,10 @@ static void build_data(IrProgram *ir, AstNode *program) {
                 v->is_numeric = decl->is_numeric;
                 v->is_signed = decl->is_signed;
                 v->usage_type = decl->usage_type;
+                v->mask = decl->mask;
+                v->num_edited = decl->mask && !strchr(decl->mask, 'X');
+                v->float_char = decl->float_char;
+                v->blank_zero = decl->blank_when_zero;
                 for (AstNode *c = decl->children; c; c = c->next) {
                     if (c->kind == AST_STRING_LITERAL || c->kind == AST_LITERAL_NUMBER ||
                         c->kind == AST_FIGURATIVE_CONSTANT) v->value = c;
@@ -757,7 +769,20 @@ static void emit_load(IrProgram *ir, const FieldRef *f) {
     i->flags = var_flags(f->var);
 }
 
+static const char *mask_label(IrProgram *ir, VarInfo *v) {
+    if (!v->mask_label[0]) emit_data_lit(ir, "mask", v->mask, v->mask_label, sizeof(v->mask_label));
+    return v->mask_label;
+}
+
 static void emit_store(IrProgram *ir, const FieldRef *f, bool keep) {
+    if (is_num_edited(f->var)) {
+        IrInstr *e = emit(ir, IR_NUM_STORE);
+        e->var_name = strdup(f->label);
+        e->lit_name = strdup(mask_label(ir, f->var));
+        e->size = (int)strlen(f->var->mask);
+        e->flags = (f->var->blank_zero ? 1 : 0) | (keep ? 2 : 0) | ((unsigned char)f->var->float_char << 8);
+        return;
+    }
     IrInstr *i = emit(ir, IR_NUM_STORE);
     i->var_name = strdup(f->label);
     i->size = f->var->size;
@@ -862,8 +887,19 @@ static int working_scale(AstNode *tree, const VarInfo *target) {
 
 // Evaluate tree and store it into the receiver (an identifier node). The
 // receiver's subscripts are evaluated after the value, just before storing.
+// Numeric or numeric edited item that receives a numeric value
+static VarInfo *receiving_item(AstNode *n) {
+    VarInfo *v = find_item(n, true);
+    if (!v) return NULL;
+    if ((!v->is_numeric && !is_num_edited(v)) || v->is_cond || n->loop) {
+        cobalt_error_loc(NULL, n->loc.line, n->loc.column, "Receiving item '%s' is not numeric", n->name);
+        return NULL;
+    }
+    return v;
+}
+
 static void lower_assign(IrProgram *ir, AstNode *tree, AstNode *receiver, bool keep) {
-    VarInfo *t = numeric_item(receiver, "Receiving item");
+    VarInfo *t = receiving_item(receiver);
     if (!t || !num_expr_valid(tree)) return;
     int s = num_expr(ir, tree, working_scale(tree, t));
     emit_rescale(ir, t->decimal_places - s, receiver->rounded);
@@ -1308,82 +1344,103 @@ static void emit_fill_figurative(IrProgram *ir, const FieldRef *dest, const AstN
                                (int)strlen(fig->text), dest->size, 0, 0, USAGE_DISPLAY));
 }
 
+// Alphanumeric editing of size bytes at src_label into an alphanumeric
+// edited receiver
+static void emit_edit_alnum(IrProgram *ir, const FieldRef *dest, const char *src_label, int src_size) {
+    IrInstr *e = emit(ir, IR_CALL_EDIT_ALNUM);
+    e->var_name = strdup(dest->label);
+    e->lit_name = strdup(src_label);
+    e->lit_len = src_size;
+    e->size = dest->size;
+    e->content = strdup(mask_label(ir, dest->var));
+}
+
+// Push the value of a numeric or numeric edited identifier; returns its scale
+static int push_item_value(IrProgram *ir, AstNode *src, VarInfo *sv, bool *ok) {
+    FieldRef sf;
+    *ok = resolve_ref(ir, src, &sf);
+    if (!*ok) return 0;
+    if (is_num_edited(sv)) {
+        IrInstr *d = emit(ir, IR_NUM_DEEDIT);
+        d->var_name = strdup(sf.label);
+        d->size = sf.size;
+    } else {
+        emit_load(ir, &sf);
+    }
+    return sv->decimal_places;
+}
+
 // MOVE src TO dest (one receiver). Receiver subscripts are evaluated just
 // before the data is moved.
 static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const char *src_lit) {
     VarInfo *dv = find_item(dest_node, true);
     if (!dv) return;
-    bool dest_numeric = dv->is_numeric && !dest_node->loop && !dv->is_cond;
+    bool whole = !dest_node->loop && !dv->is_cond;
+    bool dest_numeric = dv->is_numeric && whole;
+    bool dest_num_edited = is_num_edited(dv) && whole;
+    bool dest_alnum_edited = is_alnum_edited(dv) && whole;
+    bool dest_takes_value = dest_numeric || dest_num_edited;
+    FieldRef dest;
 
     int fig = figurative_char(src);
     if (fig != -1) {
         if (dest_numeric && fig != '0') {
             cobalt_error_loc(NULL, src->loc.line, src->loc.column,
                              "%s cannot be moved to numeric '%s'", src->name, dv->name);
-            return;
-        }
-        FieldRef dest;
-        if (dest_numeric) {
+        } else if (dest_takes_value && fig == '0') {
             emit_num(ir, IR_NUM_CONST, 0, 0);
-            if (!resolve_ref(ir, dest_node, &dest)) return;
-            emit_store(ir, &dest, false);
-        } else {
-            if (!resolve_ref(ir, dest_node, &dest)) return;
+            if (resolve_ref(ir, dest_node, &dest)) emit_store(ir, &dest, false);
+        } else if (resolve_ref(ir, dest_node, &dest)) {
             emit_fill_figurative(ir, &dest, src);
         }
         return;
     }
 
-    if (src->kind == AST_STRING_LITERAL) {
+    if (src->kind == AST_STRING_LITERAL || (src->kind == AST_LITERAL_NUMBER && !dest_takes_value)) {
         if (dest_numeric) {
             cobalt_error_loc(NULL, src->loc.line, src->loc.column,
                              "A nonnumeric literal cannot be moved to numeric '%s'", dv->name);
             return;
         }
-        FieldRef dest;
         if (!resolve_ref(ir, dest_node, &dest)) return;
-        emit_move_alpha(ir, &dest, src_lit, (int)strlen(src->name));
+        if (dest_alnum_edited) emit_edit_alnum(ir, &dest, src_lit, (int)strlen(src->name));
+        else emit_move_alpha(ir, &dest, src_lit, (int)strlen(src->name));
         return;
     }
 
     if (src->kind == AST_LITERAL_NUMBER) {
-        FieldRef dest;
-        if (dest_numeric) {
-            if (!num_expr_valid(src)) return;
-            int s = num_expr(ir, src, 0);
-            emit_rescale(ir, dv->decimal_places - s, false);
-            if (!resolve_ref(ir, dest_node, &dest)) return;
-            emit_store(ir, &dest, false);
-        } else {
-            if (!resolve_ref(ir, dest_node, &dest)) return;
-            emit_move_alpha(ir, &dest, src_lit, (int)strlen(src->name));
-        }
+        if (!num_expr_valid(src)) return;
+        int s = num_expr(ir, src, 0);
+        emit_rescale(ir, dv->decimal_places - s, false);
+        if (resolve_ref(ir, dest_node, &dest)) emit_store(ir, &dest, false);
         return;
     }
 
     if (src->kind != AST_IDENTIFIER) return;
     VarInfo *sv = find_item(src, true);
     if (!sv) return;
-    bool src_numeric = sv->is_numeric && !src->loop && !sv->is_cond;
+    bool src_whole = !src->loop && !sv->is_cond;
+    bool src_has_value = (sv->is_numeric || is_num_edited(sv)) && src_whole;
 
-    if (src_numeric && dest_numeric) {
-        FieldRef sf, dest;
-        if (!resolve_ref(ir, src, &sf)) return;
-        emit_load(ir, &sf);
-        emit_rescale(ir, dv->decimal_places - sv->decimal_places, false);
-        if (!resolve_ref(ir, dest_node, &dest)) return;
-        emit_store(ir, &dest, false);
+    if (src_has_value && dest_takes_value) {
+        // Numeric move (de-editing a numeric edited source)
+        bool ok;
+        int s = push_item_value(ir, src, sv, &ok);
+        if (!ok) return;
+        emit_rescale(ir, dv->decimal_places - s, false);
+        if (resolve_ref(ir, dest_node, &dest)) emit_store(ir, &dest, false);
     } else if (!dest_numeric) {
-        if (src_numeric && sv->usage_type != USAGE_DISPLAY) {
+        if (sv->is_numeric && src_whole && sv->usage_type != USAGE_DISPLAY) {
             cobalt_error_loc(NULL, src->loc.line, src->loc.column,
                              "MOVE of non-DISPLAY numeric '%s' to alphanumeric is not supported yet", sv->name);
             return;
         }
-        FieldRef sf, dest;
+        FieldRef sf;
         if (!resolve_ref(ir, src, &sf) || !resolve_ref(ir, dest_node, &dest)) return;
-        emit_move_alpha(ir, &dest, sf.label, sf.size);
+        if (dest_alnum_edited) emit_edit_alnum(ir, &dest, sf.label, sf.size);
+        else emit_move_alpha(ir, &dest, sf.label, sf.size);
     } else if (dv->usage_type == USAGE_DISPLAY && !dv->is_signed && dv->decimal_places == 0) {
-        FieldRef sf, dest;
+        FieldRef sf;
         if (!resolve_ref(ir, src, &sf) || !resolve_ref(ir, dest_node, &dest)) return;
         if (sf.size < 0 || sf.size > dest.size) {
             cobalt_error_loc(NULL, src->loc.line, src->loc.column,
@@ -1527,7 +1584,7 @@ static void init_contents(IrProgram *ir, const char *base, int base_offset, int 
     }
     FieldRef f = { .var = v, .size = v->size };
     snprintf(f.label, sizeof(f.label), "%s", label);
-    if (v->is_numeric) {
+    if (v->is_numeric || is_num_edited(v)) {
         emit_num(ir, IR_NUM_CONST, 0, 0);
         emit_store(ir, &f, false);
     } else {
@@ -1790,7 +1847,8 @@ static void lower_display(IrProgram *ir, AstNode *node) {
             if (!resolve_ref(ir, arg, &f)) continue;
             if (f.var->is_numeric && !f.refmod) {
                 IrInstr *d = new_instr(IR_CALL_DISPLAY_NUM, f.label, NULL, NULL, 0, f.var->size,
-                                       f.var->decimal_places, 0, f.var->usage_type);
+                                       f.var->decimal_places > 0 ? f.var->decimal_places : 0, 0,
+                                       f.var->usage_type);
                 d->flags = var_flags(f.var);
                 append_instr(ir, d);
             } else {
@@ -1811,7 +1869,8 @@ static void lower_accept(IrProgram *ir, AstNode *node) {
     if (!resolve_ref(ir, var_node, &f)) return;
     if (f.var->is_numeric && !f.refmod) {
         IrInstr *a = new_instr(IR_CALL_ACCEPT_NUM, f.label, NULL, NULL, 0, f.var->size,
-                               f.var->decimal_places, 0, f.var->usage_type);
+                               f.var->decimal_places > 0 ? f.var->decimal_places : 0, 0,
+                               f.var->usage_type);
         a->digits = f.var->digits;
         a->flags = var_flags(f.var);
         append_instr(ir, a);

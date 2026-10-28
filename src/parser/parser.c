@@ -442,8 +442,14 @@ static AstNode *parse_var_decl(void) {
         } else if (tok.kind == TOK_SYNCHRONIZED) {
             next();                             // alignment is not needed on x86_64
             if (tok.kind == TOK_LEFT || tok.kind == TOK_RIGHT) next();
-        } else if (tok.kind == TOK_BLANK || tok.kind == TOK_SIGN) {
-            const char *clause = tok.kind == TOK_BLANK ? "BLANK WHEN ZERO" : "SIGN";
+        } else if (tok.kind == TOK_BLANK) {
+            next();
+            if (tok.kind == TOK_WHEN) next();
+            if (tok.kind != TOK_ZEROS) { ast_free(var); arith_error("Expected ZERO after BLANK WHEN"); return NULL; }
+            next();
+            var->blank_when_zero = true;
+        } else if (tok.kind == TOK_SIGN) {
+            const char *clause = "SIGN";
             cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
                              "%s clause is not supported yet", clause);
             synchronize();

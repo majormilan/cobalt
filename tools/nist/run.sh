@@ -19,7 +19,7 @@ RUNTIME="$ROOT/obj/runtime/$TARGET/libcobrt.a"
 [ -d "$SRC" ] || python3 -I tools/nist/extract.py obj/nist/newcob.val "$SRC" > /dev/null
 mkdir -p "$WORK"
 
-total=0; compiled=0; ran=0; passed=0; failed=0
+total=0; compiled=0; ran=0; passed=0; failed=0; deleted=0; inspect=0
 for cbl in "$SRC"/$MODULE*.CBL; do
     name=$(basename "$cbl" .CBL)
     total=$((total+1))
@@ -36,11 +36,19 @@ for cbl in "$SRC"/$MODULE*.CBL; do
     (cd "$dir" && timeout 10 "./$name" < /dev/null > run.log 2>&1)
     if [ -f "$dir/report.log" ]; then
         ran=$((ran+1))
-        ok=$(grep -o "[0-9]* OF *[0-9]* TESTS WERE EXECUTED SUCCESSFULLY" "$dir/report.log" | head -1)
-        bad=$(grep -o "[0-9]* TEST(S) FAILED" "$dir/report.log" | head -1 | grep -o "^[0-9]*")
-        p=$(echo "$ok" | awk '{print $1+0}')
-        passed=$((passed + ${p:-0})); failed=$((failed + ${bad:-0}))
-        printf "%-8s RAN           %s, %s failed\n" "$name" "$ok" "${bad:-?}"
+        # Summary lines: "093 OF 093  TESTS WERE EXECUTED SUCCESSFULLY",
+        # "NO  TEST(S) FAILED" or "002 TEST(S) FAILED", likewise DELETED and
+        # REQUIRE INSPECTION
+        ok=$(grep -o "[0-9]* OF *[0-9]* *TESTS WERE EXECUTED SUCCESSFULLY" "$dir/report.log" | head -1 | awk '{print $1}')
+        count() { grep -o "\(NO\|[0-9]*\) *TEST(S) $1" "$dir/report.log" | head -1 | awk '{print ($1 == "NO") ? 0 : $1}'; }
+        bad=$(count FAILED); del=$(count DELETED); insp=$(count "REQUIRE INSPECTION")
+        p=$((10#${ok:-0})); b=$((10#${bad:-0})); d=$((10#${del:-0})); n=$((10#${insp:-0}))
+        passed=$((passed + p)); failed=$((failed + b)); deleted=$((deleted + d)); inspect=$((inspect + n))
+        if [ -z "$ok" ]; then
+            printf "%-8s NO-SUMMARY    (report.log has no result summary)\n" "$name"
+        else
+            printf "%-8s RAN           %3d passed, %3d failed, %3d deleted, %3d inspect\n" "$name" $p $b $d $n
+        fi
     elif grep -q "END OF TEST" "$dir/run.log"; then
         # Monitor ("M") programs DISPLAY their results instead of writing a report
         ran=$((ran+1))
@@ -57,4 +65,4 @@ for cbl in "$SRC"/$MODULE*.CBL; do
 done
 echo
 echo "$MODULE: $total programs, $compiled compiled, $ran produced a report"
-echo "Individual tests: $passed passed, $failed failed"
+echo "Individual tests: $passed passed, $failed failed, $deleted deleted, $inspect require inspection"
