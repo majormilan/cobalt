@@ -230,9 +230,9 @@ void symtab_check_unused_symbols(SymbolTable *table) {
         for (int i = 0; i < HASH_TABLE_SIZE; ++i) {
             Symbol *current = current_scope_ptr->entries[i];
             while (current) {
-                // Only warn for variables and paragraphs/sections, not PROGRAM-ID itself
-                // PROGRAM-ID is inherently "used" as the entry point
-                if (current->is_declared && !current->is_used && current->kind != SYM_PROGRAM && current->kind != SYM_SECTION) {
+                // Only warn for data items: procedures are also entered by
+                // falling through, and PROGRAM-ID is the entry point
+                if (current->is_declared && !current->is_used && current->kind == SYM_VAR) {
                     cobalt_warn_loc(current->loc.filename, current->loc.line, current->loc.column, "Unused symbol '%s'.", current->name);
                 }
                 current = current->next;

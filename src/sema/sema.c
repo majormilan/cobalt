@@ -85,6 +85,8 @@ static void literal_digits(const char *lit, int *int_digits, int *frac_digits) {
 }
 
 static void sema_analyze_var_decl(AstNode *var_decl, SemaContext *ctx) {
+    if (var_decl->text && atoi(var_decl->text) == 88) return; // condition-name: no storage
+
     var_decl->usage_type = USAGE_DISPLAY;
     var_decl->is_numeric = false;
     var_decl->is_signed = false;

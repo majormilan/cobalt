@@ -55,6 +55,25 @@ typedef enum {
     AST_EXPR_DIV,
     AST_EXPR_POW,           // children[0] ** children[1]
     AST_EXPR_NEG,           // unary minus: children[0]
+
+    // Procedure structure
+    AST_SENTENCE,           // statements up to a period: children
+    AST_STATEMENT_GOTO,     // children: procedure names; extra: DEPENDING ON identifier
+    AST_STATEMENT_NEXT_SENTENCE,
+    AST_STATEMENT_EXIT,
+    AST_VARYING,            // children: identifier, FROM operand, BY operand, condition
+
+    // Conditions (AST_CONDITION is a relation: text = operator, children = operands)
+    AST_COND_AND,           // children: left, right
+    AST_COND_OR,            // children: left, right
+    AST_COND_NOT,           // children: condition
+    AST_COND_CLASS,         // name: NUMERIC, ALPHABETIC, ...; children: identifier
+    AST_COND_SIGN,          // name: POSITIVE, NEGATIVE or ZERO; children: expression
+    AST_COND_NAME,          // level-88 condition-name: name
+    AST_BOOL_LITERAL,       // name: TRUE or FALSE (an always true/false condition)
+    AST_STATEMENT_EVALUATE, // children: AST_WHEN nodes
+    AST_WHEN,               // extra: condition (NULL for WHEN OTHER); children: statements
+    AST_STATEMENT_SET,      // children: condition-names (SET ... TO TRUE)
 } AstKind;
 
 
@@ -83,12 +102,19 @@ typedef struct AstNode {
     struct AstNode *on_error;     // ON SIZE ERROR statements (NULL if absent)
     struct AstNode *not_on_error; // NOT ON SIZE ERROR statements (NULL if absent)
 
+    // Statement-specific parts (owned): PERFORM range / GO TO DEPENDING item,
+    // and PERFORM loop control
+    struct AstNode *extra;
+    struct AstNode *loop;
+
     struct AstNode *children;
     struct AstNode *next;
 } AstNode;
 
 AstNode *ast_new(AstKind kind, const char *name, SourceLocation loc);
 void ast_free(AstNode *node);
+AstNode *ast_clone(const AstNode *node);       // deep copy of one node (not its siblings)
+AstNode *ast_clone_list(const AstNode *node);  // deep copy of a sibling list
 void ast_dump(AstNode *node, FILE *out, int indent);
 
 #endif

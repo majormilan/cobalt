@@ -1,0 +1,19 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. EDGE.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 Z  PIC X(3) VALUE ZEROS.
+       01 A  PIC 99 VALUE 0.
+       01 B  PIC 99 VALUE 4.
+       PROCEDURE DIVISION.
+       M.
+           IF Z = ZERO DISPLAY "Z ALL ZEROS" END-IF.
+           IF A = ZERO DISPLAY "A IS ZERO" END-IF.
+           IF NOT (B = 1 OR B = 2) DISPLAY "NOT GROUP" END-IF.
+           IF B > 10 OR < 5 DISPLAY "OR ABBREV" END-IF.
+           EVALUATE TRUE
+               WHEN B > 3
+                   EVALUATE A WHEN 0 DISPLAY "NESTED 0" END-EVALUATE
+               WHEN OTHER DISPLAY "NO"
+           END-EVALUATE.
+           STOP RUN.

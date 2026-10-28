@@ -59,15 +59,20 @@ Rules for runtime code:
 
 Rules for generated code (x86_64, see `src/backend/x86_64-linux-elf.c`):
 
-- `rsp` is 16-byte aligned throughout `_start` and every paragraph body, so
-  every runtime call is made with an aligned stack. `_start` is entered
-  aligned; a paragraph call subtracts 8 from `rsp` before `call` so the
-  paragraph is entered the same way.
-- Paragraphs are subroutines (`call` / `ret`) and PERFORMs nest, so any value
-  that must survive a paragraph call is saved on the stack.
-- `rbx` holds the `PERFORM ... TIMES` counter. Each loop pushes the previous
-  value before it starts and pops it at the end; the pushed value also serves
-  as the 8-byte call padding.
+- Procedures (sections and paragraphs) are laid out in source order and
+  entered by jumps, so control falls through from one procedure to the next.
+  Each procedure has a return slot `R_<n>` in `.bss`. `PERFORM A THRU B`
+  saves B's slot on the stack, points it at the return label and jumps to A;
+  the end of every procedure jumps through its slot when it is set. This
+  supports GO TO, PERFORM THRU, sections and nested PERFORMs, as in IBM
+  compilers. Leaving a PERFORM range with GO TO leaves its saved slot on the
+  stack, which the standard permits.
+- `rsp` is 16-byte aligned everywhere: `_start` is entered aligned and every
+  value generated code pushes takes a 16-byte slot, so every runtime call is
+  made with an aligned stack.
+- `rbx` holds the `PERFORM ... TIMES` counter. Each loop saves the previous
+  value in a stack slot before it starts and restores it at the end, so loops
+  nest.
 - Pending numeric values (the numeric stack machine, section 6) live on the
   machine stack in 16-byte slots, which keeps `rsp` aligned.
 - Two bytes in the program's `.bss` track size errors: `cobrt_tgt_err`
@@ -113,6 +118,8 @@ positions in the PICTURE.
 | `runtime_num_mul` | `a, b, shift` | `(a * b) / 10^shift` with a 128-bit product, truncated. `RET1` = 1 on overflow. |
 | `runtime_num_div` | `a, b, shift` | `(a * 10^shift) / b` with a 128-bit dividend, truncated. `RET1` = 1 on overflow or division by zero. |
 | `runtime_compare_alnum` | `a, a_len, b, b_len` | Compares in the ASCII collating sequence, padding the shorter operand with spaces. Returns -1, 0 or 1. |
+| `runtime_compare_fill` | `ptr, len, char` | Compares a field with a figurative constant (`char` repeated): ZERO `'0'`, SPACE `' '`, HIGH-VALUE `0xFF`, LOW-VALUE `0x00`, QUOTE `'"'`. Returns -1, 0 or 1. |
+| `runtime_class_test` | `ptr, len, class` | Returns 1 if every character is in the class: 0 NUMERIC (digits), 1 NUMERIC signed DISPLAY (trailing overpunch allowed), 2 ALPHABETIC, 3 ALPHABETIC-LOWER, 4 ALPHABETIC-UPPER (letters and spaces), 5 NUMERIC packed decimal (digit nibbles, sign C, D or F). |
 
 `RET1` is the second return register (`rdx` under SysV).
 

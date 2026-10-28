@@ -25,13 +25,19 @@ typedef enum {
     IR_CALL_MOVE_FILL,      // var_name, pad_char, size, usage_type
     IR_CALL_ACCEPT,         // var_name, size (alphanumeric field)
     IR_CALL_ACCEPT_NUM,     // var_name, size, digits, decimal_places (scale), usage_type, flags
-    IR_LABEL,               // paragraph/branch label; var_name = label name
-    IR_CALL_PARA,           // call a paragraph; var_name = paragraph name
-    IR_RET,                 // return from paragraph subroutine
-    IR_PERFORM_TIMES,       // var_name = paragraph; count = imm, or popped from the
-                            //   numeric stack when flags != 0
+    IR_LABEL,               // branch label; var_name = label name
     IR_CALL_EXIT,           // no args
     IR_JUMP,                // unconditional jump; jump_target = label name
+
+    // Procedures (runtime/ABI.md section 2). Procedures are laid out in source
+    // order; each has a return slot that an active PERFORM sets.
+    IR_PROC_ENTRY,          // start of procedure imm; var_name = its name
+    IR_PROC_EXIT,           // end of procedure imm: return to a PERFORM if one waits
+    IR_PERFORM,             // perform procedures imm THRU proc_end, then continue
+    IR_GOTO,                // jump to procedure imm
+    IR_TIMES_BEGIN,         // loop var_name (label) ... jump_target (exit label);
+                            //   count = imm, or popped from the numeric stack if flags
+    IR_TIMES_END,           // repeat loop var_name until the count is exhausted
 
     // Numeric stack machine. Values are signed 64-bit integers; the scale of
     // every value is known at compile time (runtime/ABI.md section 6).
@@ -47,6 +53,10 @@ typedef enum {
     IR_NUM_CMP_JUMP_IF_FALSE,   // pop b, pop a; jump to jump_target unless (a cmp_op b)
     IR_ALNUM_CMP_JUMP_IF_FALSE, // var_name/size vs lit_name/lit_len (data labels);
                                 //   jump to jump_target unless (a cmp_op b)
+    IR_FILL_CMP_JUMP_IF_FALSE,  // field var_name/size vs a figurative constant
+                                //   (pad_char repeated); jump unless (a cmp_op b)
+    IR_CLASS_JUMP,          // class test of var_name/size, class code imm; jump to
+                            //   jump_target when the result equals flags (1 or 0)
     IR_SIZE_ERR_CLEAR,      // start of a statement that stores numeric results
     IR_JUMP_IF_NO_SIZE_ERR, // jump to jump_target if no size error since the clear
 } IrOpcode;
@@ -61,7 +71,8 @@ struct IrInstr {
     int decimal_places;
     int digits;                 // digit positions of a numeric field
     int flags;                  // IR_NUM_* flags, or opcode-specific flag
-    long long imm;              // immediate value, shift or count
+    long long imm;              // immediate value, shift, count or procedure
+    int proc_end;               // last procedure of a PERFORM range
     char pad_char;
     AstUsageType usage_type;
     const char *cmp_op;         // comparison operator string

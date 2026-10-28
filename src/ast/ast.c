@@ -21,6 +21,37 @@ AstNode *ast_new(AstKind kind, const char *name, SourceLocation loc) {
     return n;
 }
 
+AstNode *ast_clone(const AstNode *node) {
+    if (!node) return NULL;
+    AstNode *c = ast_new(node->kind, node->name, node->loc);
+    if (!c) return NULL;
+    if (node->text) c->text = strdup(node->text);
+    c->data_size = node->data_size;
+    c->usage_type = node->usage_type;
+    c->is_numeric = node->is_numeric;
+    c->is_signed = node->is_signed;
+    c->decimal_places = node->decimal_places;
+    c->digits = node->digits;
+    c->rounded = node->rounded;
+    c->children = ast_clone_list(node->children);
+    c->on_error = ast_clone_list(node->on_error);
+    c->not_on_error = ast_clone_list(node->not_on_error);
+    c->extra = ast_clone_list(node->extra);
+    c->loop = ast_clone_list(node->loop);
+    return c;
+}
+
+AstNode *ast_clone_list(const AstNode *node) {
+    AstNode *head = NULL, *tail = NULL;
+    for (; node; node = node->next) {
+        AstNode *c = ast_clone(node);
+        if (!head) head = c;
+        else tail->next = c;
+        tail = c;
+    }
+    return head;
+}
+
 void ast_free(AstNode *node) {
     if (!node) return;
 
@@ -30,6 +61,8 @@ void ast_free(AstNode *node) {
     ast_free(node->children);
     ast_free(node->on_error);
     ast_free(node->not_on_error);
+    ast_free(node->extra);
+    ast_free(node->loop);
     ast_free(node->next);
 
     free(node);
@@ -77,6 +110,21 @@ void ast_dump(AstNode *node, FILE *out, int indent) {
         case AST_EXPR_DIV:                  kind_name = "EXPR-DIV"; break;
         case AST_EXPR_POW:                  kind_name = "EXPR-POW"; break;
         case AST_EXPR_NEG:                  kind_name = "EXPR-NEG"; break;
+        case AST_SENTENCE:                  kind_name = "SENTENCE"; break;
+        case AST_STATEMENT_GOTO:            kind_name = "GO-TO"; break;
+        case AST_STATEMENT_NEXT_SENTENCE:   kind_name = "NEXT-SENTENCE"; break;
+        case AST_STATEMENT_EXIT:            kind_name = "EXIT"; break;
+        case AST_VARYING:                   kind_name = "VARYING"; break;
+        case AST_COND_AND:                  kind_name = "AND"; break;
+        case AST_COND_OR:                   kind_name = "OR"; break;
+        case AST_COND_NOT:                  kind_name = "NOT"; break;
+        case AST_COND_CLASS:                kind_name = "CLASS"; break;
+        case AST_COND_SIGN:                 kind_name = "SIGN"; break;
+        case AST_COND_NAME:                 kind_name = "COND-NAME"; break;
+        case AST_BOOL_LITERAL:              kind_name = "BOOL"; break;
+        case AST_STATEMENT_EVALUATE:        kind_name = "EVALUATE"; break;
+        case AST_WHEN:                      kind_name = "WHEN"; break;
+        case AST_STATEMENT_SET:             kind_name = "SET"; break;
         default:                            kind_name = "UNKNOWN"; break;
     }
 

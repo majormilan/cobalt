@@ -1,0 +1,55 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. COND88EVALUATE.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 STATUS-CODE PIC X VALUE "A".
+          88 ACTIVE VALUE "A".
+          88 CLOSED VALUES ARE "C" "X".
+       01 AGE PIC 999 VALUE 15.
+          88 CHILD VALUE 0 THRU 12.
+          88 TEEN  VALUE 13 THRU 19.
+          88 ADULT VALUE 20 THRU 999.
+       01 GRADE PIC 9 VALUE 0.
+       01 X     PIC 99 VALUE 7.
+       01 Y     PIC X VALUE "N".
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           IF ACTIVE DISPLAY "ACTIVE" END-IF.
+           IF NOT CLOSED DISPLAY "NOT CLOSED" END-IF.
+           SET CLOSED TO TRUE.
+           DISPLAY "STATUS=" STATUS-CODE.
+           IF CLOSED AND NOT ACTIVE DISPLAY "NOW CLOSED" END-IF.
+           IF TEEN DISPLAY "TEEN" END-IF.
+           EVALUATE TRUE
+               WHEN CHILD DISPLAY "EVAL CHILD"
+               WHEN TEEN  DISPLAY "EVAL TEEN"
+               WHEN OTHER DISPLAY "EVAL OTHER"
+           END-EVALUATE.
+           EVALUATE X
+               WHEN 1 THRU 5 DISPLAY "LOW"
+               WHEN 6
+               WHEN 7 DISPLAY "SIX OR SEVEN"
+               WHEN OTHER DISPLAY "HIGH"
+           END-EVALUATE.
+           EVALUATE X ALSO Y
+               WHEN 7 ALSO "Y" DISPLAY "7 YES"
+               WHEN 7 ALSO ANY DISPLAY "7 ANY"
+           END-EVALUATE.
+           EVALUATE X > 5
+               WHEN TRUE  DISPLAY "GT5 TRUE"
+               WHEN FALSE DISPLAY "GT5 FALSE"
+           END-EVALUATE.
+           EVALUATE X
+               WHEN NOT 7 DISPLAY "NOT SEVEN"
+               WHEN OTHER DISPLAY "IS SEVEN"
+           END-EVALUATE.
+           PERFORM VARYING GRADE FROM 1 BY 1 UNTIL GRADE > 3
+               EVALUATE GRADE
+                   WHEN 1 DISPLAY "ONE"
+                   WHEN 2 DISPLAY "TWO"
+                   WHEN OTHER DISPLAY "MANY"
+               END-EVALUATE
+           END-PERFORM.
+           MOVE 30 TO AGE.
+           IF ADULT DISPLAY "ADULT" END-IF.
+           STOP RUN.
