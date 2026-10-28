@@ -10,6 +10,8 @@ typedef struct IrInstr IrInstr;
 // Flags of numeric fields, passed to the runtime unchanged (runtime/ABI.md)
 #define IR_NUM_SIGNED 1     // PIC has S
 #define IR_NUM_KEEP   2     // ON SIZE ERROR given: keep the field on size error
+#define IR_NUM_SIGN_LEADING  4  // DISPLAY: sign on the first digit (or before it)
+#define IR_NUM_SIGN_SEPARATE 8  // DISPLAY: the sign is a separate + or - character
 
 typedef enum {
     IR_DATA_VAR,            // storage of one record: var_name ("%r<n>"), size
@@ -93,6 +95,11 @@ typedef enum {
                             //   lines = digits, or popped from the numeric stack if flags
     IR_FILE_REWRITE,        // record lit_name, size bytes
     IR_IO_JUMP,             // jump to jump_target if imm <= status <= size
+    IR_DATA_BSS,            // zeroed storage var_name of size bytes
+    IR_STORE_QWORD,         // store into the 8 bytes at var_name: flags 0: imm,
+                            //   1: the address of lit_name, 2: the length size
+    IR_CALL_INSPECT,        // subject var_name (size bytes), operand table lit_name
+                            //   with imm entries, counters content (runtime/ABI.md 9)
     IR_SIZE_ERR_CLEAR,      // start of a statement that stores numeric results
     IR_JUMP_IF_NO_SIZE_ERR, // jump to jump_target if no size error since the clear
 } IrOpcode;

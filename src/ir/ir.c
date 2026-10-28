@@ -47,6 +47,7 @@ typedef struct {
     char float_char;        // numeric edited: floating $ + or -
     bool blank_zero;        // BLANK WHEN ZERO
     char mask_label[32];    // data literal holding the mask, once emitted
+    int sign_mode;          // SIGN clause (own or inherited from a group): SIGN_* bits
 } VarInfo;
 
 static bool is_num_edited(const VarInfo *v) { return v->mask && v->num_edited; }
@@ -314,6 +315,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
                 v->num_edited = decl->mask && !strchr(decl->mask, 'X');
                 v->float_char = decl->float_char;
                 v->blank_zero = decl->blank_when_zero;
+                v->sign_mode = decl->sign_mode;
                 for (AstNode *c = decl->children; c; c = c->next) {
                     if (c->kind == AST_STRING_LITERAL || c->kind == AST_LITERAL_NUMBER ||
                         c->kind == AST_FIGURATIVE_CONSTANT) v->value = c;
@@ -379,6 +381,25 @@ static void build_data(IrProgram *ir, AstNode *program) {
                 }
             }
         }
+    }
+
+    // SIGN clause: a group's clause applies to its signed DISPLAY numeric
+    // items without their own; a separate sign takes one more character
+    for (int i = 0; i < num_vars; i++) {
+        VarInfo *v = &vars[i];
+        if (v->is_cond || v->is_index || v->is_group) continue;
+        if (!v->sign_mode)
+            for (int a = v->parent; a >= 0 && !v->sign_mode; a = vars[a].parent)
+                v->sign_mode = vars[a].sign_mode;
+        if (!v->sign_mode) continue;
+        if (!v->is_numeric || !v->is_signed || v->usage_type != USAGE_DISPLAY) {
+            if (v->decl->sign_mode)
+                cobalt_error_loc(NULL, v->decl->loc.line, v->decl->loc.column,
+                                 "SIGN clause requires a signed numeric DISPLAY item ('%s')", v->name);
+            v->sign_mode = 0;
+            continue;
+        }
+        if (v->sign_mode & SIGN_SEPARATE) v->size += 1;
     }
 
     // Validate the hierarchy, then lay out the records
@@ -667,7 +688,13 @@ static bool is_int_literal(const AstNode *n, long long *value) {
 }
 
 static int var_flags(const VarInfo *v) {
-    return v->is_signed ? IR_NUM_SIGNED : 0;
+    if (!v->is_signed) return 0;
+    int flags = IR_NUM_SIGNED;
+    if (v->usage_type == USAGE_DISPLAY) {
+        if (v->sign_mode & SIGN_LEADING) flags |= IR_NUM_SIGN_LEADING;
+        if (v->sign_mode & SIGN_SEPARATE) flags |= IR_NUM_SIGN_SEPARATE;
+    }
+    return flags;
 }
 
 // Numeric data item an identifier refers to (no reference modification)
@@ -1057,6 +1084,61 @@ static void lower_in_place(IrProgram *ir, AstKind op, AstNode *tree, AstNode **r
     emit(ir, IR_NUM_DROP);
 }
 
+// ── CORRESPONDING ────────────────────────────────────────────────────────────
+
+static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const char *src_lit);
+
+// Items that do not take part in CORRESPONDING (with their subordinates)
+static bool corr_excluded(const VarInfo *v) {
+    return v->is_filler || v->redefines >= 0 || v->occurs || v->is_index || v->is_cond;
+}
+
+// Reference to item idx with the subscripts of the group reference it is in
+static AstNode *corr_ref(int idx, const AstNode *group_ref, bool rounded) {
+    AstNode *r = item_ref(idx, group_ref->loc);
+    r->children = ast_clone_list(group_ref->children);
+    r->rounded = rounded;
+    return r;
+}
+
+// Pair the subordinate items of g1 and g2 that correspond and lower each
+// pair: kind is AST_STATEMENT_MOVE, ADD or SUBTRACT
+static void corr_pairs(IrProgram *ir, AstKind kind, int g1, int g2,
+                       const AstNode *ref1, const AstNode *ref2, bool rounded, bool keep) {
+    for (int c1 = vars[g1].first_child; c1 >= 0; c1 = vars[c1].next_sibling) {
+        if (corr_excluded(&vars[c1])) continue;
+        int c2 = -1;
+        for (int k = vars[g2].first_child; k >= 0; k = vars[k].next_sibling)
+            if (!corr_excluded(&vars[k]) && strcasecmp(vars[k].name, vars[c1].name) == 0) { c2 = k; break; }
+        if (c2 < 0) continue;
+        bool group1 = vars[c1].is_group, group2 = vars[c2].is_group;
+        if (group1 && group2) {
+            corr_pairs(ir, kind, c1, c2, ref1, ref2, rounded, keep);
+            continue;
+        }
+        AstNode *a = corr_ref(c1, ref1, false);
+        AstNode *b = corr_ref(c2, ref2, rounded);
+        if (kind == AST_STATEMENT_MOVE) {
+            lower_move(ir, a, b, "");
+        } else if (!group1 && !group2 && vars[c1].is_numeric && vars[c2].is_numeric) {
+            AstNode *recv[1] = { b };
+            lower_in_place(ir, kind == AST_STATEMENT_ADD ? AST_EXPR_ADD : AST_EXPR_SUB, a, recv, 1, keep);
+        }
+        ast_free(a);
+        ast_free(b);
+    }
+}
+
+static void lower_corresponding(IrProgram *ir, AstNode *node, AstNode *from, AstNode *to, bool keep) {
+    VarInfo *g1 = find_item(from, true), *g2 = find_item(to, true);
+    if (!g1 || !g2) return;
+    if (!g1->is_group || !g2->is_group) {
+        cobalt_error_loc(NULL, node->loc.line, node->loc.column, "CORRESPONDING requires two group items");
+        return;
+    }
+    corr_pairs(ir, node->kind, (int)(g1 - vars), (int)(g2 - vars), from, to, to->rounded, keep);
+}
+
 // ADD, SUBTRACT, MULTIPLY, DIVIDE and COMPUTE. Sending operands are
 // evaluated once, before any receiver is changed; with GIVING (and COMPUTE)
 // the result is computed once and stored into each receiver.
@@ -1070,6 +1152,12 @@ static void lower_arith_node(IrProgram *ir, AstNode *node) {
     bool keep = node->on_error != NULL || node->not_on_error != NULL;
 
     emit(ir, IR_SIZE_ERR_CLEAR);
+
+    if (node->name && strcmp(node->name, "CORR") == 0 && n >= 2) {
+        lower_corresponding(ir, node, ops[0], ops[1], keep);
+        lower_size_error_phrases(ir, node);
+        return;
+    }
 
     switch (node->kind) {
         case AST_STATEMENT_ADD: {
@@ -1318,7 +1406,13 @@ static void emit_class_jump(IrProgram *ir, AstNode *c, const char *target, bool 
             return;
         }
         if (numeric && v->usage_type == USAGE_COMP3) code = 5;
-        else code = (numeric && v->is_signed) ? 1 : 0;
+        else if (numeric && v->is_signed) {
+            int f = var_flags(v);
+            code = (f & IR_NUM_SIGN_SEPARATE) ? ((f & IR_NUM_SIGN_LEADING) ? 8 : 7)
+                                              : ((f & IR_NUM_SIGN_LEADING) ? 6 : 1);
+        } else {
+            code = 0;
+        }
     } else if (strcmp(c->name, "ALPHABETIC") == 0) {
         code = 2;
     } else if (strcmp(c->name, "ALPHABETIC-LOWER") == 0) {
@@ -1970,6 +2064,221 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
     }
 }
 
+// ── INSPECT ──────────────────────────────────────────────────────────────────
+
+static int inspect_counter = 0;
+
+static void emit_qword(IrProgram *ir, const char *dest, int mode, long long imm,
+                       const char *src, int size) {
+    IrInstr *q = emit(ir, IR_STORE_QWORD);
+    q->var_name = strdup(dest);
+    q->flags = mode;
+    q->imm = imm;
+    if (src) q->lit_name = strdup(src);
+    q->size = size;
+}
+
+// INSPECT operand as an address and a length. A figurative constant becomes
+// fill_len copies of its character (or of its ALL literal).
+static bool inspect_operand(IrProgram *ir, AstNode *op, char *label, size_t lsz,
+                            int *len, int fill_len) {
+    if (op->kind == AST_IDENTIFIER) {
+        FieldRef f;
+        if (!resolve_ref(ir, op, &f)) return false;
+        snprintf(label, lsz, "%s", f.label);
+        *len = f.size;
+        return true;
+    }
+    char text[256];
+    int fig = figurative_char(op);
+    if (fig == FIG_PATTERN) {
+        int n = fill_len > 0 ? fill_len : (int)strlen(op->text);
+        for (int i = 0; i < n && i < 255; i++) text[i] = op->text[i % strlen(op->text)];
+        text[n < 255 ? n : 255] = '\0';
+    } else if (fig != -1) {
+        int n = fill_len > 0 ? fill_len : 1;
+        if (fig == 0) {
+            cobalt_error_loc(NULL, op->loc.line, op->loc.column, "LOW-VALUE is not supported in INSPECT yet");
+            return false;
+        }
+        memset(text, fig, n < 255 ? n : 255);
+        text[n < 255 ? n : 255] = '\0';
+    } else {
+        snprintf(text, sizeof(text), "%s", op->name);
+    }
+    emit_data_lit(ir, "insplit", text, label, lsz);
+    *len = (int)strlen(text);
+    return true;
+}
+
+static void lower_inspect_pass(IrProgram *ir, AstNode *node, bool tallying);
+
+// TALLYING and REPLACING together act as two INSPECT statements: all of the
+// TALLYING first, then the REPLACING
+static void lower_inspect(IrProgram *ir, AstNode *node) {
+    bool has_tally = false, has_replace = false;
+    for (AstNode *item = node->children; item; item = item->next) {
+        if (item->loop) has_tally = true;
+        else has_replace = true;
+    }
+
+    // A signed numeric item is inspected as if it were unsigned: its digits
+    // are inspected without the overpunched sign, which is put back after
+    VarInfo *sv = find_item(node->extra, false);
+    bool unsign = sv && sv->is_numeric && sv->is_signed && sv->usage_type == USAGE_DISPLAY &&
+                  !node->extra->loop && !(var_flags(sv) & IR_NUM_SIGN_SEPARATE);
+    FieldRef f;
+    if (unsign) {
+        if (!resolve_ref(ir, node->extra, &f)) return;
+        emit_load(ir, &f);                  // the value, kept for its sign
+        emit(ir, IR_NUM_DUP);
+        IrInstr *st = emit(ir, IR_NUM_STORE);   // absolute value, plain digits
+        st->var_name = strdup(f.label);
+        st->size = sv->size;
+        st->digits = sv->digits;
+        st->usage_type = USAGE_DISPLAY;
+        st->flags = 0;
+    }
+
+    if (has_tally) lower_inspect_pass(ir, node, true);
+    if (has_replace) lower_inspect_pass(ir, node, false);
+
+    if (unsign) {
+        char pos_lbl[32], end_lbl[32];
+        new_label(pos_lbl, sizeof(pos_lbl), "insp_pos");
+        new_label(end_lbl, sizeof(end_lbl), "insp_end");
+        if (!resolve_ref(ir, node->extra, &f)) return;
+        FieldRef plain = f;
+        static VarInfo unsigned_view;
+        unsigned_view = *sv;
+        unsigned_view.is_signed = false;
+        plain.var = &unsigned_view;
+        emit(ir, IR_NUM_DUP);
+        emit_num(ir, IR_NUM_CONST, 0, 0);
+        IrInstr *cmp = emit(ir, IR_NUM_CMP_JUMP_IF_FALSE);
+        cmp->cmp_op = strdup("<");
+        cmp->jump_target = strdup(pos_lbl);
+        emit_load(ir, &plain);
+        emit_num(ir, IR_NUM_NEG, 0, 0);
+        emit_store(ir, &f, false);
+        emit_jump(ir, IR_JUMP, end_lbl);
+        emit_label(ir, pos_lbl);
+        emit_load(ir, &plain);
+        emit_store(ir, &f, false);
+        emit_label(ir, end_lbl);
+        emit(ir, IR_NUM_DROP);
+    }
+}
+
+static void lower_inspect_pass(IrProgram *ir, AstNode *node, bool tallying) {
+    FieldRef subject;
+    if (!resolve_ref(ir, node->extra, &subject)) return;
+    if (subject.var->is_numeric && subject.var->usage_type != USAGE_DISPLAY && !subject.refmod) {
+        cobalt_error_loc(NULL, node->loc.line, node->loc.column, "INSPECT requires a DISPLAY item");
+        return;
+    }
+
+    int id = inspect_counter++;
+    char table[32], counts[32];
+    snprintf(table, sizeof(table), "$insp_%d", id);
+    snprintf(counts, sizeof(counts), "$inspc_%d", id);
+
+    // Entries: one per operand, one per character of a CONVERTING operand
+    int n = 0;
+    AstNode *tallied[256];
+    char entry[64];
+    for (AstNode *item = node->children; item; item = item->next) {
+        if ((item->loop != NULL) != tallying) continue;
+        bool convert = strcmp(item->name, "CONVERT") == 0;
+        bool chars = strcmp(item->name, "CHARACTERS") == 0;
+        int kind = chars ? 0 : strcmp(item->name, "LEADING") == 0 ? 2 :
+                   strcmp(item->name, "FIRST") == 0 ? 3 : 1;
+        char pat[64] = "", repl[64] = "", before[64] = "", after[64] = "";
+        int plen = 1, rlen = 0, blen = 0, alen = 0;
+        if (item->extra && !inspect_operand(ir, item->extra, pat, sizeof(pat), &plen, 0)) return;
+        if (plen < 0 && (item->on_error || convert)) {
+            cobalt_error_loc(NULL, item->loc.line, item->loc.column,
+                             "INSPECT operands of variable length are not supported yet");
+            return;
+        }
+        if (item->on_error &&
+            !inspect_operand(ir, item->on_error, repl, sizeof(repl), &rlen, plen)) return;
+        if (item->not_on_error && !inspect_operand(ir, item->not_on_error, before, sizeof(before), &blen, 0)) return;
+        if (item->children && !inspect_operand(ir, item->children, after, sizeof(after), &alen, 0)) return;
+        if (item->on_error && rlen != plen) {
+            cobalt_error_loc(NULL, item->loc.line, item->loc.column,
+                             "INSPECT replacement must be as long as what it replaces");
+            return;
+        }
+
+        int count = convert ? plen : 1;
+        for (int k = 0; k < count && n < 256; k++, n++) {
+            int base = n * 96;
+            #define FIELD(off) (snprintf(entry, sizeof(entry), "%s+%d", table, base + (off)), entry)
+            char p_k[80], r_k[80];
+            snprintf(p_k, sizeof(p_k), "%s+%d", pat, convert ? k : 0);
+            snprintf(r_k, sizeof(r_k), "%s+%d", repl, convert ? k : 0);
+            emit_qword(ir, FIELD(0), 0, convert ? 1 : kind, NULL, 0);
+            emit_qword(ir, FIELD(8), 0, item->loop ? n : -1, NULL, 0);
+            if (pat[0]) emit_qword(ir, FIELD(16), 1, 0, p_k, 0);
+            emit_qword(ir, FIELD(24), convert ? 0 : 2, 1, NULL, plen);
+            if (repl[0]) emit_qword(ir, FIELD(32), 1, 0, r_k, 0);
+            if (before[0]) {
+                emit_qword(ir, FIELD(40), 1, 0, before, 0);
+                emit_qword(ir, FIELD(48), 2, 0, NULL, blen);
+            } else {
+                emit_qword(ir, FIELD(40), 0, 0, NULL, 0);
+            }
+            if (after[0]) {
+                emit_qword(ir, FIELD(56), 1, 0, after, 0);
+                emit_qword(ir, FIELD(64), 2, 0, NULL, alen);
+            } else {
+                emit_qword(ir, FIELD(56), 0, 0, NULL, 0);
+            }
+            snprintf(entry, sizeof(entry), "%s+%d", counts, n * 8);
+            emit_qword(ir, entry, 0, 0, NULL, 0);
+            tallied[n] = item->loop;
+            #undef FIELD
+        }
+    }
+    IrInstr *t = emit(ir, IR_DATA_BSS);
+    t->var_name = strdup(table);
+    t->size = n * 96;
+    IrInstr *c = emit(ir, IR_DATA_BSS);
+    c->var_name = strdup(counts);
+    c->size = n * 8;
+
+    IrInstr *call = emit(ir, IR_CALL_INSPECT);
+    call->var_name = strdup(subject.label);
+    call->size = subject.size;
+    call->lit_name = strdup(table);
+    call->imm = n;
+    call->content = strdup(counts);
+
+    // TALLYING: add each operand's count to its counter
+    static VarInfo count_var;
+    count_var.size = 8;
+    count_var.usage_type = USAGE_COMP5;
+    count_var.is_numeric = count_var.is_signed = true;
+    count_var.digits = 18;
+    for (int e = 0; e < n; e++) {
+        if (!tallied[e]) continue;
+        VarInfo *cv = numeric_item(tallied[e], "TALLYING counter");
+        if (!cv) return;
+        emit(ir, IR_SIZE_ERR_CLEAR);
+        FieldRef cnt = { .var = &count_var, .size = 8 };
+        snprintf(cnt.label, sizeof(cnt.label), "%s+%d", counts, e * 8);
+        emit_load(ir, &cnt);
+        emit_rescale(ir, cv->decimal_places, false);
+        FieldRef f;
+        if (!resolve_ref(ir, tallied[e], &f)) return;
+        emit_load(ir, &f);
+        emit_num(ir, IR_NUM_ADD, 0, 0);
+        if (!resolve_ref(ir, tallied[e], &f)) return;
+        emit_store(ir, &f, false);
+    }
+}
+
 static void lower_display(IrProgram *ir, AstNode *node) {
     for (AstNode *arg = node->children; arg; arg = arg->next) {
         const char *content = arg->name ? arg->name : "";
@@ -2067,6 +2376,9 @@ static void lower_node(IrProgram *ir, AstNode *node) {
         case AST_STATEMENT_SEARCH:
             lower_search(ir, node);
             break;
+        case AST_STATEMENT_INSPECT:
+            lower_inspect(ir, node);
+            break;
         case AST_STATEMENT_OPEN:
         case AST_STATEMENT_CLOSE:
         case AST_STATEMENT_READ:
@@ -2104,6 +2416,12 @@ static void lower_node(IrProgram *ir, AstNode *node) {
         case AST_STATEMENT_MOVE: {
             AstNode *src = node->children;
             if (!src) break;
+            if (node->name && strcmp(node->name, "CORR") == 0) {
+                emit(ir, IR_SIZE_ERR_CLEAR);
+                for (AstNode *dest = src->next; dest; dest = dest->next)
+                    lower_corresponding(ir, node, src, dest, false);
+                break;
+            }
             // A literal source is emitted once and shared by all receivers
             char lit_name[32] = {0};
             if (src->kind == AST_STRING_LITERAL || src->kind == AST_LITERAL_NUMBER)
@@ -2177,6 +2495,7 @@ IrProgram *lower_to_ir(AstNode *program) {
     lit_counter = 0;
     if_counter = 0;
     addr_slots = 0;
+    inspect_counter = 0;
 
     build_data(ir, program);
 

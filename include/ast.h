@@ -84,6 +84,12 @@ typedef enum {
     AST_JUSTIFIED,          // JUSTIFIED RIGHT
     AST_REFMOD,             // reference modification: children: start, [length]
     AST_STATEMENT_INITIALIZE, // children: identifiers
+    AST_STATEMENT_INSPECT,  // extra: subject; children: AST_INSPECT_ITEM operands
+    AST_INSPECT_ITEM,       // name: CHARACTERS, ALL, LEADING, FIRST or CONVERT;
+                            //   loop: TALLYING counter (NULL when replacing);
+                            //   extra: pattern (CONVERT: the FROM operand);
+                            //   on_error: replacement (CONVERT: the TO operand);
+                            //   not_on_error: BEFORE delimiter; children: AFTER delimiter
     AST_STATEMENT_OPEN,     // children: files, each with decimal_places = open mode
     AST_STATEMENT_CLOSE,    // children: files
     AST_STATEMENT_READ,     // extra: file; loop: INTO identifier;
@@ -103,6 +109,11 @@ typedef struct {
     int column;
 } SourceLocation;
 
+// SIGN clause bits (AstNode.sign_mode)
+#define SIGN_GIVEN    1     // the clause is present (TRAILING alone is just this)
+#define SIGN_LEADING  2
+#define SIGN_SEPARATE 4
+
 // AST_IDENTIFIER references: children = subscripts, extra = qualifiers
 // (innermost first), loop = AST_REFMOD.
 typedef struct AstNode {
@@ -121,6 +132,7 @@ typedef struct AstNode {
     char *mask;             // edited items: edit mask (see sema.c), else NULL
     char float_char;        // numeric edited: floating $, + or -, else 0
     bool blank_when_zero;   // BLANK WHEN ZERO
+    int sign_mode;          // SIGN clause: SIGN_* bits, 0 without the clause
 
     // Arithmetic statements
     bool rounded;           // ROUNDED on this receiving identifier

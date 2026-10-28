@@ -84,7 +84,9 @@ runtime_compare_fill:
 ; ARG0 = field, ARG1 = length, ARG2 = class:
 ;   0 NUMERIC (digits only), 1 NUMERIC signed DISPLAY (trailing overpunch
 ;   allowed), 2 ALPHABETIC, 3 ALPHABETIC-LOWER, 4 ALPHABETIC-UPPER
-;   (letters and spaces), 5 NUMERIC packed decimal
+;   (letters and spaces), 5 NUMERIC packed decimal, 6 NUMERIC signed with
+;   SIGN LEADING (overpunch on the first digit), 7 NUMERIC SIGN TRAILING
+;   SEPARATE, 8 NUMERIC SIGN LEADING SEPARATE
 ; Returns RET0 = 1 if every character belongs to the class, else 0.
 runtime_class_test:
     mov r10, ARG0
@@ -93,6 +95,12 @@ runtime_class_test:
     xor edx, edx                        ; index
     cmp r9, 5
     je .packed
+    cmp r9, 6
+    je .lead_overpunch
+    cmp r9, 7
+    je .sep_trailing
+    cmp r9, 8
+    je .sep_leading
 .c_loop:
     cmp rdx, r11
     jae .yes
@@ -144,6 +152,67 @@ runtime_class_test:
 .next:
     inc rdx
     jmp .c_loop
+
+    ; SIGN LEADING: the first byte may carry the overpunch, then digits
+.lead_overpunch:
+    test r11, r11
+    jz .no
+    movzx eax, byte [r10]
+    call .is_overpunch_or_digit
+    test eax, eax
+    jz .no
+    mov edx, 1
+    mov r9, 0                           ; the rest: plain digits
+    jmp .c_loop
+    ; Separate sign: + or - first or last, the rest digits
+.sep_trailing:
+    test r11, r11
+    jz .no
+    dec r11
+    movzx eax, byte [r10 + r11]
+    jmp .sep_check
+.sep_leading:
+    test r11, r11
+    jz .no
+    movzx eax, byte [r10]
+    inc r10
+    dec r11
+.sep_check:
+    cmp al, '+'
+    je .sep_digits
+    cmp al, '-'
+    jne .no
+.sep_digits:
+    test r11, r11
+    jz .no
+    xor r9d, r9d
+    jmp .c_loop
+
+; al = character; returns eax = 1 if a digit or an overpunched digit
+.is_overpunch_or_digit:
+    cmp al, '0'
+    jb .iod_letters
+    cmp al, '9'
+    jbe .iod_yes
+    cmp al, 'p'
+    jb .iod_letters
+    cmp al, 'y'
+    jbe .iod_yes
+.iod_letters:
+    cmp al, '{'
+    je .iod_yes
+    cmp al, '}'
+    je .iod_yes
+    cmp al, 'A'
+    jb .iod_no
+    cmp al, 'R'
+    jbe .iod_yes
+.iod_no:
+    xor eax, eax
+    ret
+.iod_yes:
+    mov eax, 1
+    ret
 
 .packed:                                ; every nibble a digit, last nibble C, D or F
     cmp rdx, r11

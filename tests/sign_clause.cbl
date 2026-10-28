@@ -1,0 +1,24 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. SIGNCLAUSE.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 REC.
+          05 TS PIC S9(3) SIGN TRAILING SEPARATE VALUE -12.
+          05 LS PIC S9(3) SIGN IS LEADING SEPARATE CHARACTER
+                VALUE +45.
+          05 LE PIC S9(3) LEADING VALUE -7.
+          05 TE PIC S9(3) TRAILING VALUE -7.
+       01 GRP SIGN LEADING SEPARATE.
+          05 G1 PIC S99 VALUE -3.
+          05 G2 PIC 99 VALUE 4.
+       PROCEDURE DIVISION.
+       MAIN-PARA.
+           DISPLAY "REC=[" REC "]".
+           DISPLAY "GRP=[" GRP "]".
+           DISPLAY TS " " LS " " LE " " TE " " G1.
+           ADD 100 TO TS.
+           COMPUTE LS = LS * -2.
+           DISPLAY "REC=[" REC "]".
+           IF TS NUMERIC AND LS NUMERIC AND LE NUMERIC AND G1 NUMERIC
+               DISPLAY "NUMERIC OK".
+           STOP RUN.

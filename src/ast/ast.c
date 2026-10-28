@@ -35,6 +35,7 @@ AstNode *ast_clone(const AstNode *node) {
     if (node->mask) c->mask = strdup(node->mask);
     c->float_char = node->float_char;
     c->blank_when_zero = node->blank_when_zero;
+    c->sign_mode = node->sign_mode;
     c->rounded = node->rounded;
     c->children = ast_clone_list(node->children);
     c->on_error = ast_clone_list(node->on_error);
@@ -135,6 +136,8 @@ void ast_dump(AstNode *node, FILE *out, int indent) {
         case AST_REFMOD:                    kind_name = "REFMOD"; break;
         case AST_STATEMENT_INITIALIZE:      kind_name = "INITIALIZE"; break;
         case AST_STATEMENT_SEARCH:          kind_name = "SEARCH"; break;
+        case AST_STATEMENT_INSPECT:         kind_name = "INSPECT"; break;
+        case AST_INSPECT_ITEM:              kind_name = "INSPECT-ITEM"; break;
         case AST_STATEMENT_OPEN:            kind_name = "OPEN"; break;
         case AST_STATEMENT_CLOSE:           kind_name = "CLOSE"; break;
         case AST_STATEMENT_READ:            kind_name = "READ"; break;

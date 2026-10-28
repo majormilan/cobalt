@@ -51,3 +51,5 @@
 %define USAGE_COMP5   3                 ; native binary
 %define NUM_SIGNED    1                 ; PIC has S
 %define NUM_KEEP      2                 ; on size error, leave the field unchanged
+%define NUM_SIGN_LEADING  4             ; DISPLAY: sign on (or before) the first digit
+%define NUM_SIGN_SEPARATE 8             ; DISPLAY: sign is a separate + or - character

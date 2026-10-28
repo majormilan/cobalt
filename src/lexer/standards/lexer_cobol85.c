@@ -189,6 +189,20 @@ Token lexer_cobol85_keyword_or_ident(Lexer *l, const char *start, size_t len) {
     KW("RELATIVE",        TOK_RELATIVE);
     KW("RANDOM",          TOK_RANDOM);
     KW("DYNAMIC",         TOK_DYNAMIC);
+    KW("LEADING",         TOK_LEADING);
+    KW("TRAILING",        TOK_TRAILING);
+    KW("SEPARATE",        TOK_SEPARATE);
+    KW("CHARACTER",       TOK_CHARACTER);
+    KW("CORRESPONDING",   TOK_CORRESPONDING);
+    KW("CORR",            TOK_CORRESPONDING);
+    KW("INSPECT",         TOK_INSPECT);
+    KW("TALLYING",        TOK_TALLYING);
+    KW("REPLACING",       TOK_REPLACING);
+    KW("CONVERTING",      TOK_CONVERTING);
+    KW("CHARACTERS",      TOK_CHARACTERS);
+    KW("FIRST",           TOK_FIRST);
+    KW("INITIAL",         TOK_INITIAL);
+    KW("FOR",             TOK_FOR);
     #undef KW
 
     return make_token_public(l, TOK_IDENT, start, len);

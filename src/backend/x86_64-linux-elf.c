@@ -143,6 +143,12 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
     for (i = ir->head; i; i = i->next)
         if (i->op == IR_ADDR_SET && i->imm + 1 > num_slots) num_slots = (int)i->imm + 1;
     for (int k = 0; k < num_slots; k++) fprintf(f, "A_%d: resq 1\nN_%d: resq 1\n", k, k);
+    for (i = ir->head; i; i = i->next) {
+        if (i->op != IR_DATA_BSS) continue;
+        char *label = sanitize_label_name(i->var_name);
+        fprintf(f, "%s: resb %d\n", label, i->size > 0 ? i->size : 8);
+        free(label);
+    }
     fprintf(f, "cobrt_io_status: resq 1\n");
     fprintf(f, "L_numtext: resb 40\n");
     fprintf(f, "cobrt_tgt_err: resb 1\n");
@@ -528,6 +534,21 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 fprintf(f, "    jle %s\n", sanitized_jump);
                 fprintf(f, "L_io_%d:\n", store_counter);
                 store_counter++;
+                break;
+            case IR_STORE_QWORD:
+                if (i->flags == 1) emit_addr(f, "rax", i->lit_name);
+                else if (i->flags == 2) emit_size(f, "rax", i->size);
+                emit_addr(f, "rdi", i->var_name);
+                if (i->flags == 0) fprintf(f, "    mov qword [rdi], %lld\n", i->imm);
+                else fprintf(f, "    mov [rdi], rax\n");
+                break;
+            case IR_CALL_INSPECT:
+                emit_addr(f, "rdi", i->var_name);
+                emit_size(f, "rsi", i->size);
+                emit_addr(f, "rdx", i->lit_name);
+                fprintf(f, "    mov rcx, %lld\n", i->imm);
+                emit_addr(f, "r8", i->content);
+                fprintf(f, "    call runtime_inspect\n\n");
                 break;
             case IR_SIZE_ERR_CLEAR:
                 fprintf(f, "    mov byte [rel cobrt_tgt_err], 0\n");

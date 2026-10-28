@@ -57,6 +57,7 @@ static void synchronize() {
             case TOK_SET:
             case TOK_INITIALIZE:
             case TOK_SEARCH:
+            case TOK_INSPECT:
             case TOK_OPEN:
             case TOK_CLOSE:
             case TOK_READ:
@@ -448,13 +449,24 @@ static AstNode *parse_var_decl(void) {
             if (tok.kind != TOK_ZEROS) { ast_free(var); arith_error("Expected ZERO after BLANK WHEN"); return NULL; }
             next();
             var->blank_when_zero = true;
-        } else if (tok.kind == TOK_SIGN) {
-            const char *clause = "SIGN";
-            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                             "%s clause is not supported yet", clause);
-            synchronize();
-            ast_free(var);
-            return NULL;
+        } else if (tok.kind == TOK_SIGN || tok.kind == TOK_LEADING || tok.kind == TOK_TRAILING) {
+            // [SIGN [IS]] {LEADING | TRAILING} [SEPARATE [CHARACTER]]
+            if (tok.kind == TOK_SIGN) {
+                next();
+                if (tok.kind == TOK_IS) next();
+            }
+            if (tok.kind != TOK_LEADING && tok.kind != TOK_TRAILING) {
+                ast_free(var);
+                arith_error("Expected LEADING or TRAILING");
+                return NULL;
+            }
+            var->sign_mode = SIGN_GIVEN | (tok.kind == TOK_LEADING ? SIGN_LEADING : 0);
+            next();
+            if (tok.kind == TOK_SEPARATE) {
+                var->sign_mode |= SIGN_SEPARATE;
+                next();
+                if (tok.kind == TOK_CHARACTER) next();
+            }
         } else {
             cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
                              "Unexpected '%.*s' in data description of '%s'", (int)tok.length, tok.lexeme, var->name);
@@ -1171,6 +1183,26 @@ static void parse_size_error_phrases(AstNode *stmt, TokenKind end_tok) {
     if (tok.kind == end_tok) next();
 }
 
+// True if an INSPECT operand (identifier, literal, figurative) starts here
+static bool inspect_operand_start(void) {
+    return tok.kind == TOK_IDENT || tok.kind == TOK_STRING || tok.kind == TOK_NUMBER ||
+           is_figurative(tok.kind);
+}
+
+// [{BEFORE|AFTER} [INITIAL] operand]... of an INSPECT operand
+static bool parse_inspect_phrases(AstNode *item) {
+    while (tok.kind == TOK_BEFORE || tok.kind == TOK_AFTER) {
+        bool before = tok.kind == TOK_BEFORE;
+        next();
+        if (tok.kind == TOK_INITIAL) next();
+        AstNode *delim = parse_value_operand();
+        if (!delim) { arith_error("Expected BEFORE/AFTER operand"); return false; }
+        if (before) { ast_free(item->not_on_error); item->not_on_error = delim; }
+        else { ast_free(item->children); item->children = delim; }
+    }
+    return true;
+}
+
 static AstNode *parse_statement(void) {
     if (parser_panic_mode) return NULL; // Don't try to parse statements if in panic mode
 
@@ -1196,6 +1228,12 @@ static AstNode *parse_statement(void) {
         next();
         AstNode *move = ast_new(AST_STATEMENT_MOVE, NULL, loc);
         AstNode *tail = NULL;
+        if (tok.kind == TOK_CORRESPONDING) {
+            // MOVE CORRESPONDING group TO group; name = "CORR"
+            next();
+            move->name = strdup("CORR");
+            if (tok.kind != TOK_IDENT) { ast_free(move); arith_error("Expected group after CORRESPONDING"); return NULL; }
+        }
         AstNode *src = parse_value_operand();
         if (!src) { ast_free(move); arith_error("Expected MOVE source"); return NULL; }
         list_append(&move->children, &tail, src);
@@ -1216,6 +1254,11 @@ static AstNode *parse_statement(void) {
         AstNode *add = ast_new(AST_STATEMENT_ADD, NULL, loc);
         AstNode *head = NULL, *tail = NULL, *op;
         int num_src = 0, num_dest = 0;
+        if (tok.kind == TOK_CORRESPONDING) {
+            // ADD CORRESPONDING group TO group [ROUNDED]; name = "CORR"
+            next();
+            add->name = strdup("CORR");
+        }
 
         while (!parser_panic_mode && (op = parse_arith_operand())) {
             list_append(&head, &tail, op);
@@ -1262,6 +1305,11 @@ static AstNode *parse_statement(void) {
         AstNode *sub = ast_new(AST_STATEMENT_SUBTRACT, NULL, loc);
         AstNode *head = NULL, *tail = NULL, *op;
         int num_src = 0, num_dest = 0;
+        if (tok.kind == TOK_CORRESPONDING) {
+            // SUBTRACT CORRESPONDING group FROM group [ROUNDED]; name = "CORR"
+            next();
+            sub->name = strdup("CORR");
+        }
 
         while (!parser_panic_mode && (op = parse_arith_operand())) {
             list_append(&head, &tail, op);
@@ -1677,6 +1725,86 @@ static AstNode *parse_statement(void) {
         if (tok.kind == TOK_END_SEARCH) next();
         return search;
     }
+    // ─── INSPECT ─────────────────────────────────────────────────────────────
+    // INSPECT id [TALLYING {counter FOR {CHARACTERS [phrases] |
+    //                                    {ALL|LEADING} {operand [phrases]}...}...}...]
+    //            [REPLACING {CHARACTERS BY operand [phrases] |
+    //                        {ALL|LEADING|FIRST} {operand BY operand [phrases]}...}...]
+    // INSPECT id CONVERTING operand TO operand [phrases]
+    // phrases: [{BEFORE|AFTER} [INITIAL] operand]...
+    else if (tok.kind == TOK_INSPECT) {
+        next();
+        AstNode *insp = ast_new(AST_STATEMENT_INSPECT, NULL, loc);
+        if (tok.kind != TOK_IDENT) { ast_free(insp); arith_error("Expected identifier after INSPECT"); return NULL; }
+        insp->extra = parse_identifier();
+        AstNode *tail = NULL;
+        if (tok.kind == TOK_CONVERTING) {
+            next();
+            AstNode *item = ast_new(AST_INSPECT_ITEM, "CONVERT", loc);
+            item->extra = parse_value_operand();
+            if (!item->extra || tok.kind != TOK_TO) { ast_free(item); ast_free(insp); arith_error("Expected CONVERTING operand TO operand"); return NULL; }
+            next();
+            item->on_error = parse_value_operand();
+            if (!item->on_error || !parse_inspect_phrases(item)) { ast_free(item); ast_free(insp); return NULL; }
+            list_append(&insp->children, &tail, item);
+            return insp;
+        }
+        if (tok.kind == TOK_TALLYING) {
+            next();
+            while (tok.kind == TOK_IDENT) {
+                AstNode *counter = parse_identifier();
+                if (tok.kind != TOK_FOR) { ast_free(counter); ast_free(insp); arith_error("Expected FOR"); return NULL; }
+                next();
+                const char *kind = NULL;
+                while (true) {
+                    if (tok.kind == TOK_CHARACTERS) kind = "CHARACTERS";
+                    else if (tok.kind == TOK_ALL) kind = "ALL";
+                    else if (tok.kind == TOK_LEADING) kind = "LEADING";
+                    if (tok.kind == TOK_CHARACTERS || tok.kind == TOK_ALL || tok.kind == TOK_LEADING) next();
+                    else if (!kind) break;
+                    else if (strcmp(kind, "CHARACTERS") == 0 || !inspect_operand_start()) break;
+                    AstNode *item = ast_new(AST_INSPECT_ITEM, kind, loc);
+                    item->loop = ast_clone(counter);
+                    if (strcmp(kind, "CHARACTERS") != 0) {
+                        item->extra = parse_value_operand();
+                        if (!item->extra) { ast_free(item); ast_free(counter); ast_free(insp); arith_error("Expected TALLYING operand"); return NULL; }
+                    }
+                    if (!parse_inspect_phrases(item)) { ast_free(item); ast_free(counter); ast_free(insp); return NULL; }
+                    list_append(&insp->children, &tail, item);
+                    if (strcmp(kind, "CHARACTERS") == 0) kind = NULL;
+                    if (!inspect_operand_start() && tok.kind != TOK_CHARACTERS &&
+                        tok.kind != TOK_ALL && tok.kind != TOK_LEADING) break;
+                    if (tok.kind == TOK_IDENT && peek_token().kind == TOK_FOR) break;  // next counter
+                }
+                ast_free(counter);
+            }
+        }
+        if (tok.kind == TOK_REPLACING) {
+            next();
+            const char *kind = NULL;
+            while (true) {
+                if (tok.kind == TOK_CHARACTERS) kind = "CHARACTERS";
+                else if (tok.kind == TOK_ALL) kind = "ALL";
+                else if (tok.kind == TOK_LEADING) kind = "LEADING";
+                else if (tok.kind == TOK_FIRST) kind = "FIRST";
+                if (tok.kind == TOK_CHARACTERS || tok.kind == TOK_ALL || tok.kind == TOK_LEADING || tok.kind == TOK_FIRST) next();
+                else if (!kind || strcmp(kind, "CHARACTERS") == 0 || !inspect_operand_start()) break;
+                AstNode *item = ast_new(AST_INSPECT_ITEM, kind, loc);
+                if (strcmp(kind, "CHARACTERS") != 0) {
+                    item->extra = parse_value_operand();
+                    if (!item->extra) { ast_free(item); ast_free(insp); arith_error("Expected REPLACING operand"); return NULL; }
+                }
+                if (tok.kind != TOK_BY) { ast_free(item); ast_free(insp); arith_error("Expected BY"); return NULL; }
+                next();
+                item->on_error = parse_value_operand();
+                if (!item->on_error || !parse_inspect_phrases(item)) { ast_free(item); ast_free(insp); arith_error("Expected replacement operand"); return NULL; }
+                list_append(&insp->children, &tail, item);
+                if (strcmp(kind, "CHARACTERS") == 0) kind = NULL;
+            }
+        }
+        if (!insp->children) { ast_free(insp); arith_error("Expected TALLYING, REPLACING or CONVERTING"); return NULL; }
+        return insp;
+    }
     // ─── OPEN {INPUT|OUTPUT|I-O|EXTEND} file... ...  CLOSE file... ──────────
     else if (tok.kind == TOK_OPEN || tok.kind == TOK_CLOSE) {
         bool is_open = tok.kind == TOK_OPEN;
@@ -1696,7 +1824,7 @@ static AstNode *parse_statement(void) {
                 // CLOSE options: REEL/UNIT, WITH NO REWIND, WITH LOCK
                 while (!is_open && (tok_is_word("REEL") || tok_is_word("UNIT") || tok.kind == TOK_WITH ||
                                     tok_is_word("NO") || tok_is_word("REWIND") || tok_is_word("LOCK") ||
-                                    tok_is_word("FOR") || tok_is_word("REMOVAL"))) next();
+                                    tok.kind == TOK_FOR || tok_is_word("REMOVAL"))) next();
             } else {
                 break;
             }

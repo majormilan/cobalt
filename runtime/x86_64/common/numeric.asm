@@ -37,19 +37,42 @@ runtime_num_load:
     cmp rax, USAGE_COMP5
     je .comp5
 
-    ; DISPLAY: one ASCII digit per byte, trailing overpunch if signed
+    ; DISPLAY: one ASCII digit per byte. A signed item has an overpunched
+    ; sign on its last digit, or its first with SIGN LEADING, or a separate
+    ; + or - character before or after the digits.
     xor eax, eax
     xor ebx, ebx                        ; rbx = negative
+    mov r9, -1                          ; r9 = index of the overpunched digit
+    test r14, NUM_SIGNED
+    jz .d_start
+    test r14, NUM_SIGN_SEPARATE
+    jz .d_overpunch
+    dec r13                             ; digits exclude the sign character
+    test r14, NUM_SIGN_LEADING
+    jz .d_sep_trailing
+    movzx edx, byte [r12]
+    inc r12
+    jmp .d_sep_sign
+.d_sep_trailing:
+    movzx edx, byte [r12 + r13]
+.d_sep_sign:
+    cmp dl, '-'
+    jne .d_start
+    mov ebx, 1
+    jmp .d_start
+.d_overpunch:
+    lea r9, [r13 - 1]
+    test r14, NUM_SIGN_LEADING
+    jz .d_start
+    xor r9d, r9d
+.d_start:
     xor ecx, ecx                        ; index
 .d_loop:
     cmp rcx, r13
     jge .d_done
     movzx edx, byte [r12 + rcx]
-    lea r8, [rcx + 1]
-    cmp r8, r13
-    jne .d_plain                        ; only the last byte carries a sign
-    test r14, NUM_SIGNED
-    jz .d_plain
+    cmp rcx, r9
+    jne .d_plain                        ; only the overpunched digit carries a sign
     cmp dl, 'p'                         ; 'p'..'y' = -0..-9
     jb .d_ebcdic
     cmp dl, 'y'
@@ -230,8 +253,18 @@ runtime_num_store:
     cmp r10, USAGE_COMP3
     je .s_comp3
 
-    ; DISPLAY: digits right to left, then the trailing overpunch
-    mov rcx, r13
+    ; DISPLAY: digits right to left, then the sign (see runtime_num_load)
+    mov rbx, r12                        ; first digit
+    mov rcx, r13                        ; number of digits
+    test r14, NUM_SIGNED
+    jz .sd_digits
+    test r14, NUM_SIGN_SEPARATE
+    jz .sd_digits
+    dec rcx
+    test r14, NUM_SIGN_LEADING
+    jz .sd_digits
+    inc rbx
+.sd_digits:
     mov r8, 10
 .sd_loop:
     test rcx, rcx
@@ -240,12 +273,34 @@ runtime_num_store:
     xor edx, edx
     div r8
     add dl, '0'
-    mov [r12 + rcx], dl
+    mov [rbx + rcx], dl
     jmp .sd_loop
 .sd_sign:
+    test r14, NUM_SIGNED
+    jz .done
+    test r14, NUM_SIGN_SEPARATE
+    jz .sd_overpunch
+    mov dl, '+'
+    test r11d, r11d
+    jz .sd_put
+    mov dl, '-'
+.sd_put:
+    test r14, NUM_SIGN_LEADING
+    jz .sd_put_trailing
+    mov [r12], dl
+    jmp .done
+.sd_put_trailing:
+    mov [r12 + r13 - 1], dl
+    jmp .done
+.sd_overpunch:
     test r11d, r11d
     jz .done
-    add byte [r12 + r13 - 1], 0x40      ; '0'..'9' -> 'p'..'y'
+    test r14, NUM_SIGN_LEADING
+    jz .sd_op_trailing
+    add byte [r12], 0x40                ; '0'..'9' -> 'p'..'y'
+    jmp .done
+.sd_op_trailing:
+    add byte [r12 + r13 - 1], 0x40
     jmp .done
 
     ; COMP: big-endian two's complement
