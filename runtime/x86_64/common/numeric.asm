@@ -14,6 +14,7 @@ global runtime_num_rescale
 global runtime_num_mul
 global runtime_num_div
 global cobrt_pow10
+global runtime_num_to_digits
 
 ; ARG0 = field ptr, ARG1 = size, ARG2 = usage, ARG3 = flags
 ; Returns RET0 = the field's value as an unscaled signed integer.
@@ -492,6 +493,29 @@ runtime_num_div:
 .v_err:
     xor eax, eax
     mov edx, 1
+    ret
+
+; ARG0 = buffer, ARG1 = number of digits, ARG2 = value
+; Writes |value| as that many digits, zero padded on the left (the low-order
+; digits when it has more).
+runtime_num_to_digits:
+    mov r10, ARG0
+    mov rcx, ARG1
+    mov rax, ARG2
+    test rax, rax
+    jns .t_loop
+    neg rax
+.t_loop:
+    test rcx, rcx
+    jz .t_done
+    dec rcx
+    xor edx, edx
+    mov r8d, 10
+    div r8
+    add dl, '0'
+    mov [r10 + rcx], dl
+    jmp .t_loop
+.t_done:
     ret
 
 section .rodata

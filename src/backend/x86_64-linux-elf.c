@@ -144,7 +144,9 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
         if (i->op == IR_ADDR_SET && i->imm + 1 > num_slots) num_slots = (int)i->imm + 1;
     for (int k = 0; k < num_slots; k++) fprintf(f, "A_%d: resq 1\nN_%d: resq 1\n", k, k);
     fprintf(f, "cobrt_io_status: resq 1\n");
+    fprintf(f, "L_numtext: resb 40\n");
     fprintf(f, "cobrt_tgt_err: resb 1\n");
+    fprintf(f, "cobrt_val_err: resb 1\n");
     fprintf(f, "cobrt_stmt_err: resb 1\n");
     fprintf(f, "\n");
 
@@ -363,6 +365,33 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
                 emit_addr(f, "rcx", i->content);
                 emit_size(f, "r8", i->size);
                 fprintf(f, "    call runtime_edit_alnum\n\n");
+                break;
+            case IR_NUM_TO_TEXT:
+                emit_pop(f, "rdx");
+                fprintf(f, "    lea rdi, [rel L_numtext]\n");
+                fprintf(f, "    mov rsi, %lld\n", i->imm);
+                fprintf(f, "    call runtime_num_to_digits\n");
+                break;
+            case IR_NUM_DUP:
+                fprintf(f, "    mov rax, [rsp]\n");
+                emit_push(f);
+                break;
+            case IR_NUM_DROP:
+                fprintf(f, "    add rsp, 16\n");
+                break;
+            case IR_NUM_SWAP:
+                fprintf(f, "    mov rax, [rsp]\n");
+                fprintf(f, "    mov rcx, [rsp + 16]\n");
+                fprintf(f, "    mov [rsp], rcx\n");
+                fprintf(f, "    mov [rsp + 16], rax\n");
+                break;
+            case IR_ERR_SAVE:
+                fprintf(f, "    mov al, [rel cobrt_tgt_err]\n");
+                fprintf(f, "    mov [rel cobrt_val_err], al\n");
+                break;
+            case IR_ERR_RESTORE:
+                fprintf(f, "    mov al, [rel cobrt_val_err]\n");
+                fprintf(f, "    mov [rel cobrt_tgt_err], al\n");
                 break;
             case IR_NUM_NEG:
                 fprintf(f, "    neg qword [rsp]\n");

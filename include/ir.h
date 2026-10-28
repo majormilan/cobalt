@@ -51,6 +51,12 @@ typedef enum {
     IR_NUM_MUL,             // pop b, pop a, push (a * b) / 10^imm
     IR_NUM_DIV,             // pop b, pop a, push (a * 10^imm) / b
     IR_NUM_NEG,             // top = -top
+    IR_NUM_TO_TEXT,         // pop v; write |v| as imm digits to the "$numtext" buffer
+    IR_NUM_DUP,             // push a copy of the top
+    IR_NUM_DROP,            // pop and discard
+    IR_NUM_SWAP,            // exchange the two top values
+    IR_ERR_SAVE,            // remember the errors of a value used for several receivers
+    IR_ERR_RESTORE,         // start a receiver with the remembered errors
     IR_NUM_STORE,           // pop into a field: var_name, size, digits, usage_type, flags;
                             //   with lit_name: edit into a numeric edited item using
                             //   that edit mask (size = mask length, flags = edit flags)

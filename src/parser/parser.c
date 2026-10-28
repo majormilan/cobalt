@@ -612,6 +612,11 @@ static AstNode *parse_factor(void) {
         return node;
     }
 
+    if (tok.kind == TOK_ZEROS) {                // ZERO in an expression is 0
+        next();
+        return ast_new(AST_LITERAL_NUMBER, "0", loc);
+    }
+
     if (tok.kind == TOK_IDENT) return parse_identifier();
 
     return NULL;
@@ -756,6 +761,12 @@ static AstNode *make_relation(AstNode *left, const char *op, AstNode *right) {
 static AstNode *parse_rel_operand(void) {
     SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
     if (tok.kind == TOK_ALL) return parse_all_literal();
+    if (tok.kind == TOK_ZEROS) {
+        // ZERO starting an arithmetic expression ("ZERO - A IS NEGATIVE")
+        TokenKind after = peek_token().kind;
+        if (after == TOK_PLUS || after == TOK_MINUS || after == TOK_MUL ||
+            after == TOK_DIV || after == TOK_POW) return parse_expr();
+    }
     if (tok.kind == TOK_STRING || is_figurative(tok.kind)) {
         char *val = tok_value();
         AstNode *op = ast_new(tok.kind == TOK_STRING ? AST_STRING_LITERAL : AST_FIGURATIVE_CONSTANT, val, loc);
@@ -854,6 +865,10 @@ static AstNode *parse_primary_cond(void) {
     SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
 
     // Abbreviated relation with its operator: the subject is omitted
+    if (abbrev_subject && tok.kind == TOK_IS) {
+        TokenKind after = peek_token().kind;
+        if (after == TOK_NOT || is_relop_start(after)) next();
+    }
     if (abbrev_subject && (is_relop_start(tok.kind) ||
                            (tok.kind == TOK_NOT && is_relop_start(peek_token().kind)))) {
         bool negated = false;
@@ -2036,7 +2051,8 @@ static AstNode *parse_file_section(void) {
         free(name);
         next();
         // BLOCK, RECORD, LABEL, VALUE OF, DATA RECORDS, CODE-SET: no effect here
-        while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF && !is_division_start(tok.kind)) {
+        while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF &&
+               !(is_division_start(tok.kind) && peek_token().kind == TOK_DIVISION)) {
             if (tok.kind == TOK_LINAGE)
                 cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
                                  "LINAGE is not supported yet");

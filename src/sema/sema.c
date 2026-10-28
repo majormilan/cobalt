@@ -108,7 +108,7 @@ static PicInfo analyze_pic(const char *pic) {
     char floating = count_dollar > 1 ? '$' : count_plus > 1 ? '+' : count_minus > 1 ? '-' : 0;
     info.float_char = floating;
     bool seen_point = false, seen_float = false;
-    int m = 0;
+    int m = 0, p_left = 0, p_right = 0;
     for (int i = 0; i < n; i++) {
         char c = sym[i], out = 0;
         bool digit = false;
@@ -118,7 +118,10 @@ static PicInfo analyze_pic(const char *pic) {
             case 'c': case 'r': case 'd': case 'b': out = c; info.is_signed = true; break;
             case '.': out = '.'; seen_point = true; break;
             case 'V': seen_point = true; break;                 // implied: no position
-            case 'P': break;                                    // scaling: no position
+            case 'P':                                           // scaling: no position
+                if (info.digits == 0) p_left++;
+                else p_right++;
+                break;
             case '$': case '+': case '-':
                 if (c == floating) {
                     out = seen_float ? 'f' : 'F';
@@ -140,6 +143,8 @@ static PicInfo analyze_pic(const char *pic) {
     info.mask[m] = '\0';
     info.length = m;
     info.cls = PIC_NUMERIC_EDITED;
+    if (p_right) info.scale -= p_right;     // ZZZPP: digits worth hundreds
+    if (p_left) info.scale += p_left;       // PPZZ: digits after implied zeros
     return info;
 }
 

@@ -41,6 +41,7 @@ def main():
     src, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
     current = None
+    is_data = False
     count = 0
     with open(src, encoding="latin-1") as f:
         for line in f:
@@ -52,6 +53,7 @@ def main():
                 kind, name = parts[1].strip(), parts[2].strip()
                 path = os.path.join(out, name + SUFFIX.get(kind, ".DAT"))
                 current = open(path, "w", encoding="latin-1")
+                is_data = not kind in SUFFIX    # data members are copied unchanged
                 count += 1
                 continue
             if line.startswith("*END-OF,"):
@@ -60,7 +62,7 @@ def main():
                 current = None
                 continue
             if current:
-                current.write(substitute(line) + "\n")
+                current.write((line if is_data else substitute(line)) + "\n")
     if current:
         current.close()
     print(f"{count} members written to {out}")

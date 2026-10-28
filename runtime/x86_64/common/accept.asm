@@ -136,6 +136,34 @@ runtime_accept_numeric:
     mov ARG4, ' '
     call runtime_accept
 
+    ; Device data is transferred left-justified: when the line is an unsigned
+    ; integer, a DISPLAY item takes at most as many characters as it is long
+    ; (the rest is truncated). Signed or decimal input is converted instead.
+    mov rax, [rbp-40]
+    cmp rax, USAGE_DISPLAY
+    jne .an_scan
+    xor ecx, ecx
+.an_check:
+    cmp rcx, 64
+    jae .an_truncate
+    movzx edx, byte [rbp-112 + rcx]
+    inc rcx
+    cmp dl, ' '
+    je .an_check
+    sub dl, '0'
+    cmp dl, 9
+    jbe .an_check
+    jmp .an_scan                        ; not an unsigned integer
+.an_truncate:
+    mov rcx, [rbp-16]                   ; item size
+    cmp rcx, 64
+    jae .an_scan
+.an_blank:
+    mov byte [rbp-112 + rcx], ' '
+    inc rcx
+    cmp rcx, 64
+    jb .an_blank
+.an_scan:
     xor eax, eax                        ; value
     xor ecx, ecx                        ; index into the line
     xor r8d, r8d                        ; negative

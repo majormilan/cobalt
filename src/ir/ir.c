@@ -967,80 +967,165 @@ static void lower_size_error_phrases(IrProgram *ir, AstNode *stmt) {
     emit_label(ir, end_lbl);
 }
 
-// ADD, SUBTRACT, MULTIPLY, DIVIDE and COMPUTE: one expression per receiver.
+// Working scale for a value stored into several receivers
+static int working_scale_all(AstNode *tree, AstNode **recv, int n) {
+    int w = max_leaf_scale(tree);
+    for (int i = 0; i < n; i++) {
+        VarInfo *v = find_item(recv[i], false);
+        if (v && v->decimal_places > w) w = v->decimal_places;
+    }
+    w += 2;
+    if (w < 0) w = 0;
+    return w > 18 ? 18 : w;
+}
+
+// Store the value on top of the numeric stack (scale s) into a receiver,
+// keeping the value for the next receiver
+static void store_copy(IrProgram *ir, AstNode *recv, int s, bool keep) {
+    VarInfo *t = receiving_item(recv);
+    if (!t) return;
+    emit(ir, IR_ERR_RESTORE);
+    emit(ir, IR_NUM_DUP);
+    emit_rescale(ir, t->decimal_places - s, recv->rounded);
+    FieldRef f;
+    if (!resolve_ref(ir, recv, &f)) {
+        emit(ir, IR_NUM_DROP);
+        return;
+    }
+    emit_store(ir, &f, keep);
+}
+
+// Compute tree once and store it into every receiver (GIVING, COMPUTE)
+static void lower_giving(IrProgram *ir, AstNode *tree, AstNode **recv, int n, bool keep) {
+    if (!num_expr_valid(tree)) return;
+    int s = num_expr(ir, tree, working_scale_all(tree, recv, n));
+    emit(ir, IR_ERR_SAVE);
+    for (int i = 0; i < n; i++) store_copy(ir, recv[i], s, keep);
+    emit(ir, IR_NUM_DROP);
+}
+
+// receiver = receiver op value, for each receiver, with the value of tree
+// computed once (ADD TO, SUBTRACT FROM, MULTIPLY BY, DIVIDE INTO)
+static void lower_in_place(IrProgram *ir, AstKind op, AstNode *tree, AstNode **recv, int n, bool keep) {
+    if (!num_expr_valid(tree)) return;
+    for (int i = 0; i < n; i++)
+        if (!numeric_item(recv[i], "Receiving item")) return;
+    int W = working_scale_all(tree, recv, n);
+    int sx = num_expr(ir, tree, W);
+    emit(ir, IR_ERR_SAVE);
+    for (int i = 0; i < n; i++) {
+        VarInfo *t = find_item(recv[i], false);
+        int sr = t->decimal_places, s;
+        FieldRef f;
+        emit(ir, IR_ERR_RESTORE);
+        emit(ir, IR_NUM_DUP);
+        if (op == AST_EXPR_ADD || op == AST_EXPR_SUB) {
+            s = sx > sr ? sx : sr;
+            emit_rescale(ir, s - sx, false);
+            if (!resolve_ref(ir, recv[i], &f)) { emit(ir, IR_NUM_DROP); continue; }
+            emit_load(ir, &f);
+            emit_rescale(ir, s - sr, false);
+            if (op == AST_EXPR_ADD) {
+                emit_num(ir, IR_NUM_ADD, 0, 0);
+            } else {
+                emit_num(ir, IR_NUM_SUB, 0, 0);    // value - receiver
+                emit_num(ir, IR_NUM_NEG, 0, 0);    // receiver - value
+            }
+        } else if (op == AST_EXPR_MUL) {
+            if (!resolve_ref(ir, recv[i], &f)) { emit(ir, IR_NUM_DROP); continue; }
+            emit_load(ir, &f);
+            int p = sx + sr, shift = p > W ? p - W : 0;
+            emit_num(ir, IR_NUM_MUL, shift, 0);
+            s = p - shift;
+        } else {
+            // receiver / value: the receiver goes below the value
+            if (!resolve_ref(ir, recv[i], &f)) { emit(ir, IR_NUM_DROP); continue; }
+            emit_load(ir, &f);
+            int shift = W - sr + sx;
+            if (shift < 0) {
+                emit_rescale(ir, shift, false);
+                shift = 0;
+            }
+            emit(ir, IR_NUM_SWAP);
+            emit_num(ir, IR_NUM_DIV, shift, 0);
+            s = W;
+        }
+        emit_rescale(ir, sr - s, recv[i]->rounded);
+        if (!resolve_ref(ir, recv[i], &f)) { emit(ir, IR_NUM_DROP); continue; }
+        emit_store(ir, &f, keep);
+    }
+    emit(ir, IR_NUM_DROP);
+}
+
+// ADD, SUBTRACT, MULTIPLY, DIVIDE and COMPUTE. Sending operands are
+// evaluated once, before any receiver is changed; with GIVING (and COMPUTE)
+// the result is computed once and stored into each receiver.
 // Child layouts are documented at the statement parsers.
 static void lower_arith_node(IrProgram *ir, AstNode *node) {
     AstNode *ops[128];
     int n = 0;
     for (AstNode *c = node->children; c && n < 128; c = c->next) ops[n++] = c;
     bool giving = node->is_numeric;
-    bool keep = node->on_error != NULL;
+    // With either SIZE ERROR phrase, a receiver with a size error is left unchanged
+    bool keep = node->on_error != NULL || node->not_on_error != NULL;
 
     emit(ir, IR_SIZE_ERR_CLEAR);
 
     switch (node->kind) {
         case AST_STATEMENT_ADD: {
             int nsrc = node->decimal_places;
-            for (int i = nsrc; i < n; i++) {
-                AstNode *tree = giving ? fold_ops(AST_EXPR_ADD, ast_clone(ops[0]), ops + 1, nsrc - 1)
-                                       : fold_ops(AST_EXPR_ADD, ast_clone(ops[i]), ops, nsrc);
-                lower_assign(ir, tree, ops[i], keep);
-                ast_free(tree);
-            }
+            AstNode *sum = fold_ops(AST_EXPR_ADD, ast_clone(ops[0]), ops + 1, nsrc - 1);
+            if (giving) lower_giving(ir, sum, ops + nsrc, n - nsrc, keep);
+            else lower_in_place(ir, AST_EXPR_ADD, sum, ops + nsrc, n - nsrc, keep);
+            ast_free(sum);
             break;
         }
         case AST_STATEMENT_SUBTRACT: {
             int nsrc = node->decimal_places;
-            int first_dest = giving ? nsrc + 1 : nsrc;
-            for (int i = first_dest; i < n; i++) {
-                AstNode *minuend = giving ? ops[nsrc] : ops[i];
-                AstNode *tree = fold_ops(AST_EXPR_SUB, ast_clone(minuend), ops, nsrc);
-                lower_assign(ir, tree, ops[i], keep);
+            if (giving) {
+                AstNode *tree = fold_ops(AST_EXPR_SUB, ast_clone(ops[nsrc]), ops, nsrc);
+                lower_giving(ir, tree, ops + nsrc + 1, n - nsrc - 1, keep);
                 ast_free(tree);
+            } else {
+                AstNode *sum = fold_ops(AST_EXPR_ADD, ast_clone(ops[0]), ops + 1, nsrc - 1);
+                lower_in_place(ir, AST_EXPR_SUB, sum, ops + nsrc, n - nsrc, keep);
+                ast_free(sum);
             }
             break;
         }
-        case AST_STATEMENT_MULTIPLY: {
-            int first_dest = giving ? 2 : 1;
-            for (int i = first_dest; i < n; i++) {
-                AstNode *tree = mk_bin(AST_EXPR_MUL, ast_clone(ops[0]),
-                                       ast_clone(giving ? ops[1] : ops[i]));
-                lower_assign(ir, tree, ops[i], keep);
+        case AST_STATEMENT_MULTIPLY:
+            if (giving) {
+                AstNode *tree = mk_bin(AST_EXPR_MUL, ast_clone(ops[0]), ast_clone(ops[1]));
+                lower_giving(ir, tree, ops + 2, n - 2, keep);
                 ast_free(tree);
+            } else {
+                lower_in_place(ir, AST_EXPR_MUL, ops[0], ops + 1, n - 1, keep);
             }
             break;
-        }
         case AST_STATEMENT_DIVIDE: {
             bool is_by = node->name && strcasecmp(node->name, "BY") == 0;
             bool has_rem = node->is_signed;
             if (!giving) {
-                // DIVIDE divisor INTO dest+
-                for (int i = 1; i < n; i++) {
-                    AstNode *tree = mk_bin(AST_EXPR_DIV, ast_clone(ops[i]), ast_clone(ops[0]));
-                    lower_assign(ir, tree, ops[i], keep);
-                    ast_free(tree);
-                }
+                lower_in_place(ir, AST_EXPR_DIV, ops[0], ops + 1, n - 1, keep);
                 break;
             }
             AstNode *dividend = is_by ? ops[0] : ops[1];
             AstNode *divisor  = is_by ? ops[1] : ops[0];
             int last_dest = has_rem ? n - 1 : n;
-            for (int i = 2; i < last_dest; i++) {
-                AstNode *tree = mk_bin(AST_EXPR_DIV, ast_clone(dividend), ast_clone(divisor));
-                lower_assign(ir, tree, ops[i], keep);
-                ast_free(tree);
-            }
+            AstNode *tree = mk_bin(AST_EXPR_DIV, ast_clone(dividend), ast_clone(divisor));
+            lower_giving(ir, tree, ops + 2, last_dest - 2, keep);
+            ast_free(tree);
             if (has_rem) {
                 // remainder = dividend - quotient * divisor, using the stored quotient
-                AstNode *tree = mk_bin(AST_EXPR_SUB, ast_clone(dividend),
-                                       mk_bin(AST_EXPR_MUL, ast_clone(ops[2]), ast_clone(divisor)));
-                lower_assign(ir, tree, ops[n - 1], keep);
-                ast_free(tree);
+                AstNode *rem = mk_bin(AST_EXPR_SUB, ast_clone(dividend),
+                                      mk_bin(AST_EXPR_MUL, ast_clone(ops[2]), ast_clone(divisor)));
+                lower_assign(ir, rem, ops[n - 1], keep);
+                ast_free(rem);
             }
             break;
         }
         case AST_STATEMENT_COMPUTE:
-            for (int i = 1; i < n; i++) lower_assign(ir, ops[0], ops[i], keep);
+            lower_giving(ir, ops[0], ops + 1, n - 1, keep);
             break;
         default:
             break;
@@ -1429,12 +1514,21 @@ static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const ch
         if (!ok) return;
         emit_rescale(ir, dv->decimal_places - s, false);
         if (resolve_ref(ir, dest_node, &dest)) emit_store(ir, &dest, false);
+    } else if (!dest_numeric && sv->is_numeric && src_whole) {
+        // A numeric item moves as its unsigned digits, with P positions as
+        // zeros (99PP holding 1200 moves as "1200", PP99 as "0012")
+        int digits = sv->digits, s = sv->decimal_places;
+        int ndig = s < 0 ? digits - s : (s > digits ? s : digits);
+        FieldRef sf;
+        if (!resolve_ref(ir, src, &sf)) return;
+        emit_load(ir, &sf);
+        if (s < 0) emit_rescale(ir, -s, false);
+        IrInstr *t = emit(ir, IR_NUM_TO_TEXT);
+        t->imm = ndig;
+        if (!resolve_ref(ir, dest_node, &dest)) return;
+        if (dest_alnum_edited) emit_edit_alnum(ir, &dest, "$numtext", ndig);
+        else emit_move_alpha(ir, &dest, "$numtext", ndig);
     } else if (!dest_numeric) {
-        if (sv->is_numeric && src_whole && sv->usage_type != USAGE_DISPLAY) {
-            cobalt_error_loc(NULL, src->loc.line, src->loc.column,
-                             "MOVE of non-DISPLAY numeric '%s' to alphanumeric is not supported yet", sv->name);
-            return;
-        }
         FieldRef sf;
         if (!resolve_ref(ir, src, &sf) || !resolve_ref(ir, dest_node, &dest)) return;
         if (dest_alnum_edited) emit_edit_alnum(ir, &dest, sf.label, sf.size);
@@ -1474,23 +1568,68 @@ static void lower_perform_body(IrProgram *ir, AstNode *node, int first, int last
     }
 }
 
-// VARYING clause k and all clauses after it (AFTER phrases nest inside)
-static void lower_varying(IrProgram *ir, AstNode *node, AstNode *clause, int first, int last) {
-    AstNode *var = clause->children, *from = var->next, *by = from->next, *cond = by->next;
-    bool test_after = node->is_signed;
-    char loop_lbl[32], done_lbl[32];
-    new_label(loop_lbl, sizeof(loop_lbl), "vary");
-    new_label(done_lbl, sizeof(done_lbl), "vary_done");
+// PERFORM VARYING with AFTER phrases, in the order of the standard
+// (clause 1 is VARYING, clauses 2..n the AFTER phrases):
+// TEST BEFORE:  set all identifiers to their FROM values;
+//   L1: if cond1 done
+//   Lk: if condk { augment id(k-1); set idk to its FROM value; goto L(k-1) }
+//   body; augment idn; goto Ln
+// TEST AFTER:   set all identifiers; B: body;
+//   for k = n..1: if not condk { augment idk; set id(k+1..n) to FROM; goto B }
+//   done
+static void lower_varying(IrProgram *ir, AstNode *node, AstNode *clauses, int first, int last) {
+    AstNode *cl[16];
+    int n = 0;
+    for (AstNode *c = clauses; c && n < 16; c = c->next) cl[n++] = c;
+    #define VAR(k)  (cl[k]->children)
+    #define FROM(k) (cl[k]->children->next)
+    #define BY(k)   (cl[k]->children->next->next)
+    #define COND(k) (cl[k]->children->next->next->next)
 
-    lower_varying_set(ir, var, from, false);
-    emit_label(ir, loop_lbl);
-    if (!test_after) emit_cond_jump(ir, cond, done_lbl, true);
-    if (clause->next) lower_varying(ir, node, clause->next, first, last);
-    else lower_perform_body(ir, node, first, last);
-    if (test_after) emit_cond_jump(ir, cond, done_lbl, true);
-    lower_varying_set(ir, var, by, true);
-    emit_jump(ir, IR_JUMP, loop_lbl);
+    char done_lbl[32];
+    new_label(done_lbl, sizeof(done_lbl), "vary_done");
+    for (int k = 0; k < n; k++) lower_varying_set(ir, VAR(k), FROM(k), false);
+
+    if (!node->is_signed) {
+        char test_lbl[16][32];
+        for (int k = 0; k < n; k++) new_label(test_lbl[k], sizeof(test_lbl[k]), "vary_test");
+        for (int k = 0; k < n; k++) {
+            emit_label(ir, test_lbl[k]);
+            if (k == 0) {
+                emit_cond_jump(ir, COND(0), done_lbl, true);
+            } else {
+                char cont[32];
+                new_label(cont, sizeof(cont), "vary_cont");
+                emit_cond_jump(ir, COND(k), cont, false);
+                lower_varying_set(ir, VAR(k - 1), BY(k - 1), true);
+                lower_varying_set(ir, VAR(k), FROM(k), false);
+                emit_jump(ir, IR_JUMP, test_lbl[k - 1]);
+                emit_label(ir, cont);
+            }
+        }
+        lower_perform_body(ir, node, first, last);
+        lower_varying_set(ir, VAR(n - 1), BY(n - 1), true);
+        emit_jump(ir, IR_JUMP, test_lbl[n - 1]);
+    } else {
+        char body_lbl[32];
+        new_label(body_lbl, sizeof(body_lbl), "vary_body");
+        emit_label(ir, body_lbl);
+        lower_perform_body(ir, node, first, last);
+        for (int k = n - 1; k >= 0; k--) {
+            char next_lbl[32];
+            new_label(next_lbl, sizeof(next_lbl), "vary_next");
+            emit_cond_jump(ir, COND(k), next_lbl, true);
+            lower_varying_set(ir, VAR(k), BY(k), true);
+            for (int j = k + 1; j < n; j++) lower_varying_set(ir, VAR(j), FROM(j), false);
+            emit_jump(ir, IR_JUMP, body_lbl);
+            emit_label(ir, next_lbl);
+        }
+    }
     emit_label(ir, done_lbl);
+    #undef VAR
+    #undef FROM
+    #undef BY
+    #undef COND
 }
 
 static void lower_perform(IrProgram *ir, AstNode *node) {
@@ -1686,7 +1825,10 @@ static void lower_search(IrProgram *ir, AstNode *node) {
     }
     AstNode *one = ast_new(AST_LITERAL_NUMBER, "1", table->loc);
     lower_varying_set(ir, index, one, true);
-    if (node->loop) lower_varying_set(ir, node->loop, one, true);
+    // VARYING another index or data item advances with the search index;
+    // VARYING the search index itself does not advance it twice
+    if (node->loop && find_item(node->loop, false) != &vars[tv->first_index])
+        lower_varying_set(ir, node->loop, one, true);
     ast_free(one);
     emit_jump(ir, IR_JUMP, loop_lbl);
 

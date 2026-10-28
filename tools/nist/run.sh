@@ -33,7 +33,10 @@ for cbl in "$SRC"/$MODULE*.CBL; do
         continue
     fi
     compiled=$((compiled+1))
-    (cd "$dir" && timeout 10 "./$name" < /dev/null > run.log 2>&1)
+    # Programs that ACCEPT input get the suite's data member on stdin
+    input=/dev/null
+    [ -f "$SRC/$name.DAT" ] && input="$ROOT/$SRC/$name.DAT"
+    (cd "$dir" && timeout 10 "./$name" < "$input" > run.log 2>&1)
     if [ -f "$dir/report.log" ]; then
         ran=$((ran+1))
         # Summary lines: "093 OF 093  TESTS WERE EXECUTED SUCCESSFULLY",
