@@ -96,9 +96,14 @@ static void print_help(const char *progname) {
 
     printf("Target control:\n");
     printf("  -t, --target TRIPLE    Target triple (default: x86_64-linux-elf)\n");
-    printf("      Supported:\n");
-    printf("        x86_64-linux-elf         Linux x86_64 (default)\n");
-    printf("        x86_64-pc-windows-msvc   Windows x86_64 (future)\n\n");
+    printf("      Known:\n");
+    for (int t = 0; t < TARGET_COUNT; t++) {
+        if (backend_supports(&target_infos[t]))
+            printf("        %s\n", target_infos[t].name);
+        else
+            printf("        %-24s (not yet supported)\n", target_infos[t].name);
+    }
+    printf("\n");
 
     printf("Debug:\n");
     printf("  --help                 Show this help\n\n");
@@ -107,7 +112,6 @@ static void print_help(const char *progname) {
     printf("  %s -i hello.cbl                          # → hello.asm + build instructions\n", progname);
     printf("  %s -i test.cbl -c                        # → test.asm only\n", progname);
     printf("  %s -i test.cbl -o prog.asm -a           # → prog.asm + AST dump\n", progname);
-    printf("  %s -i test.cbl -o hello.exe -t x86_64-pc-windows-msvc  # → hello.exe.asm (future)\n", progname);
 }
 
 int main(int argc, char **argv) {
@@ -119,7 +123,7 @@ int main(int argc, char **argv) {
 
     char *input_file = NULL;
     char *output_file = NULL;
-    TargetTriple target = TARGET_LINUX_X86_64_ELF;
+    const TargetInfo *target = target_get_info(TARGET_LINUX_X86_64_ELF);
     bool compile_only = false;
     bool dump_ast = false;
 
@@ -147,10 +151,9 @@ int main(int argc, char **argv) {
             case 'i': input_file = optarg; break;
             case 'o': output_file = optarg; break;
             case 't':
-                if (!strcmp(optarg, "x86_64-linux-elf")) target = TARGET_LINUX_X86_64_ELF;
-                else if (!strcmp(optarg, "x86_64-pc-windows-msvc")) target = TARGET_WINDOWS_X86_64_PE;
-                else {
-                    cobalt_error("Unknown target: %s", optarg);
+                target = target_from_name(optarg);
+                if (!target) {
+                    cobalt_error("Unknown target: %s (see --help for known targets)", optarg);
                     return 1;
                 }
                 break;
@@ -169,6 +172,11 @@ int main(int argc, char **argv) {
                 cobalt_error("Unknown option -%c", optopt);
                 return 1;
         }
+    }
+
+    if (!backend_supports(target)) {
+        cobalt_error("Target %s is not supported yet", target->name);
+        return 1;
     }
 
     if (!input_file) {
@@ -237,22 +245,30 @@ int main(int argc, char **argv) {
         snprintf(asm_filename, sizeof(asm_filename), "%s.asm", temp);
     }
 
-    backend_emit_object(ir, asm_filename, target);
+    int emit_status = backend_emit_object(ir, asm_filename, target);
 
     ir_free(ir);
     ast_free(ast);
     free(source);
 
+    if (emit_status != 0) return 1;
+
     printf("Assembly written to: %s\n", asm_filename);
 
     // Build instructions only if not compile-only mode
-    if (!compile_only && target == TARGET_LINUX_X86_64_ELF) {
-        const char *exe_name = output_file ? output_file : "a.out";
-        printf("\nTo build and run (Linux):\n");
-        printf("  nasm -f elf64 \"%s\" -o \"%s.o\"\n", asm_filename, exe_name);
-        printf("  make runtime TARGET=x86_64-linux-elf\n");
-        printf("  ld \"%s.o\" \"obj/runtime/x86_64-linux-elf/libcobrt.a\" -o \"%s\"\n", exe_name, exe_name);
-        printf("  ./%s\n", exe_name);
+    if (!compile_only && target->os == OS_LINUX) {
+        // Executable name: the .asm file name without its extension
+        char exe_name[512];
+        snprintf(exe_name, sizeof(exe_name), "%s", asm_filename);
+        char *ext = strrchr(exe_name, '.');
+        if (ext && strcmp(ext, ".asm") == 0) *ext = '\0';
+        else strncat(exe_name, ".out", sizeof(exe_name) - strlen(exe_name) - 1);
+
+        printf("\nTo build and run (%s):\n", target->name);
+        printf("  nasm -f %s \"%s\" -o \"%s.o\"\n", target->nasm_format, asm_filename, exe_name);
+        printf("  make runtime TARGET=%s\n", target->name);
+        printf("  ld \"%s.o\" \"obj/runtime/%s/libcobrt.a\" -o \"%s\"\n", exe_name, target->name, exe_name);
+        printf("  %s%s\n", strchr(exe_name, '/') ? "" : "./", exe_name);
     }
 
     return 0;

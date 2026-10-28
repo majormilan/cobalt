@@ -1,0 +1,21 @@
+/* src/backend/backend.c */
+#include "backend.h"
+#include <stddef.h>
+
+static BackendEmitFn backend_for(const TargetInfo *target) {
+    if (!target) return NULL;
+    switch (target->triple) {
+        case TARGET_LINUX_X86_64_ELF: return x86_64_linux_emit;
+        default:                      return NULL;
+    }
+}
+
+bool backend_supports(const TargetInfo *target) {
+    return backend_for(target) != NULL;
+}
+
+int backend_emit_object(IrProgram *ir, const char *output_filename, const TargetInfo *target) {
+    BackendEmitFn emit = backend_for(target);
+    if (!emit) return 1;
+    return emit(ir, output_filename, target);
+}

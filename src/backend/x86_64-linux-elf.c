@@ -37,35 +37,27 @@ static char *sanitize_label_name(const char *name) {
     return sanitized;
 }
 
-void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple target) {
-    (void)target;
+// Every routine in the runtime contract (runtime/routines.def)
+static const char *const runtime_routines[] = {
+#define RUNTIME_ROUTINE(name) #name,
+#include "routines.def"
+#undef RUNTIME_ROUTINE
+};
+
+int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *target) {
     int perform_counter = 0; // unique label suffix for PERFORM TIMES loops
 
     FILE *f = fopen(filename, "w");
     if (!f) {
         fprintf(stderr, "ERROR: Cannot open output file: %s\n", filename);
-        return;
+        return 1;
     }
 
     fprintf(f, ";; COBALT generated x86-64 Linux assembly\n\n");
 
-    fprintf(f, "extern runtime_init\n");
-    fprintf(f, "extern runtime_display_string\n");
-    fprintf(f, "extern runtime_display_numeric\n");
-    fprintf(f, "extern runtime_move_alphanum\n");
-    fprintf(f, "extern runtime_move_numeric\n");
-    fprintf(f, "extern runtime_display_fill\n"); // New
-    fprintf(f, "extern runtime_move_fill\n");    // New
-    fprintf(f, "extern runtime_display_var_string\n"); // New
-    fprintf(f, "extern runtime_display_newline\n");
-    fprintf(f, "extern runtime_accept\n");             // New
-    fprintf(f, "extern runtime_add_to\n");
-    fprintf(f, "extern runtime_sub_from\n");
-    fprintf(f, "extern runtime_mul_by\n");
-    fprintf(f, "extern runtime_div_into\n");
-    fprintf(f, "extern runtime_mod_into\n");
-    fprintf(f, "extern runtime_load_int\n");
-    fprintf(f, "extern runtime_exit\n");
+    for (size_t r = 0; r < sizeof(runtime_routines) / sizeof(runtime_routines[0]); r++) {
+        fprintf(f, "extern %s\n", runtime_routines[r]);
+    }
     fprintf(f, "\n"); // Add a single newline for readability if preferred
 
     fprintf(f, "section .bss\n");
@@ -95,8 +87,8 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
     fprintf(f, "\n");
 
     fprintf(f, "section .text\n");
-    fprintf(f, "global _start\n");
-    fprintf(f, "_start:\n");
+    fprintf(f, "global %s\n", target->entry_symbol);
+    fprintf(f, "%s:\n", target->entry_symbol);
     fprintf(f, "    call runtime_init\n\n");
 
     i = ir->head;
@@ -276,6 +268,10 @@ void backend_emit_object(IrProgram *ir, const char *filename, TargetTriple targe
         i = i->next;
     }
 
-    fclose(f);
+    if (fclose(f) != 0) {
+        fprintf(stderr, "ERROR: Failed to write output file: %s\n", filename);
+        return 1;
+    }
+    return 0;
 }
 

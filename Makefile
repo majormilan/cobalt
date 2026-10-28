@@ -1,7 +1,7 @@
 # Makefile for COBALT
 
 CC = gcc
-CFLAGS = -Wall -Wextra -g -Iinclude  # Debug build; add -O2 for release
+CFLAGS = -Wall -Wextra -g -Iinclude -Iruntime  # Debug build; add -O2 for release
 DEPFLAGS = -MMD -MP                    # Auto-generate .d dependency files
 LDFLAGS =  # Add libs later, e.g., -lm
 
