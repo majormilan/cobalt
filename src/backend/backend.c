@@ -14,8 +14,8 @@ bool backend_supports(const TargetInfo *target) {
     return backend_for(target) != NULL;
 }
 
-int backend_emit_object(IrProgram *ir, const char *output_filename, const TargetInfo *target) {
+int backend_emit_assembly(IrProgram *ir, FILE *out, const TargetInfo *target) {
     BackendEmitFn emit = backend_for(target);
     if (!emit) return 1;
-    return emit(ir, output_filename, target);
+    return emit(ir, out, target);
 }

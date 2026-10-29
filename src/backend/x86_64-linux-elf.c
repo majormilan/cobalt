@@ -106,15 +106,9 @@ static const char *false_jump(const char *cmp_op) {
     return "jne";
 }
 
-int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *target) {
+int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     int perform_counter = 0; // unique label suffix for PERFORM return points
     int store_counter = 0;   // unique label suffix for numeric stores
-
-    FILE *f = fopen(filename, "w");
-    if (!f) {
-        fprintf(stderr, "ERROR: Cannot open output file: %s\n", filename);
-        return 1;
-    }
 
     fprintf(f, ";; COBALT generated x86-64 Linux assembly\n\n");
 
@@ -686,10 +680,6 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
         i = i->next;
     }
 
-    if (fclose(f) != 0) {
-        fprintf(stderr, "ERROR: Failed to write output file: %s\n", filename);
-        return 1;
-    }
-    return 0;
+    return ferror(f) ? 1 : 0;
 }
 

@@ -5,18 +5,20 @@
 #include "ir.h"
 #include "target.h"
 #include <stdbool.h>
+#include <stdio.h>
 
-// A backend turns target-independent IR into an assembly file.
+// A backend turns target-independent IR into assembly source, written to out
+// (a file, or memory for the built-in assembler).
 // Returns 0 on success, non-zero on failure.
-typedef int (*BackendEmitFn)(IrProgram *ir, const char *output_filename, const TargetInfo *target);
+typedef int (*BackendEmitFn)(IrProgram *ir, FILE *out, const TargetInfo *target);
 
 // True if a code generator and runtime exist for this target
 bool backend_supports(const TargetInfo *target);
 
 // Dispatch to the target's backend
-int backend_emit_object(IrProgram *ir, const char *output_filename, const TargetInfo *target);
+int backend_emit_assembly(IrProgram *ir, FILE *out, const TargetInfo *target);
 
 // Per-target emitters (one per src/backend/<target>.c)
-int x86_64_linux_emit(IrProgram *ir, const char *output_filename, const TargetInfo *target);
+int x86_64_linux_emit(IrProgram *ir, FILE *out, const TargetInfo *target);
 
 #endif

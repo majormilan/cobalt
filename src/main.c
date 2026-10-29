@@ -8,6 +8,9 @@
 #include "ir.h"
 #include "target.h"
 #include "backend.h"
+#include "asm.h"
+#include "link.h"
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +18,23 @@
 #include <unistd.h>
 
 char *current_filename = NULL;
+
+// The runtime's objects for each target, embedded in cobalt when it is built
+// (Makefile: the runtime is assembled by the first-stage cobalt, then linked
+// into the final one). The first stage has none: it can still produce
+// assembly (-A) and objects (-c).
+typedef struct {
+    const uint8_t *data;
+    uint64_t size;
+} EmbeddedObject;
+extern const EmbeddedObject cobalt_runtime_x86_64_linux_elf[] __attribute__((weak));
+
+static const EmbeddedObject *embedded_runtime(const TargetInfo *target) {
+    if (target->triple == TARGET_LINUX_X86_64_ELF) return cobalt_runtime_x86_64_linux_elf;
+    return NULL;
+}
+
+typedef enum { EMIT_EXECUTABLE, EMIT_OBJECT, EMIT_ASSEMBLY } EmitKind;
 
 static char *read_file(const char *path) {
     FILE *f = fopen(path, "rb");
@@ -99,8 +119,17 @@ static void print_help(const char *progname) {
     printf("        cobalt-basic\n");
     printf("  --fixed                Fixed reference format: columns 8-72 (default)\n");
     printf("  -F, --free             Free format source\n");
-    printf("  -c                     Compile only (emit .asm file, no linking)\n");
     printf("  -a                     Always dump AST (debug parsing)\n\n");
+
+    printf("Output (the default is an executable, assembled and linked by cobalt):\n");
+    printf("  -o FILE                Output file (default: the input name without .cbl,\n");
+    printf("                         .o with -c, .asm with -A)\n");
+    printf("  -c                     Compile to an object file only\n");
+    printf("  -A, --asm              Compile to assembly only (NASM syntax)\n");
+    printf("  --strip                Executable without symbols\n\n");
+
+    printf("Assembler:\n");
+    printf("  %s as [-f elf64] [-D NAME[=value]] [-I dir/] [-MD file] [-MP] [-o out.o] in.asm\n\n", progname);
 
     printf("Target control:\n");
     printf("  -t, --target TRIPLE    Target triple (default: x86_64-linux-elf)\n");
@@ -117,13 +146,14 @@ static void print_help(const char *progname) {
     printf("  --help                 Show this help\n\n");
 
     printf("Examples:\n");
-    printf("  %s -i hello.cbl                          # → hello.asm + build instructions\n", progname);
-    printf("  %s -i test.cbl -c                        # → test.asm only\n", progname);
-    printf("  %s -i test.cbl -o prog.asm -a           # → prog.asm + AST dump\n", progname);
+    printf("  %s -i hello.cbl                    # executable ./hello\n", progname);
+    printf("  %s -i hello.cbl -o bin/hello -A    # assembly bin/hello (NASM syntax)\n", progname);
+    printf("  %s -i hello.cbl -c                 # object hello.o\n", progname);
 }
 
 int main(int argc, char **argv) {
     reset_diagnostics();
+    if (argc > 1 && strcmp(argv[1], "as") == 0) return asm_command(argc - 1, argv + 1);
     if (argc == 1 || strcmp(argv[1], "--help") == 0) {
         print_help(argv[0]);
         return 0;
@@ -132,7 +162,8 @@ int main(int argc, char **argv) {
     char *input_file = NULL;
     char *output_file = NULL;
     const TargetInfo *target = target_get_info(TARGET_LINUX_X86_64_ELF);
-    bool compile_only = false;
+    EmitKind emit = EMIT_EXECUTABLE;
+    bool strip = false;
     bool dump_ast = false;
 
     CompilerMode mode = {
@@ -154,11 +185,13 @@ int main(int argc, char **argv) {
         {"free",        no_argument,       0, 'F'},
         {"fixed",       no_argument,       0, 'R'},
         {"dialect",     required_argument, 0, 'D'},
+        {"asm",         no_argument,       0, 'A'},
+        {"strip",       no_argument,       0, 0},
         {"help",        no_argument,       0, 0}, // Handled separately
         {0, 0, 0, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "i:o:t:S:X:E:D:f:caF", long_options, &opt_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "i:o:t:S:X:E:D:f:caAF", long_options, &opt_index)) != -1) {
         switch (opt) {
             case 'i': input_file = optarg; break;
             case 'o': output_file = optarg; break;
@@ -183,13 +216,15 @@ int main(int argc, char **argv) {
                 break;
             case 'F': mode.free_format = true; break;
             case 'R': mode.free_format = false; break;
-            case 'c': compile_only = true; break;
+            case 'c': emit = EMIT_OBJECT; break;
+            case 'A': emit = EMIT_ASSEMBLY; break;
             case 'a': dump_ast = true; break;
             case 0: // long option without a short option
                 if (strcmp(long_options[opt_index].name, "help") == 0) {
                     print_help(argv[0]);
                     return 0;
                 }
+                if (strcmp(long_options[opt_index].name, "strip") == 0) strip = true;
                 break;
             default:
                 cobalt_error("Unknown option -%c", optopt);
@@ -258,47 +293,76 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Determine output filename
-    char asm_filename[512];
+    // Output file name: as given, or the input's name without its extension
+    char out_name[512];
     if (output_file) {
-        strncpy(asm_filename, output_file, sizeof(asm_filename) - 1);
-        asm_filename[sizeof(asm_filename) - 1] = '\0';
+        snprintf(out_name, sizeof(out_name), "%s", output_file);
     } else {
         const char *base = strrchr(input_file, '/');
         base = base ? base + 1 : input_file;
-        char temp[256];
-        strncpy(temp, base, sizeof(temp) - 1);
-        temp[sizeof(temp) - 1] = '\0';
-        char *dot = strrchr(temp, '.');
+        snprintf(out_name, sizeof(out_name), "%s", base);
+        char *dot = strrchr(out_name, '.');
         if (dot) *dot = '\0';
-        snprintf(asm_filename, sizeof(asm_filename), "%s.asm", temp);
+        if (emit == EMIT_OBJECT) strncat(out_name, ".o", sizeof(out_name) - strlen(out_name) - 1);
+        else if (emit == EMIT_ASSEMBLY) strncat(out_name, ".asm", sizeof(out_name) - strlen(out_name) - 1);
+        else strncat(out_name, target->exe_suffix, sizeof(out_name) - strlen(out_name) - 1);
+    }
+    const EmbeddedObject *runtime = embedded_runtime(target);
+    if (emit == EMIT_EXECUTABLE && !runtime) {
+        cobalt_error("This cobalt has no runtime for %s built in: use -A or -c", target->name);
+        return 1;
     }
 
-    int emit_status = backend_emit_object(ir, asm_filename, target);
-
+    // Assembly: to the output file, or to memory for the built-in assembler
+    char *asm_text = NULL;
+    size_t asm_len = 0;
+    FILE *out = emit == EMIT_ASSEMBLY ? fopen(out_name, "w") : open_memstream(&asm_text, &asm_len);
+    if (!out) {
+        cobalt_error("Cannot open output file: %s", out_name);
+        return 1;
+    }
+    int emit_status = backend_emit_assembly(ir, out, target);
     ir_free(ir);
     ast_free(ast);
     free(source);
+    if (fclose(out) != 0 || emit_status != 0) {
+        cobalt_error("Cannot write %s", emit == EMIT_ASSEMBLY ? out_name : "the assembly");
+        free(asm_text);
+        return 1;
+    }
+    if (emit == EMIT_ASSEMBLY) return 0;
 
-    if (emit_status != 0) return 1;
-
-    printf("Assembly written to: %s\n", asm_filename);
-
-    // Build instructions only if not compile-only mode
-    if (!compile_only && target->os == OS_LINUX) {
-        // Executable name: the .asm file name without its extension
-        char exe_name[512];
-        snprintf(exe_name, sizeof(exe_name), "%s", asm_filename);
-        char *ext = strrchr(exe_name, '.');
-        if (ext && strcmp(ext, ".asm") == 0) *ext = '\0';
-        else strncat(exe_name, ".out", sizeof(exe_name) - strlen(exe_name) - 1);
-
-        printf("\nTo build and run (%s):\n", target->name);
-        printf("  nasm -f %s \"%s\" -o \"%s.o\"\n", target->nasm_format, asm_filename, exe_name);
-        printf("  make runtime TARGET=%s\n", target->name);
-        printf("  ld \"%s.o\" \"obj/runtime/%s/libcobrt.a\" -o \"%s\"\n", exe_name, target->name, exe_name);
-        printf("  %s%s\n", strchr(exe_name, '/') ? "" : "./", exe_name);
+    // Assemble in memory
+    char asm_name[600];
+    snprintf(asm_name, sizeof(asm_name), "%s (generated assembly)", input_file);
+    AsmObject *obj = asm_assemble(asm_text, asm_name, NULL);
+    free(asm_text);
+    if (!obj) {
+        cobalt_error("Internal error: the generated assembly did not assemble");
+        return 1;
+    }
+    if (emit == EMIT_OBJECT) {
+        bool ok = asm_write_elf64(obj, out_name);
+        asm_free(obj);
+        if (!ok) cobalt_error("Cannot write %s", out_name);
+        return ok ? 0 : 1;
     }
 
-    return 0;
+    // Link with the runtime
+    uint8_t *image;
+    size_t image_size;
+    asm_elf64_image(obj, &image, &image_size);
+    asm_free(obj);
+    LinkObject program = { image, image_size, input_file };
+    int nruntime = 0;
+    while (runtime[nruntime].data) nruntime++;
+    LinkObject *library = calloc((size_t)nruntime + 1, sizeof(LinkObject));
+    for (int k = 0; k < nruntime; k++)
+        library[k] = (LinkObject){ runtime[k].data, runtime[k].size, "runtime" };
+    LinkOptions lopts = { target->entry_symbol, strip };
+    bool linked = link_executable(&program, 1, library, nruntime, &lopts, out_name);
+    free(library);
+    free(image);
+    return linked ? 0 : 1;
 }
+

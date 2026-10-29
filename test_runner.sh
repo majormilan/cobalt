@@ -8,6 +8,8 @@
 # otherwise stdin is empty (so ACCEPT never blocks).
 # A program running longer than TEST_TIMEOUT seconds (default 10) fails.
 # If tests/<name>.flags exists, its contents are extra compiler options.
+# cobalt assembles and links the executable itself. ASSEMBLER=nasm builds it
+# with nasm and ld instead (cross-check; needs 'make runtime-lib').
 
 if [ "$#" -ne 1 ]; then
     echo "Usage: [TARGET=<triple>] $0 <cbl_file>"
@@ -15,6 +17,7 @@ if [ "$#" -ne 1 ]; then
 fi
 
 TARGET=${TARGET:-x86_64-linux-elf}
+ASSEMBLER=${ASSEMBLER:-}         # empty: cobalt builds the executable itself
 TEST_TIMEOUT=${TEST_TIMEOUT:-10}
 
 case "$TARGET" in
@@ -40,32 +43,38 @@ FLAGS=""
 
 echo "Testing $CBL_FILE ($TARGET)..."
 
-if [ ! -f "$RUNTIME_LIB" ]; then
-    echo "Error: $RUNTIME_LIB not found, run 'make runtime TARGET=$TARGET'"
-    exit 1
-fi
-
 mkdir -p "$BUILD_DIR"
 
-# 1. Compile COBOL to Assembly
-./bin/cobalt -t "$TARGET" $FLAGS -i "$CBL_FILE" -o "$ASM_FILE" > /dev/null
-if [ $? -ne 0 ]; then
-    echo "Error: Compilation failed for $CBL_FILE"
-    exit 1
-fi
-
-# 2. Assemble Assembly to Object
-nasm -f "$NASM_FMT" "$ASM_FILE" -o "$OBJ_FILE"
-if [ $? -ne 0 ]; then
-    echo "Error: Assembly failed for $ASM_FILE"
-    exit 1
-fi
-
-# 3. Link against the target runtime
-ld "$OBJ_FILE" "$RUNTIME_LIB" -o "$BIN_FILE"
-if [ $? -ne 0 ]; then
-    echo "Error: Linking failed"
-    exit 1
+if [ -z "$ASSEMBLER" ]; then
+    # 1-3. Compile, assemble and link in one step
+    ./bin/cobalt -t "$TARGET" $FLAGS -i "$CBL_FILE" -o "$BIN_FILE" > /dev/null
+    if [ $? -ne 0 ]; then
+        echo "Error: Compilation failed for $CBL_FILE"
+        exit 1
+    fi
+else
+    if [ ! -f "$RUNTIME_LIB" ]; then
+        echo "Error: $RUNTIME_LIB not found, run 'make runtime-lib TARGET=$TARGET'"
+        exit 1
+    fi
+    # 1. Compile COBOL to assembly
+    ./bin/cobalt -t "$TARGET" $FLAGS -A -i "$CBL_FILE" -o "$ASM_FILE" > /dev/null
+    if [ $? -ne 0 ]; then
+        echo "Error: Compilation failed for $CBL_FILE"
+        exit 1
+    fi
+    # 2. Assemble
+    $ASSEMBLER -f "$NASM_FMT" "$ASM_FILE" -o "$OBJ_FILE"
+    if [ $? -ne 0 ]; then
+        echo "Error: Assembly failed for $ASM_FILE"
+        exit 1
+    fi
+    # 3. Link against the target runtime
+    ld "$OBJ_FILE" "$RUNTIME_LIB" -o "$BIN_FILE"
+    if [ $? -ne 0 ]; then
+        echo "Error: Linking failed"
+        exit 1
+    fi
 fi
 
 # 4. Run and capture output
