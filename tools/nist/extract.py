@@ -24,6 +24,8 @@ X_CARDS = {
     "057": "CONSOLE",           # ACCEPT input device
     "090": "66",                # ordinal position of "A" in the native (ASCII) set
     "091": "69",                # ordinal position of "D"
+    "068": "8192",              # OBJECT-COMPUTER MEMORY SIZE (characters)
+    "084": "STANDARD",          # LABEL RECORDS ARE ...
 }
 
 SUFFIX = {"COBOL": ".CBL", "CLBRY": ".CPY"}

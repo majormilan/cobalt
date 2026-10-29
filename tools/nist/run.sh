@@ -15,26 +15,34 @@ TARGET=${TARGET:-x86_64-linux-elf}
 ROOT=$(pwd)
 SRC=obj/nist/src
 WORK=obj/nist/work
+# COMPILER=gnucobol builds with GnuCOBOL's cobc instead (for comparison)
+COMPILER=${COMPILER:-cobalt}
+[ "$COMPILER" = gnucobol ] && WORK=obj/nist/work-gnucobol
 RUNTIME="$ROOT/obj/runtime/$TARGET/libcobrt.a"
 
 [ -f obj/nist/newcob.val ] || bash tools/nist/fetch.sh
 [ -d "$SRC" ] || python3 -I tools/nist/extract.py obj/nist/newcob.val "$SRC" > /dev/null
 mkdir -p "$WORK"
 
-total=0; compiled=0; ran=0; passed=0; failed=0; deleted=0; inspect=0
+total=0; compiled=0; ran=0; passed=0; failed=0; deleted=0; inspect=0; build_ms=0
 for cbl in "$SRC"/$MODULE*.CBL; do
     name=$(basename "$cbl" .CBL)
     total=$((total+1))
     dir="$WORK/$name"
     rm -rf "$dir"; mkdir -p "$dir"
-    if [ -z "$ASSEMBLER" ]; then
+    start=$(date +%s%N)
+    if [ "$COMPILER" = gnucobol ]; then
+        timeout 60 cobc -x -std=cobol85 -o "$dir/$name" "$cbl" > "$dir/compile.log" 2>&1
+    elif [ -z "$ASSEMBLER" ]; then
         timeout 20 ./bin/cobalt $COBALT_FLAGS -i "$cbl" -o "$dir/$name" > "$dir/compile.log" 2>&1
     else
         timeout 20 ./bin/cobalt $COBALT_FLAGS -A -i "$cbl" -o "$dir/$name.asm" > "$dir/compile.log" 2>&1 &&
         $ASSEMBLER -f elf64 "$dir/$name.asm" -o "$dir/$name.o" >> "$dir/compile.log" 2>&1 &&
         ld "$dir/$name.o" "$RUNTIME" -o "$dir/$name" >> "$dir/compile.log" 2>&1
     fi
-    if [ $? -ne 0 ]; then
+    status=$?
+    build_ms=$((build_ms + ($(date +%s%N) - start) / 1000000))
+    if [ $status -ne 0 ]; then
         first=$(grep -m1 -i "error" "$dir/compile.log" | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-110)
         printf "%-8s COMPILE-FAIL  %s\n" "$name" "$first"
         continue
@@ -87,3 +95,4 @@ done
 echo
 echo "$MODULE: $total programs, $compiled compiled, $ran produced a report"
 echo "Individual tests: $passed passed, $failed failed, $deleted deleted, $inspect require inspection"
+echo "Build time ($COMPILER${ASSEMBLER:+ with $ASSEMBLER and ld}): $build_ms ms for $total programs"
