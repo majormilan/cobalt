@@ -109,10 +109,10 @@ positions in the PICTURE.
 
 | Routine | Arguments | Behavior |
 |---|---|---|
-| `runtime_init` | `entry_sp` | Called once at program start with the stack pointer at program entry (the OS layer finds the environment there). |
+| `runtime_init` | `entry_sp, settings` | Called once at program start with the stack pointer at program entry (the OS layer finds the environment there) and the program-wide settings of the dialect: bit 0 `RT_SIGN_EBCDIC` (section 5). The runtime keeps them in `cobrt_runtime_flags`. |
 | `runtime_exit` | none | Ends the program with status 0. Does not return. |
 | `runtime_display_string` | `ptr` (NUL-terminated) | Writes a literal to stdout. |
-| `runtime_display_var_string` | `ptr, size, usage` | Writes a field as stored (`size` bytes). DISPLAY uses it for every item: a numeric DISPLAY item shows its stored characters (all digit positions, an overpunched or separate sign, no decimal point); a binary or packed item is first stored as the DISPLAY item of the same PICTURE (sign overpunched on the last digit). |
+| `runtime_display_var_string` | `ptr, size, usage` | Writes a field as stored (`size` bytes). DISPLAY uses it for every item: a numeric DISPLAY item shows its stored characters (all digit positions, an overpunched or separate sign, no decimal point); a binary or packed item is first stored as the DISPLAY item of the same PICTURE (sign overpunched on the last digit). With the `gnucobol` dialect (`display=pretty`) the compiler edits numeric items instead (sign, every digit, decimal point) with `runtime_edit_numeric` and writes the result. |
 | `runtime_display_fill` | `char, size, usage` | Writes `size` copies of `char` (figurative constants). |
 | `runtime_display_newline` | none | Ends the DISPLAY line. |
 | `runtime_move_alphanum` | `dest, src, src_len, dest_size, justified` | Left-justified copy, space padded, truncated on the right. With `justified` non-zero (JUSTIFIED RIGHT): right-justified, space padded on the left, truncated on the left. |
@@ -188,7 +188,10 @@ binary).
 Usage codes passed to the runtime: 0 = DISPLAY, 1 = COMP (also COMP-4 and
 BINARY), 2 = COMP-3 (also PACKED-DECIMAL), 3 = COMP-5. Numeric flags:
 `NUM_SIGNED` (1) when the PICTURE has `S`, `NUM_KEEP` (2) when the statement
-has ON SIZE ERROR and the receiver must stay unchanged on size error.
+has ON SIZE ERROR and the receiver must stay unchanged on size error,
+`NUM_SIGN_LEADING` (4) and `NUM_SIGN_SEPARATE` (8) for the SIGN clause, and
+`NUM_NOTRUNC` (16) for a COMP item limited by its bytes rather than its
+PICTURE digits (dialect setting `binary-truncate=no`).
 
 Character data is ASCII, one byte per character position. Bytes outside ASCII
 (for example UTF-8 in literals) are copied unchanged and count as one position
@@ -239,10 +242,11 @@ it that item's attributes.
   |---|---|---|
   | 0 to 9 | `'0'` to `'9'` | `'p'` to `'y'` (digit + 0x40) |
 
-  On input the runtime also accepts the EBCDIC-derived convention, so
-  fields from other systems read correctly: `'{'`, `'A'` to `'I'` for +0 to +9
-  and `'}'`, `'J'` to `'R'` for -0 to -9. On output it always writes the
-  first convention. Negative zero is stored as positive zero.
+  The EBCDIC-derived convention overpunches both signs: `'{'`, `'A'` to
+  `'I'` for +0 to +9 and `'}'`, `'J'` to `'R'` for -0 to -9. The runtime reads
+  both conventions, so fields from other systems read correctly, and writes
+  the one the dialect selects (`RT_SIGN_EBCDIC` from `runtime_init`: the
+  `ibm` dialect, or `sign=ebcdic`). Negative zero is stored as positive zero.
 - `SIGN LEADING`, `SIGN SEPARATE` and their combinations are [planned] for
   later and will be documented here when implemented.
 - DISPLAY of a signed field prints a leading `-` for negative values and no

@@ -227,6 +227,11 @@ runtime_num_store:
     xor r9d, r9d                        ; r9 = size error
     cmp r10, USAGE_COMP5
     je .s_comp5
+    cmp r10, USAGE_COMP
+    jne .decimal_limit
+    test r14, NUM_NOTRUNC
+    jnz .s_comp5                        ; limited by its bytes, like COMP-5
+.decimal_limit:
 
     ; Decimal fields hold at most 10^digits - 1
     cmp rbx, 18
@@ -294,6 +299,8 @@ runtime_num_store:
     mov [r12 + r13 - 1], dl
     jmp .done
 .sd_overpunch:
+    test qword [rel cobrt_runtime_flags], RT_SIGN_EBCDIC
+    jnz .sd_ebcdic
     test r11d, r11d
     jz .done
     test r14, NUM_SIGN_LEADING
@@ -302,6 +309,30 @@ runtime_num_store:
     jmp .done
 .sd_op_trailing:
     add byte [r12 + r13 - 1], 0x40
+    jmp .done
+.sd_ebcdic:
+    ; Both signs overpunched: '{' 'A'..'I' = +0..+9, '}' 'J'..'R' = -0..-9
+    lea r8, [r12 + r13 - 1]
+    test r14, NUM_SIGN_LEADING
+    jz .sde_digit
+    mov r8, r12
+.sde_digit:
+    movzx eax, byte [r8]
+    sub al, '0'
+    test r11d, r11d
+    jnz .sde_neg
+    mov dl, '{'
+    test al, al
+    jz .sde_put
+    lea edx, [rax + 'A' - 1]
+    jmp .sde_put
+.sde_neg:
+    mov dl, '}'
+    test al, al
+    jz .sde_put
+    lea edx, [rax + 'J' - 1]
+.sde_put:
+    mov [r8], dl
     jmp .done
 
     ; COMP: big-endian two's complement
@@ -381,6 +412,8 @@ runtime_num_store:
     test r14, NUM_KEEP
     jnz .done
 .s5_ok:
+    cmp r10, USAGE_COMP
+    je .s_comp                          ; big-endian
     test r11d, r11d
     jz .s5_write
     neg rax

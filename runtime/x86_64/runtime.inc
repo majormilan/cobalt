@@ -37,6 +37,9 @@
     extern cobrt_os_init
     extern cobrt_os_getenv
 %endif
+%ifndef COBRT_CONTROL
+    extern cobrt_runtime_flags
+%endif
 
 %define COBRT_STDIN  0
 %define COBRT_CONSOLE_RECORD 80  ; device record size of the console for ACCEPT
@@ -61,3 +64,7 @@
 %define NUM_KEEP      2                 ; on size error, leave the field unchanged
 %define NUM_SIGN_LEADING  4             ; DISPLAY: sign on (or before) the first digit
 %define NUM_SIGN_SEPARATE 8             ; DISPLAY: sign is a separate + or - character
+%define NUM_NOTRUNC   16                ; COMP: limited by its bytes, not its digits
+
+; Program-wide settings from runtime_init (cobrt_runtime_flags)
+%define RT_SIGN_EBCDIC 1                ; overpunch '{' 'A'..'I' / '}' 'J'..'R'

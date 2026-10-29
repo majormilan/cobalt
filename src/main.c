@@ -39,8 +39,6 @@ static Standard parse_standard(const char *s) {
     if (!strcmp(s, "COBOL-85")) return STD_COBOL85;
     if (!strcmp(s, "COBOL-2002")) return STD_COBOL2002;
     if (!strcmp(s, "COBOL-2014")) return STD_COBOL2014;
-    if (!strcmp(s, "GnuCOBOL")) return STD_GNUCOBOL;
-    if (!strcmp(s, "IBM_Enterprise")) return STD_IBM_ENTERPRISE;
     cobalt_error("Unknown COBOL standard: %s", s);
     exit(1);
 }
@@ -79,8 +77,16 @@ static void print_help(const char *progname) {
     printf("        COBOL-85       (default)\n");
     printf("        COBOL-2002\n");
     printf("        COBOL-2014\n");
-    printf("        GnuCOBOL\n");
-    printf("        IBM_Enterprise\n");
+    printf("  -D, --dialect NAME     Vendor dialect on top of the standard (default: standard)\n");
+    printf("      Supported:\n");
+    printf("        standard       (default) the standard's rules\n");
+    printf("        ibm            IBM Enterprise COBOL\n");
+    printf("        gnucobol       GnuCOBOL\n");
+    printf("        microfocus     Micro Focus COBOL\n");
+    printf("  -f KEY=VALUE           Override one dialect setting (after --dialect):\n");
+    printf("        display=stored|pretty        numeric DISPLAY format\n");
+    printf("        sign=ascii|ebcdic            overpunched sign encoding\n");
+    printf("        binary-truncate=yes|no       COMP items limited to PICTURE digits\n");
     printf("  -X, --strictness LEVEL Strictness level (default: normal)\n");
     printf("      Supported:\n");
     printf("        relaxed\n");
@@ -134,6 +140,7 @@ int main(int argc, char **argv) {
         .strictness = STRICT_NORMAL,
         .extensions = EXT_NONE
     };
+    dialect_select(&mode.dialect, "standard");
 
     int opt;
     int opt_index = 0;
@@ -146,11 +153,12 @@ int main(int argc, char **argv) {
         {"extensions",  required_argument, 0, 'E'},
         {"free",        no_argument,       0, 'F'},
         {"fixed",       no_argument,       0, 'R'},
+        {"dialect",     required_argument, 0, 'D'},
         {"help",        no_argument,       0, 0}, // Handled separately
         {0, 0, 0, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "i:o:t:S:X:E:caF", long_options, &opt_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "i:o:t:S:X:E:D:f:caF", long_options, &opt_index)) != -1) {
         switch (opt) {
             case 'i': input_file = optarg; break;
             case 'o': output_file = optarg; break;
@@ -164,6 +172,15 @@ int main(int argc, char **argv) {
             case 'S': mode.std = parse_standard(optarg); break;
             case 'X': mode.strictness = parse_strictness(optarg); break;
             case 'E': mode.extensions = parse_extensions(optarg); break;
+            case 'D':
+                if (!dialect_select(&mode.dialect, optarg)) {
+                    cobalt_error("Unknown dialect: %s (see --help)", optarg);
+                    return 1;
+                }
+                break;
+            case 'f':
+                if (!dialect_set_option(&mode.dialect, optarg)) return 1;
+                break;
             case 'F': mode.free_format = true; break;
             case 'R': mode.free_format = false; break;
             case 'c': compile_only = true; break;
@@ -232,7 +249,7 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    IrProgram *ir = lower_to_ir(ast);
+    IrProgram *ir = lower_to_ir(ast, &mode.dialect);
     if (!ir || error_count > 0) {
         if (!ir) fprintf(stderr, "IR lowering failed\n");
         ir_free(ir);

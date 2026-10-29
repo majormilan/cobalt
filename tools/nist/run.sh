@@ -1,6 +1,6 @@
 #!/bin/bash
 # Compile, and where possible run, NIST CCVS85 programs of one module.
-# Usage: tools/nist/run.sh [MODULE]      (default NC: the Nucleus)
+# Usage: [COBALT_FLAGS="-D ibm"] tools/nist/run.sh [MODULE]   (default NC: the Nucleus)
 #
 # Prints one line per program and a summary. A program counts as compiled
 # when cobalt, nasm and ld all succeed. Run results come from the
@@ -25,7 +25,7 @@ for cbl in "$SRC"/$MODULE*.CBL; do
     total=$((total+1))
     dir="$WORK/$name"
     rm -rf "$dir"; mkdir -p "$dir"
-    if ! timeout 20 ./bin/cobalt -i "$cbl" -o "$dir/$name.asm" > "$dir/compile.log" 2>&1 ||
+    if ! timeout 20 ./bin/cobalt $COBALT_FLAGS -i "$cbl" -o "$dir/$name.asm" > "$dir/compile.log" 2>&1 ||
        ! nasm -f elf64 "$dir/$name.asm" -o "$dir/$name.o" >> "$dir/compile.log" 2>&1 ||
        ! ld "$dir/$name.o" "$RUNTIME" -o "$dir/$name" >> "$dir/compile.log" 2>&1; then
         first=$(grep -m1 -i "error" "$dir/compile.log" | sed 's/\x1b\[[0-9;]*m//g' | cut -c1-110)

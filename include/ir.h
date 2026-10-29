@@ -3,6 +3,7 @@
 #define COBALT_IR_H
 
 #include "ast.h"
+#include "config.h"
 #include <stdbool.h>
 
 typedef struct IrInstr IrInstr;
@@ -12,6 +13,10 @@ typedef struct IrInstr IrInstr;
 #define IR_NUM_KEEP   2     // ON SIZE ERROR given: keep the field on size error
 #define IR_NUM_SIGN_LEADING  4  // DISPLAY: sign on the first digit (or before it)
 #define IR_NUM_SIGN_SEPARATE 8  // DISPLAY: the sign is a separate + or - character
+#define IR_NUM_NOTRUNC 16   // COMP: limited by its bytes, not its PICTURE digits
+
+// Program-wide runtime settings passed to runtime_init (runtime/ABI.md)
+#define IR_RT_SIGN_EBCDIC 1 // overpunched signs '{' 'A'..'I' / '}' 'J'..'R'
 
 typedef enum {
     IR_DATA_VAR,            // storage of one record: var_name ("%r<n>"), size
@@ -148,9 +153,10 @@ struct IrInstr {
 typedef struct {
     IrInstr *head;
     IrInstr *tail;
+    int runtime_flags;          // IR_RT_* settings for runtime_init
 } IrProgram;
 
-IrProgram *lower_to_ir(AstNode *program);
+IrProgram *lower_to_ir(AstNode *program, const Dialect *dialect);
 
 void ir_free(IrProgram *ir);
 

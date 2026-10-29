@@ -209,6 +209,7 @@ int x86_64_linux_emit(IrProgram *ir, const char *filename, const TargetInfo *tar
     fprintf(f, "global %s\n", target->entry_symbol);
     fprintf(f, "%s:\n", target->entry_symbol);
     fprintf(f, "    mov rdi, rsp\n");  // entry stack: argc, argv, environment
+    fprintf(f, "    mov rsi, %d\n", ir->runtime_flags);
     fprintf(f, "    call runtime_init\n\n");
 
     i = ir->head;

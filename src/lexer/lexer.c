@@ -203,8 +203,6 @@ void lexer_init(Lexer *l, const char *source, const CompilerMode *mode, const ch
             l->get_keyword_or_ident = lexer_cobol2002_keyword_or_ident;
             break;
         case STD_COBOL85:
-        case STD_GNUCOBOL: // Fallback to COBOL85 for GnuCOBOL for now
-        case STD_IBM_ENTERPRISE: // Fallback to COBOL85 for IBM for now
         default:
             l->get_keyword_or_ident = lexer_cobol85_keyword_or_ident;
             break;

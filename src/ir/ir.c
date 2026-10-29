@@ -991,9 +991,13 @@ static bool is_int_literal(const AstNode *n, long long *value) {
     return n && n->kind == AST_LITERAL_NUMBER && parse_num_literal(n->name, value, &scale) && scale == 0;
 }
 
+static const Dialect *dialect;     // of the program being lowered
+
 static int var_flags(const VarInfo *v) {
-    if (!v->is_signed) return 0;
-    int flags = IR_NUM_SIGNED;
+    int flags = 0;
+    if (v->usage_type == USAGE_COMP && !dialect->binary_truncate) flags |= IR_NUM_NOTRUNC;
+    if (!v->is_signed) return flags;
+    flags |= IR_NUM_SIGNED;
     if (v->usage_type == USAGE_DISPLAY) {
         if (v->sign_mode & SIGN_LEADING) flags |= IR_NUM_SIGN_LEADING;
         if (v->sign_mode & SIGN_SEPARATE) flags |= IR_NUM_SIGN_SEPARATE;
@@ -3061,6 +3065,16 @@ static void lower_unstring(IrProgram *ir, AstNode *node) {
     lower_size_error_phrases(ir, node);
 }
 
+// Digit positions DISPLAY shows for a numeric item: its PICTURE digits, or
+// for a COMP item limited only by its bytes the digits those bytes can hold
+static int display_digits(const VarInfo *v) {
+    if (v->usage_type == USAGE_COMP && !dialect->binary_truncate) {
+        static const int capacity[] = { 0, 3, 5, 8, 10, 13, 15, 17, 18 };
+        if (v->size >= 1 && v->size <= 8 && capacity[v->size] > v->digits) return capacity[v->size];
+    }
+    return v->digits;
+}
+
 static void lower_display(IrProgram *ir, AstNode *node) {
     for (AstNode *arg = node->children; arg; arg = arg->next) {
         const char *content = arg->name ? arg->name : "";
@@ -3078,7 +3092,34 @@ static void lower_display(IrProgram *ir, AstNode *node) {
         } else if (arg->kind == AST_IDENTIFIER) {
             FieldRef f;
             if (!resolve_ref(ir, arg, &f)) continue;
-            if (f.var->is_numeric && !f.refmod && f.var->usage_type != USAGE_DISPLAY) {
+            if (f.var->is_numeric && !f.refmod && dialect->display == DISPLAY_PRETTY) {
+                // GnuCOBOL style: a sign for a signed item, every digit
+                // position and the decimal point, through an edit mask
+                // ("S99.99"); P positions show as zeros
+                int s = f.var->decimal_places, d = display_digits(f.var);
+                int int_digits = d - s > 0 ? d - s : 0, frac = s > 0 ? s : 0;
+                static char mask[48];
+                static VarInfo pretty;
+                int n = 0;
+                if (f.var->is_signed) mask[n++] = 'S';
+                for (int k = 0; k < int_digits && n < 40; k++) mask[n++] = '9';
+                if (frac) {
+                    mask[n++] = '.';
+                    for (int k = 0; k < frac && n < 40; k++) mask[n++] = '9';
+                }
+                mask[n] = '\0';
+                memset(&pretty, 0, sizeof(pretty));
+                pretty.mask = mask;
+                pretty.num_edited = true;
+                pretty.size = n;
+                FieldRef z = { .var = &pretty, .size = n };
+                snprintf(z.label, sizeof(z.label), "$numtext");
+                emit(ir, IR_SIZE_ERR_CLEAR);
+                emit_load(ir, &f);
+                if (s < 0) emit_rescale(ir, -s, false);
+                emit_store(ir, &z, false);
+                append_instr(ir, new_instr(IR_CALL_DISPLAY_VAR_STR, z.label, NULL, NULL, 0, n, 0, 0, USAGE_DISPLAY));
+            } else if (f.var->is_numeric && !f.refmod && f.var->usage_type != USAGE_DISPLAY) {
                 // A binary or packed item shows as the DISPLAY item of the same
                 // PICTURE would: its digits, a signed one with the sign
                 // overpunched on the last digit
@@ -3087,7 +3128,8 @@ static void lower_display(IrProgram *ir, AstNode *node) {
                 zoned.usage_type = USAGE_DISPLAY;
                 zoned.is_numeric = true;
                 zoned.is_signed = f.var->is_signed;
-                zoned.digits = zoned.size = f.var->digits > 0 && f.var->digits <= 18 ? f.var->digits : 18;
+                int d = display_digits(f.var);
+                zoned.digits = zoned.size = d > 0 && d <= 18 ? d : 18;
                 FieldRef z = { .var = &zoned, .size = zoned.size };
                 snprintf(z.label, sizeof(z.label), "$numtext");
                 emit(ir, IR_SIZE_ERR_CLEAR);
@@ -3365,9 +3407,11 @@ static void lower_initial_value(IrProgram *ir, int idx) {
     }
 }
 
-IrProgram *lower_to_ir(AstNode *program) {
+IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect) {
     IrProgram *ir = calloc(1, sizeof(IrProgram));
     if (!ir) return NULL;
+    dialect = program_dialect;
+    if (dialect->sign_encoding == SIGN_ENCODING_EBCDIC) ir->runtime_flags |= IR_RT_SIGN_EBCDIC;
 
     num_vars = 0;
     num_records = 0;

@@ -1,6 +1,7 @@
 ; runtime/x86_64/common/control.asm
 ; Program startup and termination.
 
+%define COBRT_CONTROL
 %include "runtime.inc"
 
 %define SWITCH_UNKNOWN 0xFF
@@ -8,12 +9,15 @@
 section .text
 
 global runtime_init
+global cobrt_runtime_flags
 global runtime_exit
 global runtime_switch_status
 global runtime_switch_set
 
-; ARG0 = stack pointer at program entry (for the environment)
+; ARG0 = stack pointer at program entry (for the environment),
+; ARG1 = program-wide settings (RT_* bits)
 runtime_init:
+    mov [rel cobrt_runtime_flags], ARG1
     jmp cobrt_os_init
 
 ; ARG0 = switch number (1..9). Returns RET0 = 1 if switch n is on. A switch
@@ -65,6 +69,9 @@ runtime_exit:
     xor ARG0, ARG0
     call cobrt_os_exit
 
+
+section .bss
+cobrt_runtime_flags: resq 1
 
 section .data
 switches: times 10 db SWITCH_UNKNOWN    ; state of SWITCH-n, until first read
