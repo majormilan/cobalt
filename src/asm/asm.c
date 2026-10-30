@@ -467,6 +467,19 @@ static bool parse_operand(Asm *as, const char *p, const char *end, Operand *op) 
         }
         Expr e;
         if (!eval(as, in, in_end, true, &e)) return false;
+        // like nasm: reg*3, *5, *9 are reg + reg*2, *4, *8, and a lone reg*2
+        // is reg + reg (no 32-bit displacement needed)
+        int live = 0;
+        for (int i = 0; i < e.nregs; i++) if (e.coef[i]) live++;
+        if (live == 1) {
+            int i = e.coef[0] ? 0 : 1, c = e.coef[i];
+            if (c == 3 || c == 5 || c == 9 || c == 2) {
+                op->base = e.regs[i];
+                op->index = e.regs[i];
+                op->scale = c - 1;
+                e.coef[i] = 0;
+            }
+        }
         for (int i = 0; i < e.nregs; i++) {
             int c = e.coef[i];
             if (c == 0) continue;

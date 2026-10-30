@@ -15,7 +15,7 @@ enum {
     M_ROL, M_ROR, M_RCL, M_RCR, M_SHL, M_SHR, M_SAL, M_SAR,  // shifts: index - M_ROL is /n
     M_MOV, M_LEA, M_TEST, M_MOVZX, M_MOVSX, M_MOVSXD,
     M_INC, M_DEC, M_NOT, M_NEG, M_MUL, M_IMUL, M_DIV, M_IDIV,
-    M_PUSH, M_POP, M_CALL, M_JMP, M_BT, M_XCHG,
+    M_PUSH, M_POP, M_CALL, M_JMP, M_BT, M_XCHG, M_BSWAP,
     M_RET, M_LEAVE, M_CQO, M_CDQ, M_CDQE, M_SYSCALL, M_CLD, M_STD, M_NOP,
     M_MOVSB, M_MOVSQ, M_STOSB, M_STOSQ, M_HLT,
     M_FIXED_COUNT
@@ -29,7 +29,7 @@ static const char *const fixed_names[M_FIXED_COUNT] = {
     "rol", "ror", "rcl", "rcr", "shl", "shr", "sal", "sar",
     "mov", "lea", "test", "movzx", "movsx", "movsxd",
     "inc", "dec", "not", "neg", "mul", "imul", "div", "idiv",
-    "push", "pop", "call", "jmp", "bt", "xchg",
+    "push", "pop", "call", "jmp", "bt", "xchg", "bswap",
     "ret", "leave", "cqo", "cdq", "cdqe", "syscall", "cld", "std", "nop",
     "movsb", "movsq", "stosb", "stosq", "hlt",
 };
@@ -498,6 +498,13 @@ int x86_encode(const Stmt *st, uint8_t *out, Fixup *fixups, int *nfixups, const 
                 int size = operand_size(&e, a, b);
                 op1(&e, size, size == 1 ? 0x86 : 0x87, a->reg, a, b, 0);
             }
+            break;
+        case M_BSWAP:
+            NEED(1);
+            if (!is_reg(a) || (a->size != 4 && a->size != 8)) { fail(&e, "bswap needs a 32 or 64-bit register"); break; }
+            rex_opreg(&e, a->size, a);
+            put(&e, 0x0F);
+            put(&e, (uint8_t)(0xC8 + (a->reg & 7)));
             break;
         case M_RET:     NEED(0); put(&e, 0xC3); break;
         case M_LEAVE:   NEED(0); put(&e, 0xC9); break;

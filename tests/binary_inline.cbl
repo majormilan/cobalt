@@ -1,0 +1,52 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. BINARY-INLINE.
+      * Loads and stores of COMP and COMP-5 items at the edges of
+      * their ranges: digits limit (COMP), byte capacity (COMP-5),
+      * negative values into unsigned items, with and without
+      * ON SIZE ERROR.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       77  C4U  PIC 9(4) COMP.
+       77  C4S  PIC S9(4) COMP.
+       77  C9U  PIC 9(9) COMP.
+       77  C9S  PIC S9(9) COMP.
+       77  C18S PIC S9(18) COMP.
+       77  C18U PIC 9(18) COMP.
+       77  N4U  PIC 9(4) COMP-5.
+       77  N4S  PIC S9(4) COMP-5.
+       77  N9U  PIC 9(9) COMP-5.
+       77  N9S  PIC S9(9) COMP-5.
+       77  N18S PIC S9(18) COMP-5.
+       77  N18U PIC 9(18) COMP-5.
+       77  D    PIC S9(18).
+       PROCEDURE DIVISION.
+           MOVE 9999 TO C4U. ADD 1 TO C4U ON SIZE ERROR
+               DISPLAY "C4U SIZE ERROR". DISPLAY C4U.
+           ADD 1 TO C4U. DISPLAY C4U.
+           MOVE -5 TO C4U. DISPLAY C4U.
+           MOVE -9999 TO C4S. SUBTRACT 1 FROM C4S ON SIZE ERROR
+               DISPLAY "C4S SIZE ERROR". DISPLAY C4S.
+           SUBTRACT 1 FROM C4S. DISPLAY C4S.
+           MOVE 999999999 TO C9U. MOVE -123456789 TO C9S.
+           ADD C9U TO C9S. DISPLAY C9U " " C9S.
+           MOVE -999999999999999999 TO C18S. DISPLAY C18S.
+           ADD 1 TO C18S. MOVE C18S TO D. DISPLAY D.
+           MOVE 999999999999999999 TO C18U. DISPLAY C18U.
+           COMPUTE C18U = C18U - 1000000000000000000
+               ON SIZE ERROR DISPLAY "C18U SIZE ERROR".
+           DISPLAY C18U.
+           MOVE 30000 TO N4S. ADD 2767 TO N4S. DISPLAY N4S.
+           ADD 1 TO N4S ON SIZE ERROR DISPLAY "N4S SIZE ERROR".
+           DISPLAY N4S.
+           ADD 1 TO N4S. MOVE N4S TO D. DISPLAY D.
+           MOVE 65535 TO N4U. DISPLAY N4U.
+           ADD 1 TO N4U ON SIZE ERROR DISPLAY "N4U SIZE ERROR".
+           MOVE -1 TO N4U. DISPLAY N4U.
+           MOVE -2147483648 TO N9S. MOVE N9S TO D. DISPLAY D.
+           SUBTRACT 1 FROM N9S ON SIZE ERROR
+               DISPLAY "N9S SIZE ERROR".
+           MOVE 4294967295 TO N9U. MOVE N9U TO D. DISPLAY D.
+           MOVE -7 TO N18U. MOVE N18U TO D. DISPLAY D.
+           MOVE -123456789012345678 TO N18S. MOVE N18S TO D.
+           DISPLAY D.
+           STOP RUN.

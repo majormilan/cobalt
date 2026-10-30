@@ -6,6 +6,10 @@
 
 %include "runtime.inc"
 
+; Division by 10 as a multiplication: floor(x / 10) = (x * RECIP10) >> 67
+; for every unsigned 64-bit x
+%define RECIP10 0xCCCCCCCCCCCCCCCD
+
 section .text
 
 global runtime_num_load
@@ -271,16 +275,27 @@ runtime_num_store:
     jz .sd_digits
     inc rbx
 .sd_digits:
-    mov r8, 10
+    mov r8, RECIP10
 .sd_loop:
     test rcx, rcx
     jz .sd_sign
+    test rax, rax
+    jz .sd_zeros                        ; the rest are leading zeros
     dec rcx
-    xor edx, edx
-    div r8
-    add dl, '0'
-    mov [rbx + rcx], dl
+    mov rsi, rax
+    mul r8                              ; rdx = value * RECIP10 >> 64
+    shr rdx, 3                          ; quotient by 10
+    lea rax, [rdx + rdx*4]
+    add rax, rax
+    sub rsi, rax                        ; remainder: the digit
+    add sil, '0'
+    mov [rbx + rcx], sil
+    mov rax, rdx
     jmp .sd_loop
+.sd_zeros:
+    dec rcx
+    mov byte [rbx + rcx], '0'
+    jnz .sd_zeros
 .sd_sign:
     test r14, NUM_SIGNED
     jz .done
@@ -352,7 +367,7 @@ runtime_num_store:
 
     ; COMP-3: sign nibble C (+), D (-) or F (unsigned)
 .s_comp3:
-    mov r8, 10
+    mov r8, RECIP10
     mov ecx, 0x0f
     test r14, NUM_SIGNED
     jz .sp_sign
@@ -363,23 +378,38 @@ runtime_num_store:
 .sp_sign:
     mov rbx, r13
     dec rbx                             ; last byte: lowest digit + sign
-    xor edx, edx
-    div r8
-    shl edx, 4
-    or edx, ecx
-    mov [r12 + rbx], dl
+    mov rsi, rax                        ; rax / 10, remainder in rsi
+    mul r8
+    shr rdx, 3
+    lea rax, [rdx + rdx*4]
+    add rax, rax
+    sub rsi, rax
+    mov rax, rdx
+    shl esi, 4
+    or esi, ecx
+    mov [r12 + rbx], sil
 .sp_loop:
     test rbx, rbx
     jz .done
     dec rbx
-    xor edx, edx
-    div r8
-    mov ecx, edx                        ; low nibble
-    xor edx, edx
-    div r8
-    shl edx, 4                          ; high nibble
-    or edx, ecx
-    mov [r12 + rbx], dl
+    mov rsi, rax                        ; rax / 10, remainder in rsi
+    mul r8
+    shr rdx, 3
+    lea rax, [rdx + rdx*4]
+    add rax, rax
+    sub rsi, rax
+    mov rax, rdx
+    mov ecx, esi                        ; low nibble
+    mov rsi, rax                        ; rax / 10, remainder in rsi
+    mul r8
+    shr rdx, 3
+    lea rax, [rdx + rdx*4]
+    add rax, rax
+    sub rsi, rax
+    mov rax, rdx
+    shl esi, 4                          ; high nibble
+    or esi, ecx
+    mov [r12 + rbx], sil
     jmp .sp_loop
 
     ; COMP-5: the limit is the binary range of the field size

@@ -96,6 +96,112 @@ static void emit_pop(FILE *f, const char *reg) {
 }
 
 // Inverted conditional jump: taken when (a cmp_op b) is false
+// ── Binary items inline (runtime/ABI.md section 5) ──────────────────────────
+// COMP-5 (native) and COMP (big-endian) items of 2, 4 or 8 bytes are loaded
+// and stored without a runtime call. A store checks that the value fits the
+// item (its PICTURE digits for COMP, its bytes for COMP-5 and for COMP with
+// IR_NUM_NOTRUNC) and otherwise falls back to runtime_num_store, which
+// truncates and reports the size error.
+
+static bool inline_binary(const IrInstr *i) {
+    return (i->usage_type == USAGE_COMP || i->usage_type == USAGE_COMP5) &&
+           (i->size == 2 || i->size == 4 || i->size == 8);
+}
+
+// rax = the item at [rdi]
+static void emit_binary_load(FILE *f, const IrInstr *i) {
+    bool sign = i->flags & IR_NUM_SIGNED;
+    bool big = i->usage_type == USAGE_COMP;
+    switch (i->size) {
+        case 8:
+            fprintf(f, "    mov rax, [rdi]\n");
+            if (big) fprintf(f, "    bswap rax\n");
+            break;
+        case 4:
+            if (!big) {
+                fprintf(f, sign ? "    movsxd rax, dword [rdi]\n" : "    mov eax, [rdi]\n");
+                break;
+            }
+            fprintf(f, "    mov eax, [rdi]\n");
+            fprintf(f, "    bswap eax\n");
+            if (sign) fprintf(f, "    movsxd rax, eax\n");
+            break;
+        case 2:
+            if (!big) {
+                fprintf(f, sign ? "    movsx rax, word [rdi]\n" : "    movzx eax, word [rdi]\n");
+                break;
+            }
+            fprintf(f, "    movzx eax, word [rdi]\n");
+            fprintf(f, "    rol ax, 8\n");
+            fprintf(f, sign ? "    movsx rax, ax\n" : "    movzx eax, ax\n");
+            break;
+    }
+}
+
+// Store r9 at [rdi] when it fits; else jump to slow
+static void emit_binary_store(FILE *f, const IrInstr *i, const char *slow) {
+    bool sign = i->flags & IR_NUM_SIGNED;
+    bool big = i->usage_type == USAGE_COMP;
+    if (big && !(i->flags & IR_NUM_NOTRUNC) && i->digits >= 1 && i->digits <= 18) {
+        // limited by the PICTURE: |value| < 10^digits (unsigned: 0 <= value)
+        long long limit = 1;
+        for (int k = 0; k < i->digits; k++) limit *= 10;
+        if (sign) {
+            fprintf(f, "    mov rax, r9\n");
+            fprintf(f, "    neg rax\n");
+            fprintf(f, "    cmovs rax, r9\n");
+        } else {
+            fprintf(f, "    mov rax, r9\n");
+        }
+        fprintf(f, "    mov rcx, %lld\n", limit);
+        fprintf(f, "    cmp rax, rcx\n");
+        fprintf(f, "    jae %s\n", slow);
+    } else if (sign && i->size < 8) {
+        // limited by the bytes: the value survives sign extension
+        fprintf(f, i->size == 4 ? "    movsxd rax, r9d\n" : "    movsx rax, r9w\n");
+        fprintf(f, "    cmp rax, r9\n");
+        fprintf(f, "    jne %s\n", slow);
+    } else if (!sign) {
+        if (i->size == 8) {
+            fprintf(f, "    test r9, r9\n");
+            fprintf(f, "    js %s\n", slow);
+        } else {
+            fprintf(f, i->size == 4 ? "    mov eax, r9d\n" : "    movzx eax, r9w\n");
+            fprintf(f, "    cmp rax, r9\n");
+            fprintf(f, "    jne %s\n", slow);
+        }
+    }
+    switch (i->size) {
+        case 8:
+            if (big) {
+                fprintf(f, "    mov rax, r9\n");
+                fprintf(f, "    bswap rax\n");
+                fprintf(f, "    mov [rdi], rax\n");
+            } else {
+                fprintf(f, "    mov [rdi], r9\n");
+            }
+            break;
+        case 4:
+            if (big) {
+                fprintf(f, "    mov eax, r9d\n");
+                fprintf(f, "    bswap eax\n");
+                fprintf(f, "    mov [rdi], eax\n");
+            } else {
+                fprintf(f, "    mov [rdi], r9d\n");
+            }
+            break;
+        case 2:
+            if (big) {
+                fprintf(f, "    mov eax, r9d\n");
+                fprintf(f, "    rol ax, 8\n");
+                fprintf(f, "    mov [rdi], ax\n");
+            } else {
+                fprintf(f, "    mov [rdi], r9w\n");
+            }
+            break;
+    }
+}
+
 static const char *false_jump(const char *cmp_op) {
     if (!cmp_op || strcmp(cmp_op, "=") == 0) return "jne";
     if (strcmp(cmp_op, "<>") == 0) return "je";
@@ -346,6 +452,11 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 break;
             case IR_NUM_LOAD:
                 emit_addr(f, "rdi", i->var_name);
+                if (inline_binary(i)) {
+                    emit_binary_load(f, i);
+                    emit_push(f);
+                    break;
+                }
                 emit_size(f, "rsi", i->size);
                 fprintf(f, "    mov rdx, %d\n", i->usage_type);
                 fprintf(f, "    mov rcx, %d\n", i->flags);
@@ -468,6 +579,13 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                     break;
                 }
                 emit_addr(f, "rdi", i->var_name);
+                if (inline_binary(i)) {
+                    char slow[32];
+                    snprintf(slow, sizeof(slow), "L_store_slow_%d", store_counter);
+                    emit_binary_store(f, i, slow);
+                    fprintf(f, "    jmp L_store_%d\n", store_counter);
+                    fprintf(f, "%s:\n", slow);
+                }
                 emit_size(f, "rsi", i->size);
                 fprintf(f, "    mov rdx, %d\n", i->digits);
                 fprintf(f, "    mov rcx, %d\n", i->usage_type);

@@ -253,13 +253,46 @@ static void put_phdr(uint8_t *p, uint32_t type, uint32_t flags, uint64_t off, ui
     wr64(p + 48, align);
 }
 
-// Symbol table and section headers, for debuggers and objdump
+// A code label that starts a function for debuggers and profilers: a runtime
+// routine or a COBOL procedure, not a local (.x), internal (L_) or hidden label
+static bool is_function_label(const char *name) {
+    return !strchr(name, '.') && strncmp(name, "L_", 2) != 0 && strncmp(name, "..@", 3) != 0;
+}
+
+static int compare_u64(const void *a, const void *b) {
+    uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+    return x < y ? -1 : x > y;
+}
+
+// Symbol table and section headers, for debuggers and objdump. Function
+// labels in code get the function type and a size reaching the next one.
 static void append_section_headers(Linker *lk, Bytes *img, const Layout *L, uint8_t *ehdr) {
     Bytes syms = {0}, str = {0}, shstr = {0};
     uint8_t zero[24] = {0};
     bytes_byte(&str, 0);
     bytes_byte(&shstr, 0);
     bytes_put(&syms, zero, 24);
+
+    // start addresses of the functions, sorted, to size each one
+    uint64_t *starts = NULL;
+    size_t nstarts = 0, cstarts = 0;
+    for (int k = 0; k < lk->nobjs; k++) {
+        InObject *o = &lk->objs[k];
+        if (!o->included) continue;
+        for (int i = 1; i < o->nsym; i++) {
+            Sym s = symbol(o, i);
+            if (s.type == STT_SECTION || s.type == STT_FILE || s.shndx == SHN_UNDEF || s.shndx >= o->nsec) continue;
+            if (o->sec[s.shndx].cls != CLS_TEXT || !is_function_label(s.name)) continue;
+            if (nstarts == cstarts) {
+                cstarts = cstarts ? cstarts * 2 : 256;
+                starts = realloc(starts, cstarts * sizeof(uint64_t));
+            }
+            starts[nstarts++] = o->sec[s.shndx].addr + s.value;
+        }
+    }
+    if (nstarts) qsort(starts, nstarts, sizeof(uint64_t), compare_u64);
+    uint64_t text_end = L->addr[CLS_TEXT] + L->size[CLS_TEXT];
+
     // section header index of each class: 1..4
     for (int pass = 0; pass < 2; pass++) {           // locals first, then globals
         for (int k = 0; k < lk->nobjs; k++) {
@@ -271,11 +304,25 @@ static void append_section_headers(Linker *lk, Bytes *img, const Layout *L, uint
                 if ((s.bind == STB_LOCAL) != (pass == 0)) continue;
                 if (s.shndx >= o->nsec || o->sec[s.shndx].cls < 0) continue;
                 uint8_t e[24] = {0};
+                uint64_t addr = o->sec[s.shndx].addr + s.value;
+                int type = s.type;
+                uint64_t size = 0;
+                if (o->sec[s.shndx].cls == CLS_TEXT && is_function_label(s.name)) {
+                    // size: up to the next function start (binary search)
+                    size_t lo = 0, hi = nstarts;
+                    while (lo < hi) {
+                        size_t mid = (lo + hi) / 2;
+                        if (starts[mid] <= addr) lo = mid + 1; else hi = mid;
+                    }
+                    type = 2;                                   // STT_FUNC
+                    size = (lo < nstarts ? starts[lo] : text_end) - addr;
+                }
                 wr32(e, (uint32_t)str.len);
                 bytes_put(&str, s.name, strlen(s.name) + 1);
-                e[4] = (uint8_t)(s.bind << 4 | s.type);
+                e[4] = (uint8_t)(s.bind << 4 | type);
                 wr16(e + 6, (uint16_t)(1 + o->sec[s.shndx].cls));
-                wr64(e + 8, o->sec[s.shndx].addr + s.value);
+                wr64(e + 8, addr);
+                wr64(e + 16, size);
                 bytes_put(&syms, e, 24);
             }
         }
@@ -286,6 +333,7 @@ static void append_section_headers(Linker *lk, Bytes *img, const Layout *L, uint
     }
     uint64_t first_global = rd64(syms.data + 16);
     memset(syms.data + 16, 0, 8);
+    free(starts);
 
     // section contents after the image
     while (img->len % 8) bytes_byte(img, 0);

@@ -79,7 +79,7 @@ an empty `.note.GNU-stack` (non-executable stack).
 `add or adc sbb and sub xor cmp test mov lea movzx movsx movsxd xchg`,
 `inc dec not neg mul imul (1, 2 and 3 operands) div idiv`,
 `shl sal shr sar rol ror rcl rcr`, `bt`,
-`push pop call jmp jcc setcc cmovcc` (all condition codes and their aliases),
+`push pop call jmp jcc setcc cmovcc` (all condition codes and their aliases), `bswap`,
 `ret leave cqo cdq cdqe syscall cld std nop hlt`,
 `movsb movsq stosb stosq` with `rep` / `repe` / `repne`.
 
