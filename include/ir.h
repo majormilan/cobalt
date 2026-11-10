@@ -106,6 +106,7 @@ typedef enum {
                             //   lines = digits, or popped from the numeric stack if flags
     IR_FILE_REWRITE,        // record lit_name, size bytes
     IR_IO_JUMP,             // jump to jump_target if imm <= status <= size
+    IR_FILE_MODE_JUMP,      // jump to jump_target unless file var_name was last opened in mode imm
     IR_DATA_BSS,            // zeroed storage var_name of size bytes
     IR_STORE_QWORD,         // store into the 8 bytes at var_name: flags 0: imm,
                             //   1: the address of lit_name, 2: the length size

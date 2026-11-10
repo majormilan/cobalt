@@ -13,9 +13,11 @@
 %define FCB_NAME        32              ; NUL-terminated file name
 %define FCB_STATUS      40              ; FILE STATUS item (2 bytes), or 0
 %define FCB_STATE       48              ; ST_* bits
+%define FCB_LAST_MODE   56              ; the mode of the last OPEN (for USE procedures)
 
 %define FILE_LINE       1               ; line sequential: text lines
 %define FILE_OPTIONAL   2               ; SELECT OPTIONAL
+%define FILE_USE        4               ; a USE procedure handles errors
 
 %define ST_AT_END       1               ; an AT END condition was reported
 %define ST_READ_OK      2               ; the last READ succeeded (for REWRITE)
@@ -60,7 +62,10 @@ file_status:
     ret
 .no_item:
     cmp eax, 30
-    jae .fatal
+    jb .ret
+    test qword [rbx + FCB_FLAGS], FILE_USE
+    jz .fatal
+.ret:
     ret
 .fatal:
     push rax
@@ -162,6 +167,7 @@ runtime_file_open:
     push r13
     mov rbx, ARG0
     mov r12, ARG1
+    mov [rbx + FCB_LAST_MODE], r12
     mov eax, 41                         ; already open
     cmp qword [rbx + FCB_MODE], 0
     jne .status

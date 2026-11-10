@@ -2163,6 +2163,11 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 fprintf(f, "    call runtime_file_rewrite\n");
                 fprintf(f, "    mov [rel cobrt_io_status], rax\n\n");
                 break;
+            case IR_FILE_MODE_JUMP:
+                emit_addr(f, "rax", i->var_name);
+                fprintf(f, "    cmp qword [rax + 56], %lld\n", i->imm);
+                fprintf(f, "    jne %s\n", sanitized_jump);
+                break;
             case IR_IO_JUMP:
                 fprintf(f, "    mov rax, [rel cobrt_io_status]\n");
                 fprintf(f, "    cmp rax, %lld\n", i->imm);

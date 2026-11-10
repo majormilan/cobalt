@@ -101,6 +101,54 @@ typedef struct {
 
 static FileInfo files[64];
 static int num_files = 0;
+#define FILE_USE      4     // a USE AFTER EXCEPTION procedure may apply: no run-ending error
+
+// Declarative procedures: USE AFTER STANDARD EXCEPTION/ERROR PROCEDURE ON a
+// file (file set) or on the files open in a mode (mode 1..4)
+typedef struct {
+    AstNode *section;
+    const char *file;
+    int mode;
+    int first, last;        // procedure range of the section
+} UseDecl;
+static UseDecl uses[64];
+static int num_uses = 0;
+static bool has_declaratives = false;
+
+static void collect_uses(AstNode *program) {
+    num_uses = 0;
+    has_declaratives = false;
+    for (AstNode *div = program->children; div; div = div->next) {
+        if (div->kind != AST_DIVISION || strcasecmp(div->name, "PROCEDURE") != 0) continue;
+        for (AstNode *n = div->children; n; n = n->next) {
+            if (n->kind != AST_SECTION || !n->is_signed) continue;
+            has_declaratives = true;
+            AstNode *u = n->extra;
+            if (!u || !u->name || strcmp(u->name, "ERROR") != 0) continue;
+            if (u->text) {
+                int mode = strcasecmp(u->text, "INPUT") == 0 ? 1 : strcasecmp(u->text, "OUTPUT") == 0 ? 2 :
+                           strcasecmp(u->text, "I-O") == 0 ? 3 : 4;
+                if (num_uses < 64) uses[num_uses++] = (UseDecl){ n, NULL, mode, -1, -1 };
+            }
+            for (AstNode *f = u->children; f; f = f->next)
+                if (num_uses < 64) uses[num_uses++] = (UseDecl){ n, f->name, 0, -1, -1 };
+        }
+    }
+}
+
+// The USE procedure for the file itself, or -1
+static int use_for_file(const char *file) {
+    for (int k = 0; k < num_uses; k++)
+        if (uses[k].file && strcasecmp(uses[k].file, file) == 0) return k;
+    return -1;
+}
+
+// The USE procedure for files open in a mode, or -1
+static int use_for_mode(int mode) {
+    for (int k = 0; k < num_uses; k++)
+        if (!uses[k].file && uses[k].mode == mode) return k;
+    return -1;
+}
 
 // Procedures (sections and paragraphs) in source order
 typedef struct {
@@ -707,6 +755,9 @@ static void build_data(IrProgram *ir, AstNode *program) {
                                record_size[vars[fi->first_record].record], 0, 0, USAGE_DISPLAY);
         d->flags = (fi->select->decimal_places == 1 ? FILE_LINE : 0) |
                    (fi->select->is_signed ? FILE_OPTIONAL : 0);
+        bool any_mode = false;
+        for (int k = 1; k <= 4; k++) any_mode |= use_for_mode(k) >= 0;
+        if (any_mode || use_for_file(fi->name) >= 0) d->flags |= FILE_USE;
         if (fi->select->extra) {
             VarInfo *st = find_item(fi->select->extra, true);
             if (st && (st->is_numeric || st->size != 2))
@@ -2551,15 +2602,51 @@ static void emit_io_jump(IrProgram *ir, int low, int high, const char *target) {
     j->jump_target = strdup(target);
 }
 
-// Branches after an I-O statement: on_error runs for statuses low..high (AT
-// END), not_on_error for a successful status (00-09)
-static void lower_io_phrases(IrProgram *ir, AstNode *stmt, int low, int high) {
-    if (!stmt->on_error && !stmt->not_on_error) return;
-    char exc_lbl[32], end_lbl[32];
+static AstNode no_phrases;          // an I-O statement without AT END / INVALID KEY
+
+static void emit_perform_use(IrProgram *ir, int k) {
+    IrInstr *p = emit(ir, IR_PERFORM);
+    p->imm = uses[k].first;
+    p->proc_end = uses[k].last;
+}
+
+// Branches after an I-O statement on file f: on_error runs for statuses
+// low..high (AT END, INVALID KEY), not_on_error for a successful status
+// (00-09). Any other unsuccessful status runs the applicable USE procedure:
+// the one for the file, else the one for its open mode (open_mode: the mode
+// of an OPEN statement, 0: the mode the file is open in).
+static void lower_io_phrases(IrProgram *ir, AstNode *stmt, int low, int high, int f, int open_mode) {
+    int own = f >= 0 ? use_for_file(files[f].name) : -1;
+    bool any_mode = false;
+    for (int k = 1; k <= 4; k++) any_mode |= use_for_mode(k) >= 0;
+    bool use = f >= 0 && (own >= 0 || (open_mode ? use_for_mode(open_mode) >= 0 : any_mode));
+    if (!stmt->on_error && !stmt->not_on_error && !use) return;
+    char exc_lbl[32], end_lbl[32], ok_lbl[32];
     new_label(exc_lbl, sizeof(exc_lbl), "io_exception");
     new_label(end_lbl, sizeof(end_lbl), "io_end");
-    emit_io_jump(ir, low, high, exc_lbl);
-    emit_io_jump(ir, 10, 99, end_lbl);      // other errors run neither phrase
+    new_label(ok_lbl, sizeof(ok_lbl), "io_ok");
+    if (stmt->on_error && high >= low) emit_io_jump(ir, low, high, exc_lbl);
+    emit_io_jump(ir, 0, 9, ok_lbl);
+    if (use) {
+        if (own >= 0) emit_perform_use(ir, own);
+        else if (open_mode) emit_perform_use(ir, use_for_mode(open_mode));
+        else {
+            for (int m = 1; m <= 4; m++) {
+                int k = use_for_mode(m);
+                if (k < 0) continue;
+                char skip[32];
+                new_label(skip, sizeof(skip), "use_skip");
+                IrInstr *j = emit_file_op(ir, IR_FILE_MODE_JUMP, f);
+                j->imm = m;
+                j->jump_target = strdup(skip);
+                emit_perform_use(ir, k);
+                emit_jump(ir, IR_JUMP, end_lbl);
+                emit_label(ir, skip);
+            }
+        }
+    }
+    emit_jump(ir, IR_JUMP, end_lbl);    // other errors run neither phrase
+    emit_label(ir, ok_lbl);
     lower_block(ir, stmt->not_on_error);
     emit_jump(ir, IR_JUMP, end_lbl);
     emit_label(ir, exc_lbl);
@@ -2587,6 +2674,8 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
                 if (f < 0) continue;
                 IrInstr *i = emit_file_op(ir, node->kind == AST_STATEMENT_OPEN ? IR_FILE_OPEN : IR_FILE_CLOSE, f);
                 i->imm = fn->decimal_places;
+                lower_io_phrases(ir, &no_phrases, 1, 0, f,
+                                 node->kind == AST_STATEMENT_OPEN ? (fn->decimal_places & 7) : 0);
             }
             break;
         case AST_STATEMENT_READ: {
@@ -2607,7 +2696,7 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
                 ast_free(rec);
                 emit_label(ir, skip);
             }
-            lower_io_phrases(ir, node, 10, 19);
+            lower_io_phrases(ir, node, 10, 19, f, 0);
             break;
         }
         case AST_STATEMENT_WRITE:
@@ -2627,6 +2716,7 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
                 IrInstr *w = emit_file_op(ir, IR_FILE_REWRITE, f);
                 w->lit_name = strdup(rf.label);
                 w->size = rf.size;
+                lower_io_phrases(ir, &no_phrases, 1, 0, f, 0);
                 break;
             }
             int mode = 0;                   // runtime ADV_* modes
@@ -2652,6 +2742,7 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
             w->imm = mode;
             w->flags = on_stack ? 1 : 0;
             w->digits = (int)lines;
+            lower_io_phrases(ir, &no_phrases, 1, 0, f, 0);
             break;
         }
         default:
@@ -3451,6 +3542,7 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect) {
     inspect_counter = 0;
 
     build_special_names(program);
+    collect_uses(program);
     build_data(ir, program);
 
     // Emit initializations
@@ -3489,6 +3581,24 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect) {
 
         memset(altered, 0, sizeof(altered));
         mark_altered(div->children);
+
+        // Declarative sections run only through USE; the program starts at
+        // the first procedure after END DECLARATIVES
+        if (has_declaratives) {
+            int k = 0, first_normal = -1;
+            for (AstNode *n = div->children; n; n = n->next) {
+                if (n->kind != AST_SECTION && n->kind != AST_PARAGRAPH) continue;
+                int first = k, last = k;
+                if (n->kind == AST_SECTION)
+                    for (AstNode *p = n->children; p; p = p->next) if (p->kind == AST_PARAGRAPH) last++;
+                for (int u = 0; u < num_uses; u++)
+                    if (uses[u].section == n) { uses[u].first = first; uses[u].last = last; }
+                if (first_normal < 0 && !(n->kind == AST_SECTION && n->is_signed)) first_normal = first;
+                k = last + 1;
+            }
+            if (first_normal >= 0) emit(ir, IR_GOTO)->imm = first_normal;
+            else emit(ir, IR_CALL_EXIT);
+        }
 
         int index = 0;
         for (AstNode *n = div->children; n; n = n->next) {

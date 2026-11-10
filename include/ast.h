@@ -50,6 +50,12 @@ typedef enum {
                             //   1 for LINE SEQUENTIAL; extra = FILE STATUS item;
                             //   org = FILE_ORG_*, access = FILE_ACCESS_*; children:
                             //   AST_FILE_KEY entries
+    AST_USE,                // USE statement of a declarative section (the section's extra):
+                            //   name: ERROR, DEBUGGING or REPORTING; is_signed: GLOBAL;
+                            //   ERROR: text = INPUT, OUTPUT, I-O or EXTEND, or children =
+                            //   the files; DEBUGGING: children = the procedures, files and
+                            //   items (is_signed: ALL REFERENCES OF), text = "ALL" for ALL
+                            //   PROCEDURES; REPORTING: children = the report group
     AST_FILE_KEY,           // name: RELATIVE, RECORD or ALTERNATE; extra: the key item;
                             //   is_signed: WITH DUPLICATES
     AST_CONDITION,

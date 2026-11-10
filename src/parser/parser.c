@@ -234,6 +234,7 @@ static AstNode *parse_imperative_block(void);
 static Token peek_token(void);
 static bool tok_is_word(const char *word);
 static bool tok_spelled(const char *word);
+static AstNode *parse_forward_identifier(void);
 static void arith_error(const char *msg);
 
 // Map a usage keyword to its usage type; returns false if tok is not one
@@ -2327,22 +2328,110 @@ static void declare_procedure(const char *name, SymbolKind kind, SourceLocation 
 // Division children: leading sentences, AST_SECTION and AST_PARAGRAPH nodes.
 // A section's children: its leading sentences and its paragraphs.
 // A paragraph's children: its sentences.
+// USE statement, the first sentence of a declarative section:
+//   USE [GLOBAL] AFTER STANDARD {EXCEPTION|ERROR} PROCEDURE [ON]
+//       {file-name... | INPUT | OUTPUT | I-O | EXTEND}
+//   USE FOR DEBUGGING [ON] {ALL PROCEDURES | [ALL REFERENCES OF] name...}
+//   USE [GLOBAL] BEFORE REPORTING identifier
+static AstNode *parse_use(void) {
+    SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
+    next();
+    AstNode *u = ast_new(AST_USE, NULL, loc);
+    AstNode *tail = NULL;
+    if (tok_is_word("GLOBAL")) { u->is_signed = true; next(); }
+    if (tok.kind == TOK_AFTER) {
+        u->name = strdup("ERROR");
+        next();
+        if (tok_is_word("STANDARD")) next();
+        if (tok_is_word("EXCEPTION") || tok.kind == TOK_ERROR) next();
+        else arith_error("Expected EXCEPTION or ERROR");
+        if (tok.kind == TOK_PROCEDURE) next();
+        if (tok.kind == TOK_ON) next();
+        if (tok.kind == TOK_INPUT || tok.kind == TOK_OUTPUT || tok.kind == TOK_I_O || tok.kind == TOK_EXTEND) {
+            u->text = tok_to_str();
+            next();
+        } else {
+            while (tok.kind == TOK_IDENT) list_append(&u->children, &tail, parse_procedure_name());
+            if (!u->children) arith_error("Expected file names or INPUT, OUTPUT, I-O or EXTEND");
+        }
+    } else if (tok.kind == TOK_FOR) {
+        u->name = strdup("DEBUGGING");
+        next();
+        if (tok_is_word("DEBUGGING")) next();
+        if (tok.kind == TOK_ON) next();
+        while (tok.kind == TOK_IDENT || tok.kind == TOK_ALL || is_procedure_name_token()) {
+            if (tok.kind == TOK_ALL) {
+                next();
+                if (tok_is_word("PROCEDURES")) { free(u->text); u->text = strdup("ALL"); next(); continue; }
+                if (tok_is_word("REFERENCES")) next();
+                if (tok.kind == TOK_OF) next();
+                if (tok.kind != TOK_IDENT) { arith_error("Expected an identifier"); break; }
+                AstNode *id = parse_forward_identifier();
+                id->is_signed = true;
+                list_append(&u->children, &tail, id);
+                continue;
+            }
+            list_append(&u->children, &tail, parse_forward_identifier());
+        }
+    } else if (tok.kind == TOK_BEFORE) {
+        u->name = strdup("REPORTING");
+        next();
+        if (tok_is_word("REPORTING")) next();
+        if (tok.kind == TOK_IDENT) list_append(&u->children, &tail, parse_forward_identifier());
+    } else {
+        arith_error("Expected AFTER, FOR DEBUGGING or BEFORE REPORTING after USE");
+    }
+    expect(TOK_PERIOD, ".");
+    parser_panic_mode = false;
+    return u;
+}
+
 static void parse_procedure_body(AstNode *div) {
     AstNode *div_tail = NULL, *sec = NULL, *sec_tail = NULL;
+    bool in_declaratives = false;
 
     while (tok.kind != TOK_EOF && !is_division_start(tok.kind)) {
         const char *before = tok.lexeme;
         AstNode *node = NULL;
+        if (tok_is_word("DECLARATIVES") && peek_token().kind == TOK_PERIOD && !in_declaratives) {
+            next();
+            next();
+            in_declaratives = true;
+            continue;
+        }
+        if (tok.kind == TOK_END && peek_token().kind == TOK_IDENT && in_declaratives) {
+            next();
+            if (!tok_is_word("DECLARATIVES")) { arith_error("Expected END DECLARATIVES"); continue; }
+            next();
+            expect(TOK_PERIOD, ".");
+            parser_panic_mode = false;
+            in_declaratives = false;
+            sec = NULL;
+            continue;
+        }
         if (is_procedure_name_token()) {
             SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
             char *name = tok_to_str();
             next();
             if (tok.kind == TOK_SECTION) {
                 next();
+                sec = ast_new(AST_SECTION, name, loc);
+                if (tok.kind == TOK_NUMBER) {
+                    // segment-number (Segmentation module): kept in digits
+                    char *seg = tok_to_str();
+                    sec->digits = atoi(seg);
+                    sec->decimal_places = 1;      // a segment number was given
+                    free(seg);
+                    next();
+                }
                 expect(TOK_PERIOD, ".");
                 parser_panic_mode = false;
-                sec = ast_new(AST_SECTION, name, loc);
                 sec_tail = NULL;
+                sec->is_signed = in_declaratives;
+                if (in_declaratives && tok_is_word("USE")) sec->extra = parse_use();
+                else if (in_declaratives)
+                    cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                                     "A declarative section must start with a USE statement");
                 declare_procedure(name, SYM_SECTION, loc);
                 list_append(&div->children, &div_tail, sec);
                 free(name);
@@ -2354,7 +2443,8 @@ static void parse_procedure_body(AstNode *div) {
             declare_procedure(name, SYM_PARAGRAPH, loc);
             free(name);
             AstNode *ptail = NULL;
-            while (!is_procedure_name_token() && tok.kind != TOK_EOF && !is_division_start(tok.kind)) {
+            while (!is_procedure_name_token() && tok.kind != TOK_EOF && !is_division_start(tok.kind) &&
+                   !(in_declaratives && tok.kind == TOK_END && peek_token().kind == TOK_IDENT)) {
                 const char *at = tok.lexeme;
                 list_append(&node->children, &ptail, parse_sentence());
                 if (tok.lexeme == at && tok.kind != TOK_EOF) next();   // always make progress
