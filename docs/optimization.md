@@ -46,9 +46,31 @@ stores (2026-10-29):
 | COMP-5 | 0 | 0.20 | 0.20 | 4.17 | 11.00 | 10.16 |
 | COMP-5 | 2 | 6.78 | 6.56 | 7.08 | 11.38 | 10.83 |
 
-Six cases remain: COMP-3 ADD and SUBTRACT (Phase 3: packed decimal added
-directly) and integer COMP-5 ADD and SUBTRACT, where gcc removes GnuCOBOL's
-whole loop (Phase 4: register promotion).
+After Phase 2 (virtual numeric stack in registers, value bounds), the
+COMP-3 part of Phase 3 (16 digits at a time) and Phase 4 register
+promotion of loop fields (2026-11-10; the benchmark now times in
+microseconds, best of five runs, process start included):
+
+| Usage | Scale | ADD | SUBTRACT | MULTIPLY | DIVIDE | COMPUTE |
+|---|---|---|---|---|---|---|
+| DISPLAY | 0 | 55.0 | 50.8 | 58.3 | 18.4 | 17.6 |
+| DISPLAY | 2 | 57.1 | 58.6 | 27.3 | 19.6 | 16.6 |
+| COMP | 0 | 33.4 | 30.1 | 26.2 | 13.5 | 11.8 |
+| COMP | 2 | 32.5 | 33.2 | 16.5 | 14.3 | 12.7 |
+| COMP-3 | 0 | 13.0 | 11.4 | 34.3 | 14.4 | 13.6 |
+| COMP-3 | 2 | 26.2 | 23.4 | 16.8 | 15.0 | 13.1 |
+| COMP-5 | 0 | 0.97 | 1.07 | 27.5 | 13.0 | 11.5 |
+| COMP-5 | 2 | 34.6 | 31.9 | 17.0 | 13.9 | 12.6 |
+
+Integer COMP-5 ADD and SUBTRACT are a tie (1.7 to 2.1 ms on both sides,
+within the noise of the machine): gcc removes GnuCOBOL's loop altogether,
+so its time is its process start (about 1.9 ms); COBALT's process start is
+about 0.85 ms and its loop of 2,000,000 iterations, all fields in
+registers, about 0.9 ms. Beating it clearly needs the loop to go too
+(Phase 4: final value of an accumulation).
+
+The loops are now so cheap that DIVIDE and COMPUTE, which still call
+`runtime_num_div` (a 128-bit `idiv`), are the slowest cases.
 
 ## Why COBALT was slow on simple statements
 
@@ -93,13 +115,17 @@ Expected: COMP and COMP-5 ADD / SUBTRACT / MULTIPLY several times faster.
 
 ### Phase 2: register-based expressions
 
-- Replace the memory numeric stack with register allocation over the
-  expression tree (Sethi-Ullman numbering; spill to the stack only when the
-  registers run out), keeping values in callee-saved registers across
-  runtime calls.
-- Compile-time range analysis: skip size-error checks and truncation when
-  the operands' digits cannot overflow the receiver
-  (`S9(9) + S9(9)` into `S9(17)`); keep the flags in a register, not memory.
+- [done] Replace the memory numeric stack with registers: the backend runs
+  the stack machine at compile time, values live in callee-saved registers
+  (`r12` to `r15`) across runtime calls and spill to the stack only when
+  the registers run out.
+- [done] Compile-time range analysis: every value has a bound on its
+  magnitude; no overflow check when 64 bits cannot overflow
+  (`S9(9) + S9(17)`), no size check when the value fits the receiver.
+- [done] Size error bytes: no test or clear when known to be zero; an
+  addition's overflow jumps straight to its store's size error block;
+  `cobrt_stmt_err` is not cleared when no ON SIZE ERROR reads it.
+- [done] Error paths (stores that do not fit, overflow) out of line.
 - Fold constants and scale factors at compile time; multiply by a constant
   power of ten with `lea` / `imul`, divide by constants with
   multiply-by-reciprocal.
@@ -111,9 +137,10 @@ Expected: COMP and COMP-5 ADD / SUBTRACT / MULTIPLY several times faster.
 - DISPLAY: inline load of n digits (two digits per step with a 100-entry
   table, or SWAR on 8 bytes at once), inline store two digits per step
   (reciprocal division by 100).
-- COMP-3: two digits per byte through a 256-entry table on load, and byte
-  pairs on store; ADD / SUBTRACT of packed items directly in BCD
-  (byte-wise with carry) when scales match, like GnuCOBOL.
+- [done] COMP-3: `runtime_packed_load` and `runtime_packed_store` convert
+  16 digits at a time (SWAR in 64-bit registers: nibbles to bytes to
+  4-digit lanes, and back with lane-wise division by 100 and 10), with exact
+  reads and writes of 1 to 10 bytes.
 - Sign handling (overpunch, separate, packed nibble) specialized at compile
   time from the item's SIGN clause and dialect.
 
@@ -121,9 +148,17 @@ Expected: COMP and COMP-5 ADD / SUBTRACT / MULTIPLY several times faster.
 
 - Redundant load / store elimination: a field stored and loaded again in the
   same basic block is reused from its register.
-- Register promotion of WORKING-STORAGE items inside loops whose body has
-  no calls, aliasing (REDEFINES, reference modification) or I/O, storing
-  back at the loop exit: this is what gcc does for GnuCOBOL's COMP-5 loop.
+- [done] Register promotion of fields inside innermost loops whose body has
+  no calls other than numeric ones and no other access to the fields' bytes
+  (REDEFINES, subscripts into their record), written back at every exit
+  (`src/ir/promote.c`); loops whose head test is on promoted fields and
+  constants are rotated (the test repeated at the bottom).
+- Final value of an accumulation: a loop that only adds an invariant to a
+  field and counts can be replaced by one multiplication, when the last
+  value fits (all intermediate ones then fit too). This is what gcc does
+  for GnuCOBOL's COMP-5 loop.
+- Range of loop counters: `I` from 1 by 1 until `I > 2000000` never
+  overflows its 4 bytes, so its store needs no check.
 - Loop-invariant code motion and strength reduction of subscript
   arithmetic.
 

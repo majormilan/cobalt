@@ -73,11 +73,24 @@ Rules for generated code (x86_64, see `src/backend/x86_64-linux-elf.c`):
 - `rbx` holds the `PERFORM ... TIMES` counter. Each loop saves the previous
   value in a stack slot before it starts and restores it at the end, so loops
   nest.
-- Pending numeric values (the numeric stack machine, section 6) live on the
-  machine stack in 16-byte slots, which keeps `rsp` aligned.
+- Pending numeric values (the numeric stack machine, section 6) are tracked
+  at compile time: the top ones are constants or live in `r12` to `r15`, the
+  rest on the machine stack in 16-byte slots, which keeps `rsp` aligned. At
+  every label, jump and non-numeric statement all of them are on the machine
+  stack, so every path into a label sees the same stack.
+- In a loop whose numeric fields are promoted to registers (section 6),
+  `rbp`, `rbx`, `r15` and `r14` hold up to four fields; `rbx` is saved on
+  the stack around the loop. Every exit from the loop writes the fields back
+  to memory first.
+- Paths taken only on errors (stores that do not fit, overflow) are emitted
+  out of line, after the program's code.
 - Two bytes in the program's `.bss` track size errors: `cobrt_tgt_err`
   collects errors while one receiver's value is computed, `cobrt_stmt_err`
-  collects them for the whole statement (for ON SIZE ERROR).
+  collects them for the whole statement (for ON SIZE ERROR). They carry
+  information only within one statement: the compiler skips writes it can
+  prove unnecessary (clearing a byte known to be zero, clearing
+  `cobrt_stmt_err` when no ON SIZE ERROR test reads it before the next
+  statement clears it again).
 - Data lives in records: every 01 or 77 item, together with any 01 that
   redefines it, is one block `D_<n>` in `.bss`, and subordinate items are at
   fixed offsets in it (`D_3+12`). Index-names (INDEXED BY) are 8-byte binary
@@ -134,6 +147,8 @@ positions in the PICTURE.
 | `runtime_accept_numeric` | `ptr, size, digits, scale, usage, flags` | Reads one line and stores it as a number: optional spaces, optional sign, digits and an optional point; the first other character ends the number; extra decimals are dropped. |
 | `runtime_num_load` | `ptr, size, usage, flags` | Returns the field's value as an unscaled signed integer in `RET0`. |
 | `runtime_num_store` | `ptr, size, digits, usage, flags, value` | Stores an unscaled value (already at the field's scale). Returns 1 in `RET0` on size error, after truncating, or without storing when `NUM_KEEP` is set. |
+| `runtime_packed_load` | `ptr, size` | Value of a COMP-3 item of 1 to 10 bytes in `RET0` (as `runtime_num_load`). Changes only caller-saved registers. |
+| `runtime_packed_store` | `ptr, size, value, flags` | Stores a value into a COMP-3 item of 1 to 10 bytes; the value must fit (below `10^digits`, at most 18 digits). Sign nibble C or D with `NUM_SIGNED`, else F and the magnitude. No result. |
 | `runtime_num_to_digits` | `buffer, count, value` | Writes `|value|` as `count` digits, zero padded on the left (the low-order digits when it has more). |
 | `runtime_num_rescale` | `value, shift, rounded` | `value * 10^shift`; a negative shift truncates, or rounds half away from zero when `rounded` is non-zero. `RET1` = 1 on overflow. |
 | `runtime_num_mul` | `a, b, shift` | `(a * b) / 10^shift` with a 128-bit product, truncated. `RET1` = 1 on overflow. |
@@ -293,8 +308,24 @@ PERFORM counts go through a single representation:
   core, so each usage (DISPLAY, COMP, COMP-3, COMP-5) touches only them.
 - Generated code is a **stack machine** (`IR_NUM_*` in `include/ir.h`): push
   fields and literals, rescale, add, subtract, multiply, divide, negate, then
-  store or compare. Add, subtract and negate are inline instructions; scaling,
-  multiplication and division call the runtime.
+  store or compare. The backend runs the stack at compile time (constants
+  folded, values in registers) and knows a bound on every value's magnitude:
+  an operation that cannot overflow 64 bits gets no overflow check, a value
+  that fits its receiver no size check. Add, subtract, negate, and scaling
+  or multiplication that cannot overflow are inline instructions; the others
+  call the runtime.
+- Binary items (COMP, COMP-5 of 2, 4 or 8 bytes) are loaded and stored
+  inline; COMP-3 items of up to 10 bytes through `runtime_packed_load` and
+  `runtime_packed_store`, which convert 16 digits at a time.
+- **Register promotion**: in an innermost loop (a label and a jump back to
+  it, entered only by falling into it, with no calls other than numeric
+  ones), fields that only the loop's numeric loads and stores touch, whose
+  record is not addressed through subscripts there, are kept in registers
+  (`src/ir/promote.c` finds them). A store that fits sets the register; one
+  that does not takes the normal path to memory (truncation, size error) and
+  loads the register again. Decimal fields have a dirty byte, so only a
+  field that was stored is written back; this leaves invalid data that the
+  loop never replaced untouched.
 - **Scale alignment is done by the compiler**: operands of `+`, `-` and
   comparisons are brought to the larger scale before the operation.
 - **Working scale W** = largest scale among the operands and the receiver,

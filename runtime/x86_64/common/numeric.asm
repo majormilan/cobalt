@@ -14,12 +14,244 @@ section .text
 
 global runtime_num_load
 global runtime_num_store
+global runtime_packed_load
+global runtime_packed_store
 global runtime_num_rescale
 global runtime_num_mul
 global runtime_num_div
 global cobrt_pow10
 global runtime_num_to_digits
 global runtime_num_pow
+
+; Packed decimal (COMP-3) conversions work on 16 nibbles at a time (SWAR).
+; Internal routines: only rax, rcx and rdx change.
+;
+; bcd_to_bin: rax = the binary value of the BCD number in rax (16 nibbles,
+; most significant first in the usual hex reading). Clobbers rcx, rdx.
+; Invalid nibbles (A to F) count with their value, as in a digit loop.
+bcd_to_bin:
+    mov rcx, 0x0F0F0F0F0F0F0F0F
+    mov rdx, rax
+    shr rdx, 4
+    and rax, rcx
+    and rdx, rcx
+    lea rdx, [rdx + rdx*4]
+    lea rax, [rax + rdx*2]              ; bytes: 10 * high + low nibble
+    mov rcx, 0x00FF00FF00FF00FF
+    mov rdx, rax
+    shr rdx, 8
+    and rax, rcx
+    and rdx, rcx
+    imul rdx, rdx, 100
+    add rax, rdx                        ; 16-bit lanes: four digits
+    mov rcx, 0x0000FFFF0000FFFF
+    mov rdx, rax
+    shr rdx, 16
+    and rax, rcx
+    and rdx, rcx
+    imul rdx, rdx, 10000
+    add rax, rdx                        ; 32-bit lanes: eight digits
+    mov rdx, rax
+    shr rdx, 32
+    mov eax, eax
+    imul rdx, rdx, 100000000
+    add rax, rdx
+    ret
+
+; bin8_to_bcd: rax = the 8-nibble BCD form of eax (below 10^8).
+; Clobbers rcx, rdx.
+bin8_to_bcd:
+    mov edx, eax
+    mov ecx, 0xD1B71759
+    imul rdx, rcx
+    shr rdx, 45                         ; q = n / 10000
+    imul ecx, edx, 10000
+    sub eax, ecx                        ; r = n - q * 10000
+    shl rdx, 32
+    or rax, rdx                         ; 32-bit lanes: q, r
+    imul rdx, rax, 10486
+    shr rdx, 20
+    mov rcx, 0x0000007F0000007F
+    and rdx, rcx                        ; each lane / 100
+    imul rcx, rdx, 100
+    sub rax, rcx
+    shl rdx, 16
+    or rax, rdx                         ; 16-bit lanes: two digits each
+    imul rdx, rax, 103
+    shr rdx, 10
+    mov rcx, 0x000F000F000F000F
+    and rdx, rcx                        ; each lane / 10
+    lea rcx, [rdx + rdx*2]
+    lea rax, [rax + rcx*2]              ; t + 6 * (t / 10): a BCD byte per lane
+    mov rdx, rax
+    shr rdx, 8
+    or rax, rdx
+    mov rcx, 0x0000FFFF0000FFFF
+    and rax, rcx
+    mov rdx, rax
+    shr rdx, 16
+    or eax, edx
+    ret
+
+; ARG0 = COMP-3 item, ARG1 = its size (1 to 10 bytes)
+; Returns RET0 = its value: the bytes as one big-endian number, converted 16
+; nibbles at a time, with exact reads (overlapping loads, never past the
+; item). Changes only caller-saved registers.
+runtime_packed_load:
+    mov rdi, ARG0
+    mov rsi, ARG1
+    movzx r8d, byte [rdi + rsi - 1]
+    and r8d, 0x0f                       ; sign nibble
+    cmp rsi, 8
+    ja .pl_long
+    cmp rsi, 4
+    jb .pl_short
+    ; 4..8 bytes: (first dword << 8(n-4)) | last dword; the overlap agrees
+    mov eax, [rdi]
+    bswap eax
+    lea rcx, [rsi*8 - 32]
+    shl rax, cl
+    mov edx, [rdi + rsi - 4]
+    bswap edx
+    or rax, rdx
+    jmp .pl_conv
+.pl_short:
+    cmp rsi, 2
+    jb .pl_one
+    movzx eax, word [rdi]
+    rol ax, 8
+    lea rcx, [rsi*8 - 16]
+    shl eax, cl
+    movzx edx, word [rdi + rsi - 2]
+    rol dx, 8
+    or eax, edx
+    jmp .pl_conv
+.pl_one:
+    movzx eax, byte [rdi]
+.pl_conv:
+    shr rax, 4                          ; drop the sign nibble
+    call bcd_to_bin
+    jmp .pl_sign_apply
+.pl_long:
+    ; 9 or 10 bytes: the last 8 hold 15 digits, the first one or two the rest
+    mov rax, [rdi + rsi - 8]
+    bswap rax
+    shr rax, 4
+    call bcd_to_bin
+    mov r9, rax
+    movzx eax, byte [rdi]
+    cmp rsi, 9
+    je .pl_long_hi
+    movzx eax, word [rdi]
+    rol ax, 8
+.pl_long_hi:
+    call bcd_to_bin
+    mov rcx, 1000000000000000
+    imul rax, rcx
+    add rax, r9
+.pl_sign_apply:
+    mov rdx, rax
+    neg rdx
+    cmp r8d, 0x0d
+    cmove rax, rdx
+    cmp r8d, 0x0b
+    cmove rax, rdx
+    ret
+
+; ARG0 = COMP-3 item, ARG1 = its size (1 to 10 bytes), ARG2 = value,
+; ARG3 = flags (NUM_SIGNED: sign nibble C or D, else F and the magnitude).
+; The value must fit the item (at most 18 digits, below 10^digits).
+; The nibbles are the value's digits in BCD followed by the sign, written
+; with exact stores. Changes only caller-saved registers.
+runtime_packed_store:
+    mov r11, ARG0
+    mov r9, ARG1
+    mov rax, ARG2
+    mov r10d, 0x0f
+    test ARG3, NUM_SIGNED
+    jz .ps_abs
+    mov r10d, 0x0c
+    test rax, rax
+    jns .ps_mag
+    mov r10d, 0x0d
+.ps_abs:
+    mov rdx, rax
+    neg rdx
+    cmovns rax, rdx                     ; magnitude
+.ps_mag:
+    mov rsi, rax
+    xor edi, edi                        ; digits above the low 16
+    cmp r9, 8
+    jbe .ps_split8                      ; at most 15 digits
+    mov rax, 0x734aca5f6226f0b          ; / 10^16 for values below 2^60
+    mul rsi
+    shr rdx, 48
+    mov edi, edx
+    mov rcx, 10000000000000000
+    imul rdx, rcx
+    sub rsi, rdx                        ; below 10^16
+.ps_split8:
+    mov rax, 0xabcc77118461d            ; / 10^8 for values below 2^54
+    mul rsi
+    shr rdx, 14
+    imul rcx, rdx, 100000000
+    sub rsi, rcx                        ; rsi = low 8 digits, rdx = high 8
+    mov eax, edx
+    call bin8_to_bcd
+    mov r8, rax
+    mov eax, esi
+    call bin8_to_bcd
+    shl r8, 32
+    or r8, rax                          ; the low 16 digits in BCD
+    mov rax, r8
+    shl rax, 4
+    or rax, r10                         ; last 8 bytes: 15 digits and the sign
+    cmp r9, 8
+    ja .ps_long
+    ; n <= 8 bytes: the low n bytes of rax, big-endian
+    bswap rax
+    lea rcx, [r9*8]
+    neg rcx
+    add rcx, 64
+    shr rax, cl                         ; the item's bytes from byte 0
+    cmp r9, 4
+    jb .ps_short
+    mov [r11], eax
+    lea rcx, [r9*8 - 32]
+    shr rax, cl
+    mov [r11 + r9 - 4], eax
+    ret
+.ps_short:
+    cmp r9, 2
+    jb .ps_one
+    mov [r11], ax
+    lea rcx, [r9*8 - 16]
+    shr eax, cl
+    mov [r11 + r9 - 2], ax
+    ret
+.ps_one:
+    mov [r11], al
+    ret
+.ps_long:
+    bswap rax
+    mov [r11 + r9 - 8], rax
+    ; the first byte or two: the digits above the low 16, then the top
+    ; digit of the low 16
+    imul ecx, edi, 103
+    shr ecx, 10
+    lea ecx, [rcx + rcx*2]
+    lea edi, [rdi + rcx*2]              ; top digits (below 100) in BCD
+    shl edi, 4
+    shr r8, 60
+    or edi, r8d
+    cmp r9, 9
+    je .ps_long9
+    rol di, 8
+    mov [r11], di
+    ret
+.ps_long9:
+    mov [r11], dil
+    ret
 
 ; ARG0 = field ptr, ARG1 = size, ARG2 = usage, ARG3 = flags
 ; Returns RET0 = the field's value as an unscaled signed integer.
@@ -163,8 +395,18 @@ runtime_num_load:
     sar rax, cl
     jmp .ret
 
-    ; COMP-3: two digits per byte, sign in the low nibble of the last byte
+    ; COMP-3: two digits per byte, sign in the low nibble of the last byte.
+    ; Up to 10 bytes: the bytes as one big-endian number, converted 16
+    ; nibbles at a time; exact reads (overlapping loads), never past the item.
 .comp3:
+    lea rax, [r13 - 1]
+    cmp rax, 10
+    jae .p_slow                         ; sizes 1..10: the fast routine
+    mov ARG0, r12
+    mov ARG1, r13
+    call runtime_packed_load
+    jmp .ret
+.p_slow:
     xor eax, eax
     xor ecx, ecx
 .p_loop:
@@ -376,6 +618,23 @@ runtime_num_store:
     jz .sp_sign
     mov ecx, 0x0d
 .sp_sign:
+    lea rdx, [r13 - 1]
+    cmp rdx, 10
+    jae .sp_slow                        ; sizes 1..10: the fast routine
+    mov rdx, rax                        ; the value, signed again
+    test r11d, r11d
+    jz .sp_fast
+    neg rdx
+.sp_fast:
+    mov ARG0, r12
+    mov ARG1, r13
+    mov ARG2, rdx
+    mov ARG3, r14
+    mov ebx, r9d                        ; the size error survives the call
+    call runtime_packed_store
+    mov r9d, ebx
+    jmp .done
+.sp_slow:
     mov rbx, r13
     dec rbx                             ; last byte: lowest digit + sign
     mov rsi, rax                        ; rax / 10, remainder in rsi

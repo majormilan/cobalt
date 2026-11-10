@@ -1,0 +1,620 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. PACKED-CONVERT.
+      * COMP-3 loads and stores of every size from 1 to 18 digits:
+      * limits, signs, unsigned receivers, size errors, truncation.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       77  S1  PIC S9(1) COMP-3.
+       77  U1  PIC 9(1) COMP-3.
+       77  D1  PIC S9(1).
+       77  S2  PIC S9(2) COMP-3.
+       77  U2  PIC 9(2) COMP-3.
+       77  D2  PIC S9(2).
+       77  S3  PIC S9(3) COMP-3.
+       77  U3  PIC 9(3) COMP-3.
+       77  D3  PIC S9(3).
+       77  S4  PIC S9(4) COMP-3.
+       77  U4  PIC 9(4) COMP-3.
+       77  D4  PIC S9(4).
+       77  S5  PIC S9(5) COMP-3.
+       77  U5  PIC 9(5) COMP-3.
+       77  D5  PIC S9(5).
+       77  S6  PIC S9(6) COMP-3.
+       77  U6  PIC 9(6) COMP-3.
+       77  D6  PIC S9(6).
+       77  S7  PIC S9(7) COMP-3.
+       77  U7  PIC 9(7) COMP-3.
+       77  D7  PIC S9(7).
+       77  S8  PIC S9(8) COMP-3.
+       77  U8  PIC 9(8) COMP-3.
+       77  D8  PIC S9(8).
+       77  S9  PIC S9(9) COMP-3.
+       77  U9  PIC 9(9) COMP-3.
+       77  D9  PIC S9(9).
+       77  S10  PIC S9(10) COMP-3.
+       77  U10  PIC 9(10) COMP-3.
+       77  D10  PIC S9(10).
+       77  S11  PIC S9(11) COMP-3.
+       77  U11  PIC 9(11) COMP-3.
+       77  D11  PIC S9(11).
+       77  S12  PIC S9(12) COMP-3.
+       77  U12  PIC 9(12) COMP-3.
+       77  D12  PIC S9(12).
+       77  S13  PIC S9(13) COMP-3.
+       77  U13  PIC 9(13) COMP-3.
+       77  D13  PIC S9(13).
+       77  S14  PIC S9(14) COMP-3.
+       77  U14  PIC 9(14) COMP-3.
+       77  D14  PIC S9(14).
+       77  S15  PIC S9(15) COMP-3.
+       77  U15  PIC 9(15) COMP-3.
+       77  D15  PIC S9(15).
+       77  S16  PIC S9(16) COMP-3.
+       77  U16  PIC 9(16) COMP-3.
+       77  D16  PIC S9(16).
+       77  S17  PIC S9(17) COMP-3.
+       77  U17  PIC 9(17) COMP-3.
+       77  D17  PIC S9(17).
+       77  S18  PIC S9(18) COMP-3.
+       77  U18  PIC 9(18) COMP-3.
+       77  D18  PIC S9(18).
+       PROCEDURE DIVISION.
+           MOVE 0 TO S1. MOVE S1 TO D1.
+           DISPLAY S1 ' ' D1.
+           MOVE 0 TO U1.
+           COMPUTE S1 = S1 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U1 = U1 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S1 ' ' U1.
+           MOVE -1 TO S1. MOVE S1 TO D1.
+           DISPLAY S1 ' ' D1.
+           MOVE 1 TO U1.
+           COMPUTE S1 = S1 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U1 = U1 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S1 ' ' U1.
+           MOVE 9 TO S1. MOVE S1 TO D1.
+           DISPLAY S1 ' ' D1.
+           MOVE 9 TO U1.
+           COMPUTE S1 = S1 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U1 = U1 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S1 ' ' U1.
+           MOVE -9 TO S1. MOVE S1 TO D1.
+           DISPLAY S1 ' ' D1.
+           MOVE 9 TO U1.
+           COMPUTE S1 = S1 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U1 = U1 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S1 ' ' U1.
+           MOVE 5 TO S1. MOVE S1 TO D1.
+           DISPLAY S1 ' ' D1.
+           MOVE 5 TO U1.
+           COMPUTE S1 = S1 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U1 = U1 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S1 ' ' U1.
+           MOVE 9 TO U1. ADD 2 TO U1. DISPLAY U1.
+           MOVE 0 TO S2. MOVE S2 TO D2.
+           DISPLAY S2 ' ' D2.
+           MOVE 0 TO U2.
+           COMPUTE S2 = S2 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U2 = U2 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S2 ' ' U2.
+           MOVE -1 TO S2. MOVE S2 TO D2.
+           DISPLAY S2 ' ' D2.
+           MOVE 1 TO U2.
+           COMPUTE S2 = S2 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U2 = U2 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S2 ' ' U2.
+           MOVE 99 TO S2. MOVE S2 TO D2.
+           DISPLAY S2 ' ' D2.
+           MOVE 99 TO U2.
+           COMPUTE S2 = S2 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U2 = U2 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S2 ' ' U2.
+           MOVE -99 TO S2. MOVE S2 TO D2.
+           DISPLAY S2 ' ' D2.
+           MOVE 99 TO U2.
+           COMPUTE S2 = S2 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U2 = U2 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S2 ' ' U2.
+           MOVE 44 TO S2. MOVE S2 TO D2.
+           DISPLAY S2 ' ' D2.
+           MOVE 44 TO U2.
+           COMPUTE S2 = S2 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U2 = U2 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S2 ' ' U2.
+           MOVE 99 TO U2. ADD 2 TO U2. DISPLAY U2.
+           MOVE 0 TO S3. MOVE S3 TO D3.
+           DISPLAY S3 ' ' D3.
+           MOVE 0 TO U3.
+           COMPUTE S3 = S3 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U3 = U3 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S3 ' ' U3.
+           MOVE -1 TO S3. MOVE S3 TO D3.
+           DISPLAY S3 ' ' D3.
+           MOVE 1 TO U3.
+           COMPUTE S3 = S3 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U3 = U3 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S3 ' ' U3.
+           MOVE 999 TO S3. MOVE S3 TO D3.
+           DISPLAY S3 ' ' D3.
+           MOVE 999 TO U3.
+           COMPUTE S3 = S3 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U3 = U3 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S3 ' ' U3.
+           MOVE -999 TO S3. MOVE S3 TO D3.
+           DISPLAY S3 ' ' D3.
+           MOVE 999 TO U3.
+           COMPUTE S3 = S3 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U3 = U3 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S3 ' ' U3.
+           MOVE 755 TO S3. MOVE S3 TO D3.
+           DISPLAY S3 ' ' D3.
+           MOVE 755 TO U3.
+           COMPUTE S3 = S3 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U3 = U3 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S3 ' ' U3.
+           MOVE 999 TO U3. ADD 2 TO U3. DISPLAY U3.
+           MOVE 0 TO S4. MOVE S4 TO D4.
+           DISPLAY S4 ' ' D4.
+           MOVE 0 TO U4.
+           COMPUTE S4 = S4 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U4 = U4 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S4 ' ' U4.
+           MOVE -1 TO S4. MOVE S4 TO D4.
+           DISPLAY S4 ' ' D4.
+           MOVE 1 TO U4.
+           COMPUTE S4 = S4 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U4 = U4 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S4 ' ' U4.
+           MOVE 9999 TO S4. MOVE S4 TO D4.
+           DISPLAY S4 ' ' D4.
+           MOVE 9999 TO U4.
+           COMPUTE S4 = S4 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U4 = U4 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S4 ' ' U4.
+           MOVE -9999 TO S4. MOVE S4 TO D4.
+           DISPLAY S4 ' ' D4.
+           MOVE 9999 TO U4.
+           COMPUTE S4 = S4 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U4 = U4 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S4 ' ' U4.
+           MOVE 5259 TO S4. MOVE S4 TO D4.
+           DISPLAY S4 ' ' D4.
+           MOVE 5259 TO U4.
+           COMPUTE S4 = S4 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U4 = U4 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S4 ' ' U4.
+           MOVE 9999 TO U4. ADD 2 TO U4. DISPLAY U4.
+           MOVE 0 TO S5. MOVE S5 TO D5.
+           DISPLAY S5 ' ' D5.
+           MOVE 0 TO U5.
+           COMPUTE S5 = S5 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U5 = U5 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S5 ' ' U5.
+           MOVE -1 TO S5. MOVE S5 TO D5.
+           DISPLAY S5 ' ' D5.
+           MOVE 1 TO U5.
+           COMPUTE S5 = S5 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U5 = U5 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S5 ' ' U5.
+           MOVE 99999 TO S5. MOVE S5 TO D5.
+           DISPLAY S5 ' ' D5.
+           MOVE 99999 TO U5.
+           COMPUTE S5 = S5 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U5 = U5 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S5 ' ' U5.
+           MOVE -99999 TO S5. MOVE S5 TO D5.
+           DISPLAY S5 ' ' D5.
+           MOVE 99999 TO U5.
+           COMPUTE S5 = S5 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U5 = U5 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S5 ' ' U5.
+           MOVE 18446 TO S5. MOVE S5 TO D5.
+           DISPLAY S5 ' ' D5.
+           MOVE 18446 TO U5.
+           COMPUTE S5 = S5 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U5 = U5 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S5 ' ' U5.
+           MOVE 99999 TO U5. ADD 2 TO U5. DISPLAY U5.
+           MOVE 0 TO S6. MOVE S6 TO D6.
+           DISPLAY S6 ' ' D6.
+           MOVE 0 TO U6.
+           COMPUTE S6 = S6 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U6 = U6 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S6 ' ' U6.
+           MOVE -1 TO S6. MOVE S6 TO D6.
+           DISPLAY S6 ' ' D6.
+           MOVE 1 TO U6.
+           COMPUTE S6 = S6 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U6 = U6 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S6 ' ' U6.
+           MOVE 999999 TO S6. MOVE S6 TO D6.
+           DISPLAY S6 ' ' D6.
+           MOVE 999999 TO U6.
+           COMPUTE S6 = S6 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U6 = U6 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S6 ' ' U6.
+           MOVE -999999 TO S6. MOVE S6 TO D6.
+           DISPLAY S6 ' ' D6.
+           MOVE 999999 TO U6.
+           COMPUTE S6 = S6 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U6 = U6 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S6 ' ' U6.
+           MOVE 65021 TO S6. MOVE S6 TO D6.
+           DISPLAY S6 ' ' D6.
+           MOVE 65021 TO U6.
+           COMPUTE S6 = S6 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U6 = U6 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S6 ' ' U6.
+           MOVE 999999 TO U6. ADD 2 TO U6. DISPLAY U6.
+           MOVE 0 TO S7. MOVE S7 TO D7.
+           DISPLAY S7 ' ' D7.
+           MOVE 0 TO U7.
+           COMPUTE S7 = S7 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U7 = U7 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S7 ' ' U7.
+           MOVE -1 TO S7. MOVE S7 TO D7.
+           DISPLAY S7 ' ' D7.
+           MOVE 1 TO U7.
+           COMPUTE S7 = S7 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U7 = U7 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S7 ' ' U7.
+           MOVE 9999999 TO S7. MOVE S7 TO D7.
+           DISPLAY S7 ' ' D7.
+           MOVE 9999999 TO U7.
+           COMPUTE S7 = S7 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U7 = U7 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S7 ' ' U7.
+           MOVE -9999999 TO S7. MOVE S7 TO D7.
+           DISPLAY S7 ' ' D7.
+           MOVE 9999999 TO U7.
+           COMPUTE S7 = S7 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U7 = U7 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S7 ' ' U7.
+           MOVE 9709365 TO S7. MOVE S7 TO D7.
+           DISPLAY S7 ' ' D7.
+           MOVE 9709365 TO U7.
+           COMPUTE S7 = S7 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U7 = U7 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S7 ' ' U7.
+           MOVE 9999999 TO U7. ADD 2 TO U7. DISPLAY U7.
+           MOVE 0 TO S8. MOVE S8 TO D8.
+           DISPLAY S8 ' ' D8.
+           MOVE 0 TO U8.
+           COMPUTE S8 = S8 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U8 = U8 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S8 ' ' U8.
+           MOVE -1 TO S8. MOVE S8 TO D8.
+           DISPLAY S8 ' ' D8.
+           MOVE 1 TO U8.
+           COMPUTE S8 = S8 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U8 = U8 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S8 ' ' U8.
+           MOVE 99999999 TO S8. MOVE S8 TO D8.
+           DISPLAY S8 ' ' D8.
+           MOVE 99999999 TO U8.
+           COMPUTE S8 = S8 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U8 = U8 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S8 ' ' U8.
+           MOVE -99999999 TO S8. MOVE S8 TO D8.
+           DISPLAY S8 ' ' D8.
+           MOVE 99999999 TO U8.
+           COMPUTE S8 = S8 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U8 = U8 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S8 ' ' U8.
+           MOVE -49023560 TO S8. MOVE S8 TO D8.
+           DISPLAY S8 ' ' D8.
+           MOVE 49023560 TO U8.
+           COMPUTE S8 = S8 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U8 = U8 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S8 ' ' U8.
+           MOVE 99999999 TO U8. ADD 2 TO U8. DISPLAY U8.
+           MOVE 0 TO S9. MOVE S9 TO D9.
+           DISPLAY S9 ' ' D9.
+           MOVE 0 TO U9.
+           COMPUTE S9 = S9 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U9 = U9 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S9 ' ' U9.
+           MOVE -1 TO S9. MOVE S9 TO D9.
+           DISPLAY S9 ' ' D9.
+           MOVE 1 TO U9.
+           COMPUTE S9 = S9 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U9 = U9 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S9 ' ' U9.
+           MOVE 999999999 TO S9. MOVE S9 TO D9.
+           DISPLAY S9 ' ' D9.
+           MOVE 999999999 TO U9.
+           COMPUTE S9 = S9 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U9 = U9 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S9 ' ' U9.
+           MOVE -999999999 TO S9. MOVE S9 TO D9.
+           DISPLAY S9 ' ' D9.
+           MOVE 999999999 TO U9.
+           COMPUTE S9 = S9 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U9 = U9 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S9 ' ' U9.
+           MOVE -603444931 TO S9. MOVE S9 TO D9.
+           DISPLAY S9 ' ' D9.
+           MOVE 603444931 TO U9.
+           COMPUTE S9 = S9 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U9 = U9 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S9 ' ' U9.
+           MOVE 999999999 TO U9. ADD 2 TO U9. DISPLAY U9.
+           MOVE 0 TO S10. MOVE S10 TO D10.
+           DISPLAY S10 ' ' D10.
+           MOVE 0 TO U10.
+           COMPUTE S10 = S10 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U10 = U10 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S10 ' ' U10.
+           MOVE -1 TO S10. MOVE S10 TO D10.
+           DISPLAY S10 ' ' D10.
+           MOVE 1 TO U10.
+           COMPUTE S10 = S10 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U10 = U10 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S10 ' ' U10.
+           MOVE 9999999999 TO S10. MOVE S10 TO D10.
+           DISPLAY S10 ' ' D10.
+           MOVE 9999999999 TO U10.
+           COMPUTE S10 = S10 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U10 = U10 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S10 ' ' U10.
+           MOVE -9999999999 TO S10. MOVE S10 TO D10.
+           DISPLAY S10 ' ' D10.
+           MOVE 9999999999 TO U10.
+           COMPUTE S10 = S10 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U10 = U10 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S10 ' ' U10.
+           MOVE -9200390106 TO S10. MOVE S10 TO D10.
+           DISPLAY S10 ' ' D10.
+           MOVE 9200390106 TO U10.
+           COMPUTE S10 = S10 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U10 = U10 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S10 ' ' U10.
+           MOVE 9999999999 TO U10. ADD 2 TO U10. DISPLAY U10.
+           MOVE 0 TO S11. MOVE S11 TO D11.
+           DISPLAY S11 ' ' D11.
+           MOVE 0 TO U11.
+           COMPUTE S11 = S11 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U11 = U11 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S11 ' ' U11.
+           MOVE -1 TO S11. MOVE S11 TO D11.
+           DISPLAY S11 ' ' D11.
+           MOVE 1 TO U11.
+           COMPUTE S11 = S11 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U11 = U11 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S11 ' ' U11.
+           MOVE 99999999999 TO S11. MOVE S11 TO D11.
+           DISPLAY S11 ' ' D11.
+           MOVE 99999999999 TO U11.
+           COMPUTE S11 = S11 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U11 = U11 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S11 ' ' U11.
+           MOVE -99999999999 TO S11. MOVE S11 TO D11.
+           DISPLAY S11 ' ' D11.
+           MOVE 99999999999 TO U11.
+           COMPUTE S11 = S11 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U11 = U11 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S11 ' ' U11.
+           MOVE -16477518393 TO S11. MOVE S11 TO D11.
+           DISPLAY S11 ' ' D11.
+           MOVE 16477518393 TO U11.
+           COMPUTE S11 = S11 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U11 = U11 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S11 ' ' U11.
+           MOVE 99999999999 TO U11. ADD 2 TO U11. DISPLAY U11.
+           MOVE 0 TO S12. MOVE S12 TO D12.
+           DISPLAY S12 ' ' D12.
+           MOVE 0 TO U12.
+           COMPUTE S12 = S12 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U12 = U12 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S12 ' ' U12.
+           MOVE -1 TO S12. MOVE S12 TO D12.
+           DISPLAY S12 ' ' D12.
+           MOVE 1 TO U12.
+           COMPUTE S12 = S12 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U12 = U12 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S12 ' ' U12.
+           MOVE 999999999999 TO S12. MOVE S12 TO D12.
+           DISPLAY S12 ' ' D12.
+           MOVE 999999999999 TO U12.
+           COMPUTE S12 = S12 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U12 = U12 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S12 ' ' U12.
+           MOVE -999999999999 TO S12. MOVE S12 TO D12.
+           DISPLAY S12 ' ' D12.
+           MOVE 999999999999 TO U12.
+           COMPUTE S12 = S12 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U12 = U12 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S12 ' ' U12.
+           MOVE -801822498915 TO S12. MOVE S12 TO D12.
+           DISPLAY S12 ' ' D12.
+           MOVE 801822498915 TO U12.
+           COMPUTE S12 = S12 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U12 = U12 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S12 ' ' U12.
+           MOVE 999999999999 TO U12. ADD 2 TO U12. DISPLAY U12.
+           MOVE 0 TO S13. MOVE S13 TO D13.
+           DISPLAY S13 ' ' D13.
+           MOVE 0 TO U13.
+           COMPUTE S13 = S13 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U13 = U13 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S13 ' ' U13.
+           MOVE -1 TO S13. MOVE S13 TO D13.
+           DISPLAY S13 ' ' D13.
+           MOVE 1 TO U13.
+           COMPUTE S13 = S13 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U13 = U13 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S13 ' ' U13.
+           MOVE 9999999999999 TO S13. MOVE S13 TO D13.
+           DISPLAY S13 ' ' D13.
+           MOVE 9999999999999 TO U13.
+           COMPUTE S13 = S13 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U13 = U13 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S13 ' ' U13.
+           MOVE -9999999999999 TO S13. MOVE S13 TO D13.
+           DISPLAY S13 ' ' D13.
+           MOVE 9999999999999 TO U13.
+           COMPUTE S13 = S13 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U13 = U13 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S13 ' ' U13.
+           MOVE -8524101263517 TO S13. MOVE S13 TO D13.
+           DISPLAY S13 ' ' D13.
+           MOVE 8524101263517 TO U13.
+           COMPUTE S13 = S13 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U13 = U13 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S13 ' ' U13.
+           MOVE 9999999999999 TO U13. ADD 2 TO U13. DISPLAY U13.
+           MOVE 0 TO S14. MOVE S14 TO D14.
+           DISPLAY S14 ' ' D14.
+           MOVE 0 TO U14.
+           COMPUTE S14 = S14 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U14 = U14 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S14 ' ' U14.
+           MOVE -1 TO S14. MOVE S14 TO D14.
+           DISPLAY S14 ' ' D14.
+           MOVE 1 TO U14.
+           COMPUTE S14 = S14 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U14 = U14 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S14 ' ' U14.
+           MOVE 99999999999999 TO S14. MOVE S14 TO D14.
+           DISPLAY S14 ' ' D14.
+           MOVE 99999999999999 TO U14.
+           COMPUTE S14 = S14 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U14 = U14 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S14 ' ' U14.
+           MOVE -99999999999999 TO S14. MOVE S14 TO D14.
+           DISPLAY S14 ' ' D14.
+           MOVE 99999999999999 TO U14.
+           COMPUTE S14 = S14 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U14 = U14 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S14 ' ' U14.
+           MOVE 84062769068203 TO S14. MOVE S14 TO D14.
+           DISPLAY S14 ' ' D14.
+           MOVE 84062769068203 TO U14.
+           COMPUTE S14 = S14 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U14 = U14 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S14 ' ' U14.
+           MOVE 99999999999999 TO U14. ADD 2 TO U14. DISPLAY U14.
+           MOVE 0 TO S15. MOVE S15 TO D15.
+           DISPLAY S15 ' ' D15.
+           MOVE 0 TO U15.
+           COMPUTE S15 = S15 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U15 = U15 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S15 ' ' U15.
+           MOVE -1 TO S15. MOVE S15 TO D15.
+           DISPLAY S15 ' ' D15.
+           MOVE 1 TO U15.
+           COMPUTE S15 = S15 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U15 = U15 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S15 ' ' U15.
+           MOVE 999999999999999 TO S15. MOVE S15 TO D15.
+           DISPLAY S15 ' ' D15.
+           MOVE 999999999999999 TO U15.
+           COMPUTE S15 = S15 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U15 = U15 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S15 ' ' U15.
+           MOVE -999999999999999 TO S15. MOVE S15 TO D15.
+           DISPLAY S15 ' ' D15.
+           MOVE 999999999999999 TO U15.
+           COMPUTE S15 = S15 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U15 = U15 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S15 ' ' U15.
+           MOVE 386126558992212 TO S15. MOVE S15 TO D15.
+           DISPLAY S15 ' ' D15.
+           MOVE 386126558992212 TO U15.
+           COMPUTE S15 = S15 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U15 = U15 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S15 ' ' U15.
+           MOVE 999999999999999 TO U15. ADD 2 TO U15. DISPLAY U15.
+           MOVE 0 TO S16. MOVE S16 TO D16.
+           DISPLAY S16 ' ' D16.
+           MOVE 0 TO U16.
+           COMPUTE S16 = S16 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U16 = U16 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S16 ' ' U16.
+           MOVE -1 TO S16. MOVE S16 TO D16.
+           DISPLAY S16 ' ' D16.
+           MOVE 1 TO U16.
+           COMPUTE S16 = S16 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U16 = U16 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S16 ' ' U16.
+           MOVE 9999999999999999 TO S16. MOVE S16 TO D16.
+           DISPLAY S16 ' ' D16.
+           MOVE 9999999999999999 TO U16.
+           COMPUTE S16 = S16 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U16 = U16 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S16 ' ' U16.
+           MOVE -9999999999999999 TO S16. MOVE S16 TO D16.
+           DISPLAY S16 ' ' D16.
+           MOVE 9999999999999999 TO U16.
+           COMPUTE S16 = S16 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U16 = U16 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S16 ' ' U16.
+           MOVE -4325675395052231 TO S16. MOVE S16 TO D16.
+           DISPLAY S16 ' ' D16.
+           MOVE 4325675395052231 TO U16.
+           COMPUTE S16 = S16 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U16 = U16 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S16 ' ' U16.
+           MOVE 9999999999999999 TO U16. ADD 2 TO U16. DISPLAY U16.
+           MOVE 0 TO S17. MOVE S17 TO D17.
+           DISPLAY S17 ' ' D17.
+           MOVE 0 TO U17.
+           COMPUTE S17 = S17 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U17 = U17 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S17 ' ' U17.
+           MOVE -1 TO S17. MOVE S17 TO D17.
+           DISPLAY S17 ' ' D17.
+           MOVE 1 TO U17.
+           COMPUTE S17 = S17 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U17 = U17 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S17 ' ' U17.
+           MOVE 99999999999999999 TO S17. MOVE S17 TO D17.
+           DISPLAY S17 ' ' D17.
+           MOVE 99999999999999999 TO U17.
+           COMPUTE S17 = S17 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U17 = U17 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S17 ' ' U17.
+           MOVE -99999999999999999 TO S17. MOVE S17 TO D17.
+           DISPLAY S17 ' ' D17.
+           MOVE 99999999999999999 TO U17.
+           COMPUTE S17 = S17 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U17 = U17 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S17 ' ' U17.
+           MOVE -95676331056211801 TO S17. MOVE S17 TO D17.
+           DISPLAY S17 ' ' D17.
+           MOVE 95676331056211801 TO U17.
+           COMPUTE S17 = S17 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U17 = U17 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S17 ' ' U17.
+           MOVE 99999999999999999 TO U17. ADD 2 TO U17. DISPLAY U17.
+           MOVE 0 TO S18. MOVE S18 TO D18.
+           DISPLAY S18 ' ' D18.
+           MOVE 0 TO U18.
+           COMPUTE S18 = S18 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U18 = U18 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S18 ' ' U18.
+           MOVE -1 TO S18. MOVE S18 TO D18.
+           DISPLAY S18 ' ' D18.
+           MOVE 1 TO U18.
+           COMPUTE S18 = S18 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U18 = U18 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S18 ' ' U18.
+           MOVE 999999999999999999 TO S18. MOVE S18 TO D18.
+           DISPLAY S18 ' ' D18.
+           MOVE 999999999999999999 TO U18.
+           COMPUTE S18 = S18 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U18 = U18 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S18 ' ' U18.
+           MOVE -999999999999999999 TO S18. MOVE S18 TO D18.
+           DISPLAY S18 ' ' D18.
+           MOVE 999999999999999999 TO U18.
+           COMPUTE S18 = S18 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U18 = U18 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S18 ' ' U18.
+           MOVE 218364259875579345 TO S18. MOVE S18 TO D18.
+           DISPLAY S18 ' ' D18.
+           MOVE 218364259875579345 TO U18.
+           COMPUTE S18 = S18 - 1 ON SIZE ERROR DISPLAY 'SE'.
+           COMPUTE U18 = U18 + 1 ON SIZE ERROR DISPLAY 'SE'.
+           DISPLAY S18 ' ' U18.
+           MOVE 999999999999999999 TO U18. ADD 2 TO U18. DISPLAY U18.
+           STOP RUN.

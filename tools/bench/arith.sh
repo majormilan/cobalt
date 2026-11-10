@@ -6,17 +6,19 @@
 # SUBTRACT, MULTIPLY, DIVIDE, COMPUTE), integer and with two decimals,
 # generates the same loop, builds it with both compilers (GnuCOBOL with -O2,
 # its best; COBALT with -D gnucobol so DISPLAY formats match), runs each
-# three times and reports the best time. Both must print the same result.
+# $RUNS times (default 5) and reports the best time, process start
+# included. Both must print the same result.
 
 N=${1:-2000000}
 OUT=obj/bench
 mkdir -p "$OUT"
-best() {   # best of three runs, in ms; the program's output in $OUT/$2.out
-    local b=999999
-    for k in 1 2 3; do
+RUNS=${RUNS:-5}
+best() {   # best of $RUNS runs, in microseconds; the program's output in $OUT/$2.out
+    local b=999999999
+    for k in $(seq $RUNS); do
         local s=$(date +%s%N)
         "$1" > "$OUT/$2.out" 2>/dev/null
-        local t=$(( ($(date +%s%N) - s) / 1000000 ))
+        local t=$(( ($(date +%s%N) - s) / 1000 ))
         [ $t -lt $b ] && b=$t
     done
     echo $b
@@ -60,7 +62,7 @@ COBOL
       tg=$(best "$OUT/$name.gnucobol" "$name.gnucobol")
       same=$(cmp -s "$OUT/$name.cobalt.out" "$OUT/$name.gnucobol.out" && echo "same" || echo "DIFFERS: $(head -c 40 $OUT/$name.cobalt.out) vs $(head -c 40 $OUT/$name.gnucobol.out)")
       ratio=$(awk -v c=$tc -v g=$tg 'BEGIN { if (c == 0) c = 1; printf "%.2fx", g / c }')
-      printf "%-28s %10d %10d %8s  %s\n" "$name" $tc $tg "$ratio" "$same"
+      printf "%-28s %10.2f %10.2f %8s  %s\n" "$name" $(awk -v t=$tc 'BEGIN{print t/1000}') $(awk -v t=$tg 'BEGIN{print t/1000}') "$ratio" "$same"
     done
   done
 done
