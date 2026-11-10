@@ -162,9 +162,13 @@ Expected: COMP and COMP-5 ADD / SUBTRACT / MULTIPLY several times faster.
 
 - [done, in the runtime] Stores divide by 10 with a multiplication by the
   reciprocal instead of `div`, and write leading zeros without dividing.
-- DISPLAY: inline load of n digits (two digits per step with a 100-entry
-  table, or SWAR on 8 bytes at once), inline store two digits per step
-  (reciprocal division by 100).
+- [done] DISPLAY: `runtime_num_load` and `runtime_num_store` convert 8
+  digits at a time (SWAR on 8 bytes: validated as digits, then combined in
+  lanes; stores by lane-wise division), the sign digit on its own, with
+  exact reads and writes; invalid data takes the digit loop as before. A
+  loop of DISPLAY and COMP-3 statements that is not promoted (it has a
+  MOVE of a literal) went from 169 to 122 ms for 2,000,000 iterations
+  (GnuCOBOL: 265 ms).
 - [done] COMP-3: `runtime_packed_load` and `runtime_packed_store` convert
   16 digits at a time (SWAR in 64-bit registers: nibbles to bytes to
   4-digit lanes, and back with lane-wise division by 100 and 10), with exact

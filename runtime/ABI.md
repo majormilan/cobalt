@@ -324,7 +324,10 @@ PERFORM counts go through a single representation:
   call the runtime.
 - Binary items (COMP, COMP-5 of 2, 4 or 8 bytes) are loaded and stored
   inline; COMP-3 items of up to 10 bytes through `runtime_packed_load` and
-  `runtime_packed_store`, which convert 16 digits at a time.
+  `runtime_packed_store`, which convert 16 digits at a time; DISPLAY items
+  of up to 18 digits are converted 8 digits at a time by
+  `runtime_num_load` and `runtime_num_store` (a byte that is not a digit
+  takes the digit loop, which counts it as 0).
 - **Register promotion**: in an innermost loop (a label and a jump back to
   it, entered only by falling into it, with no calls other than numeric
   ones), fields that only the loop's numeric loads and stores touch, whose

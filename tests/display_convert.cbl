@@ -1,0 +1,2709 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. DISPLAY-CONVERT.
+      * Numeric DISPLAY loads and stores of 1 to 18 digits: unsigned,
+      * trailing and leading overpunch, separate signs, invalid data.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  RU1.
+           05 U1 PIC 9(1).
+       01  XU1 REDEFINES RU1 PIC X(1).
+       01  RT1.
+           05 T1 PIC S9(1).
+       01  XT1 REDEFINES RT1 PIC X(1).
+       01  RL1.
+           05 L1 PIC S9(1) SIGN LEADING.
+       01  XL1 REDEFINES RL1 PIC X(1).
+       01  RLS1.
+           05 LS1 PIC S9(1) SIGN LEADING SEPARATE.
+       01  XLS1 REDEFINES RLS1 PIC X(2).
+       01  RTS1.
+           05 TS1 PIC S9(1) SIGN TRAILING SEPARATE.
+       01  XTS1 REDEFINES RTS1 PIC X(2).
+       01  RU2.
+           05 U2 PIC 9(2).
+       01  XU2 REDEFINES RU2 PIC X(2).
+       01  RT2.
+           05 T2 PIC S9(2).
+       01  XT2 REDEFINES RT2 PIC X(2).
+       01  RL2.
+           05 L2 PIC S9(2) SIGN LEADING.
+       01  XL2 REDEFINES RL2 PIC X(2).
+       01  RLS2.
+           05 LS2 PIC S9(2) SIGN LEADING SEPARATE.
+       01  XLS2 REDEFINES RLS2 PIC X(3).
+       01  RTS2.
+           05 TS2 PIC S9(2) SIGN TRAILING SEPARATE.
+       01  XTS2 REDEFINES RTS2 PIC X(3).
+       01  RU3.
+           05 U3 PIC 9(3).
+       01  XU3 REDEFINES RU3 PIC X(3).
+       01  RT3.
+           05 T3 PIC S9(3).
+       01  XT3 REDEFINES RT3 PIC X(3).
+       01  RL3.
+           05 L3 PIC S9(3) SIGN LEADING.
+       01  XL3 REDEFINES RL3 PIC X(3).
+       01  RLS3.
+           05 LS3 PIC S9(3) SIGN LEADING SEPARATE.
+       01  XLS3 REDEFINES RLS3 PIC X(4).
+       01  RTS3.
+           05 TS3 PIC S9(3) SIGN TRAILING SEPARATE.
+       01  XTS3 REDEFINES RTS3 PIC X(4).
+       01  RU4.
+           05 U4 PIC 9(4).
+       01  XU4 REDEFINES RU4 PIC X(4).
+       01  RT4.
+           05 T4 PIC S9(4).
+       01  XT4 REDEFINES RT4 PIC X(4).
+       01  RL4.
+           05 L4 PIC S9(4) SIGN LEADING.
+       01  XL4 REDEFINES RL4 PIC X(4).
+       01  RLS4.
+           05 LS4 PIC S9(4) SIGN LEADING SEPARATE.
+       01  XLS4 REDEFINES RLS4 PIC X(5).
+       01  RTS4.
+           05 TS4 PIC S9(4) SIGN TRAILING SEPARATE.
+       01  XTS4 REDEFINES RTS4 PIC X(5).
+       01  RU5.
+           05 U5 PIC 9(5).
+       01  XU5 REDEFINES RU5 PIC X(5).
+       01  RT5.
+           05 T5 PIC S9(5).
+       01  XT5 REDEFINES RT5 PIC X(5).
+       01  RL5.
+           05 L5 PIC S9(5) SIGN LEADING.
+       01  XL5 REDEFINES RL5 PIC X(5).
+       01  RLS5.
+           05 LS5 PIC S9(5) SIGN LEADING SEPARATE.
+       01  XLS5 REDEFINES RLS5 PIC X(6).
+       01  RTS5.
+           05 TS5 PIC S9(5) SIGN TRAILING SEPARATE.
+       01  XTS5 REDEFINES RTS5 PIC X(6).
+       01  RU6.
+           05 U6 PIC 9(6).
+       01  XU6 REDEFINES RU6 PIC X(6).
+       01  RT6.
+           05 T6 PIC S9(6).
+       01  XT6 REDEFINES RT6 PIC X(6).
+       01  RL6.
+           05 L6 PIC S9(6) SIGN LEADING.
+       01  XL6 REDEFINES RL6 PIC X(6).
+       01  RLS6.
+           05 LS6 PIC S9(6) SIGN LEADING SEPARATE.
+       01  XLS6 REDEFINES RLS6 PIC X(7).
+       01  RTS6.
+           05 TS6 PIC S9(6) SIGN TRAILING SEPARATE.
+       01  XTS6 REDEFINES RTS6 PIC X(7).
+       01  RU7.
+           05 U7 PIC 9(7).
+       01  XU7 REDEFINES RU7 PIC X(7).
+       01  RT7.
+           05 T7 PIC S9(7).
+       01  XT7 REDEFINES RT7 PIC X(7).
+       01  RL7.
+           05 L7 PIC S9(7) SIGN LEADING.
+       01  XL7 REDEFINES RL7 PIC X(7).
+       01  RLS7.
+           05 LS7 PIC S9(7) SIGN LEADING SEPARATE.
+       01  XLS7 REDEFINES RLS7 PIC X(8).
+       01  RTS7.
+           05 TS7 PIC S9(7) SIGN TRAILING SEPARATE.
+       01  XTS7 REDEFINES RTS7 PIC X(8).
+       01  RU8.
+           05 U8 PIC 9(8).
+       01  XU8 REDEFINES RU8 PIC X(8).
+       01  RT8.
+           05 T8 PIC S9(8).
+       01  XT8 REDEFINES RT8 PIC X(8).
+       01  RL8.
+           05 L8 PIC S9(8) SIGN LEADING.
+       01  XL8 REDEFINES RL8 PIC X(8).
+       01  RLS8.
+           05 LS8 PIC S9(8) SIGN LEADING SEPARATE.
+       01  XLS8 REDEFINES RLS8 PIC X(9).
+       01  RTS8.
+           05 TS8 PIC S9(8) SIGN TRAILING SEPARATE.
+       01  XTS8 REDEFINES RTS8 PIC X(9).
+       01  RU9.
+           05 U9 PIC 9(9).
+       01  XU9 REDEFINES RU9 PIC X(9).
+       01  RT9.
+           05 T9 PIC S9(9).
+       01  XT9 REDEFINES RT9 PIC X(9).
+       01  RL9.
+           05 L9 PIC S9(9) SIGN LEADING.
+       01  XL9 REDEFINES RL9 PIC X(9).
+       01  RLS9.
+           05 LS9 PIC S9(9) SIGN LEADING SEPARATE.
+       01  XLS9 REDEFINES RLS9 PIC X(10).
+       01  RTS9.
+           05 TS9 PIC S9(9) SIGN TRAILING SEPARATE.
+       01  XTS9 REDEFINES RTS9 PIC X(10).
+       01  RU10.
+           05 U10 PIC 9(10).
+       01  XU10 REDEFINES RU10 PIC X(10).
+       01  RT10.
+           05 T10 PIC S9(10).
+       01  XT10 REDEFINES RT10 PIC X(10).
+       01  RL10.
+           05 L10 PIC S9(10) SIGN LEADING.
+       01  XL10 REDEFINES RL10 PIC X(10).
+       01  RLS10.
+           05 LS10 PIC S9(10) SIGN LEADING SEPARATE.
+       01  XLS10 REDEFINES RLS10 PIC X(11).
+       01  RTS10.
+           05 TS10 PIC S9(10) SIGN TRAILING SEPARATE.
+       01  XTS10 REDEFINES RTS10 PIC X(11).
+       01  RU11.
+           05 U11 PIC 9(11).
+       01  XU11 REDEFINES RU11 PIC X(11).
+       01  RT11.
+           05 T11 PIC S9(11).
+       01  XT11 REDEFINES RT11 PIC X(11).
+       01  RL11.
+           05 L11 PIC S9(11) SIGN LEADING.
+       01  XL11 REDEFINES RL11 PIC X(11).
+       01  RLS11.
+           05 LS11 PIC S9(11) SIGN LEADING SEPARATE.
+       01  XLS11 REDEFINES RLS11 PIC X(12).
+       01  RTS11.
+           05 TS11 PIC S9(11) SIGN TRAILING SEPARATE.
+       01  XTS11 REDEFINES RTS11 PIC X(12).
+       01  RU12.
+           05 U12 PIC 9(12).
+       01  XU12 REDEFINES RU12 PIC X(12).
+       01  RT12.
+           05 T12 PIC S9(12).
+       01  XT12 REDEFINES RT12 PIC X(12).
+       01  RL12.
+           05 L12 PIC S9(12) SIGN LEADING.
+       01  XL12 REDEFINES RL12 PIC X(12).
+       01  RLS12.
+           05 LS12 PIC S9(12) SIGN LEADING SEPARATE.
+       01  XLS12 REDEFINES RLS12 PIC X(13).
+       01  RTS12.
+           05 TS12 PIC S9(12) SIGN TRAILING SEPARATE.
+       01  XTS12 REDEFINES RTS12 PIC X(13).
+       01  RU13.
+           05 U13 PIC 9(13).
+       01  XU13 REDEFINES RU13 PIC X(13).
+       01  RT13.
+           05 T13 PIC S9(13).
+       01  XT13 REDEFINES RT13 PIC X(13).
+       01  RL13.
+           05 L13 PIC S9(13) SIGN LEADING.
+       01  XL13 REDEFINES RL13 PIC X(13).
+       01  RLS13.
+           05 LS13 PIC S9(13) SIGN LEADING SEPARATE.
+       01  XLS13 REDEFINES RLS13 PIC X(14).
+       01  RTS13.
+           05 TS13 PIC S9(13) SIGN TRAILING SEPARATE.
+       01  XTS13 REDEFINES RTS13 PIC X(14).
+       01  RU14.
+           05 U14 PIC 9(14).
+       01  XU14 REDEFINES RU14 PIC X(14).
+       01  RT14.
+           05 T14 PIC S9(14).
+       01  XT14 REDEFINES RT14 PIC X(14).
+       01  RL14.
+           05 L14 PIC S9(14) SIGN LEADING.
+       01  XL14 REDEFINES RL14 PIC X(14).
+       01  RLS14.
+           05 LS14 PIC S9(14) SIGN LEADING SEPARATE.
+       01  XLS14 REDEFINES RLS14 PIC X(15).
+       01  RTS14.
+           05 TS14 PIC S9(14) SIGN TRAILING SEPARATE.
+       01  XTS14 REDEFINES RTS14 PIC X(15).
+       01  RU15.
+           05 U15 PIC 9(15).
+       01  XU15 REDEFINES RU15 PIC X(15).
+       01  RT15.
+           05 T15 PIC S9(15).
+       01  XT15 REDEFINES RT15 PIC X(15).
+       01  RL15.
+           05 L15 PIC S9(15) SIGN LEADING.
+       01  XL15 REDEFINES RL15 PIC X(15).
+       01  RLS15.
+           05 LS15 PIC S9(15) SIGN LEADING SEPARATE.
+       01  XLS15 REDEFINES RLS15 PIC X(16).
+       01  RTS15.
+           05 TS15 PIC S9(15) SIGN TRAILING SEPARATE.
+       01  XTS15 REDEFINES RTS15 PIC X(16).
+       01  RU16.
+           05 U16 PIC 9(16).
+       01  XU16 REDEFINES RU16 PIC X(16).
+       01  RT16.
+           05 T16 PIC S9(16).
+       01  XT16 REDEFINES RT16 PIC X(16).
+       01  RL16.
+           05 L16 PIC S9(16) SIGN LEADING.
+       01  XL16 REDEFINES RL16 PIC X(16).
+       01  RLS16.
+           05 LS16 PIC S9(16) SIGN LEADING SEPARATE.
+       01  XLS16 REDEFINES RLS16 PIC X(17).
+       01  RTS16.
+           05 TS16 PIC S9(16) SIGN TRAILING SEPARATE.
+       01  XTS16 REDEFINES RTS16 PIC X(17).
+       01  RU17.
+           05 U17 PIC 9(17).
+       01  XU17 REDEFINES RU17 PIC X(17).
+       01  RT17.
+           05 T17 PIC S9(17).
+       01  XT17 REDEFINES RT17 PIC X(17).
+       01  RL17.
+           05 L17 PIC S9(17) SIGN LEADING.
+       01  XL17 REDEFINES RL17 PIC X(17).
+       01  RLS17.
+           05 LS17 PIC S9(17) SIGN LEADING SEPARATE.
+       01  XLS17 REDEFINES RLS17 PIC X(18).
+       01  RTS17.
+           05 TS17 PIC S9(17) SIGN TRAILING SEPARATE.
+       01  XTS17 REDEFINES RTS17 PIC X(18).
+       01  RU18.
+           05 U18 PIC 9(18).
+       01  XU18 REDEFINES RU18 PIC X(18).
+       01  RT18.
+           05 T18 PIC S9(18).
+       01  XT18 REDEFINES RT18 PIC X(18).
+       01  RL18.
+           05 L18 PIC S9(18) SIGN LEADING.
+       01  XL18 REDEFINES RL18 PIC X(18).
+       01  RLS18.
+           05 LS18 PIC S9(18) SIGN LEADING SEPARATE.
+       01  XLS18 REDEFINES RLS18 PIC X(19).
+       01  RTS18.
+           05 TS18 PIC S9(18) SIGN TRAILING SEPARATE.
+       01  XTS18 REDEFINES RTS18 PIC X(19).
+       77  Q   PIC S9(18) COMP-5.
+       PROCEDURE DIVISION.
+           MOVE 0 TO U1. DISPLAY XU1.
+           COMPUTE U1 = U1 - 1. DISPLAY XU1.
+           MOVE U1 TO Q. DISPLAY Q.
+           MOVE 1 TO U1. DISPLAY XU1.
+           COMPUTE U1 = U1 - 1. DISPLAY XU1.
+           MOVE U1 TO Q. DISPLAY Q.
+           MOVE -1 TO U1. DISPLAY XU1.
+           COMPUTE U1 = U1 - 1. DISPLAY XU1.
+           MOVE U1 TO Q. DISPLAY Q.
+           MOVE 9 TO U1. DISPLAY XU1.
+           COMPUTE U1 = U1 - 1. DISPLAY XU1.
+           MOVE U1 TO Q. DISPLAY Q.
+           MOVE -9 TO U1. DISPLAY XU1.
+           COMPUTE U1 = U1 - 1. DISPLAY XU1.
+           MOVE U1 TO Q. DISPLAY Q.
+           MOVE -4 TO U1. DISPLAY XU1.
+           COMPUTE U1 = U1 - 1. DISPLAY XU1.
+           MOVE U1 TO Q. DISPLAY Q.
+           MOVE 4 TO U1. DISPLAY XU1.
+           COMPUTE U1 = U1 - 1. DISPLAY XU1.
+           MOVE U1 TO Q. DISPLAY Q.
+           MOVE 4 TO U1. DISPLAY XU1.
+           COMPUTE U1 = U1 - 1. DISPLAY XU1.
+           MOVE U1 TO Q. DISPLAY Q.
+           MOVE 0 TO T1. DISPLAY XT1.
+           COMPUTE T1 = T1 - 1. DISPLAY XT1.
+           MOVE T1 TO Q. DISPLAY Q.
+           MOVE 1 TO T1. DISPLAY XT1.
+           COMPUTE T1 = T1 - 1. DISPLAY XT1.
+           MOVE T1 TO Q. DISPLAY Q.
+           MOVE -1 TO T1. DISPLAY XT1.
+           COMPUTE T1 = T1 - 1. DISPLAY XT1.
+           MOVE T1 TO Q. DISPLAY Q.
+           MOVE 9 TO T1. DISPLAY XT1.
+           COMPUTE T1 = T1 - 1. DISPLAY XT1.
+           MOVE T1 TO Q. DISPLAY Q.
+           MOVE -9 TO T1. DISPLAY XT1.
+           COMPUTE T1 = T1 - 1. DISPLAY XT1.
+           MOVE T1 TO Q. DISPLAY Q.
+           MOVE -4 TO T1. DISPLAY XT1.
+           COMPUTE T1 = T1 - 1. DISPLAY XT1.
+           MOVE T1 TO Q. DISPLAY Q.
+           MOVE 4 TO T1. DISPLAY XT1.
+           COMPUTE T1 = T1 - 1. DISPLAY XT1.
+           MOVE T1 TO Q. DISPLAY Q.
+           MOVE 4 TO T1. DISPLAY XT1.
+           COMPUTE T1 = T1 - 1. DISPLAY XT1.
+           MOVE T1 TO Q. DISPLAY Q.
+           MOVE 0 TO L1. DISPLAY XL1.
+           COMPUTE L1 = L1 - 1. DISPLAY XL1.
+           MOVE L1 TO Q. DISPLAY Q.
+           MOVE 1 TO L1. DISPLAY XL1.
+           COMPUTE L1 = L1 - 1. DISPLAY XL1.
+           MOVE L1 TO Q. DISPLAY Q.
+           MOVE -1 TO L1. DISPLAY XL1.
+           COMPUTE L1 = L1 - 1. DISPLAY XL1.
+           MOVE L1 TO Q. DISPLAY Q.
+           MOVE 9 TO L1. DISPLAY XL1.
+           COMPUTE L1 = L1 - 1. DISPLAY XL1.
+           MOVE L1 TO Q. DISPLAY Q.
+           MOVE -9 TO L1. DISPLAY XL1.
+           COMPUTE L1 = L1 - 1. DISPLAY XL1.
+           MOVE L1 TO Q. DISPLAY Q.
+           MOVE -4 TO L1. DISPLAY XL1.
+           COMPUTE L1 = L1 - 1. DISPLAY XL1.
+           MOVE L1 TO Q. DISPLAY Q.
+           MOVE 4 TO L1. DISPLAY XL1.
+           COMPUTE L1 = L1 - 1. DISPLAY XL1.
+           MOVE L1 TO Q. DISPLAY Q.
+           MOVE 4 TO L1. DISPLAY XL1.
+           COMPUTE L1 = L1 - 1. DISPLAY XL1.
+           MOVE L1 TO Q. DISPLAY Q.
+           MOVE 0 TO LS1. DISPLAY XLS1.
+           COMPUTE LS1 = LS1 - 1. DISPLAY XLS1.
+           MOVE LS1 TO Q. DISPLAY Q.
+           MOVE 1 TO LS1. DISPLAY XLS1.
+           COMPUTE LS1 = LS1 - 1. DISPLAY XLS1.
+           MOVE LS1 TO Q. DISPLAY Q.
+           MOVE -1 TO LS1. DISPLAY XLS1.
+           COMPUTE LS1 = LS1 - 1. DISPLAY XLS1.
+           MOVE LS1 TO Q. DISPLAY Q.
+           MOVE 9 TO LS1. DISPLAY XLS1.
+           COMPUTE LS1 = LS1 - 1. DISPLAY XLS1.
+           MOVE LS1 TO Q. DISPLAY Q.
+           MOVE -9 TO LS1. DISPLAY XLS1.
+           COMPUTE LS1 = LS1 - 1. DISPLAY XLS1.
+           MOVE LS1 TO Q. DISPLAY Q.
+           MOVE -4 TO LS1. DISPLAY XLS1.
+           COMPUTE LS1 = LS1 - 1. DISPLAY XLS1.
+           MOVE LS1 TO Q. DISPLAY Q.
+           MOVE 4 TO LS1. DISPLAY XLS1.
+           COMPUTE LS1 = LS1 - 1. DISPLAY XLS1.
+           MOVE LS1 TO Q. DISPLAY Q.
+           MOVE 4 TO LS1. DISPLAY XLS1.
+           COMPUTE LS1 = LS1 - 1. DISPLAY XLS1.
+           MOVE LS1 TO Q. DISPLAY Q.
+           MOVE 0 TO TS1. DISPLAY XTS1.
+           COMPUTE TS1 = TS1 - 1. DISPLAY XTS1.
+           MOVE TS1 TO Q. DISPLAY Q.
+           MOVE 1 TO TS1. DISPLAY XTS1.
+           COMPUTE TS1 = TS1 - 1. DISPLAY XTS1.
+           MOVE TS1 TO Q. DISPLAY Q.
+           MOVE -1 TO TS1. DISPLAY XTS1.
+           COMPUTE TS1 = TS1 - 1. DISPLAY XTS1.
+           MOVE TS1 TO Q. DISPLAY Q.
+           MOVE 9 TO TS1. DISPLAY XTS1.
+           COMPUTE TS1 = TS1 - 1. DISPLAY XTS1.
+           MOVE TS1 TO Q. DISPLAY Q.
+           MOVE -9 TO TS1. DISPLAY XTS1.
+           COMPUTE TS1 = TS1 - 1. DISPLAY XTS1.
+           MOVE TS1 TO Q. DISPLAY Q.
+           MOVE -4 TO TS1. DISPLAY XTS1.
+           COMPUTE TS1 = TS1 - 1. DISPLAY XTS1.
+           MOVE TS1 TO Q. DISPLAY Q.
+           MOVE 4 TO TS1. DISPLAY XTS1.
+           COMPUTE TS1 = TS1 - 1. DISPLAY XTS1.
+           MOVE TS1 TO Q. DISPLAY Q.
+           MOVE 4 TO TS1. DISPLAY XTS1.
+           COMPUTE TS1 = TS1 - 1. DISPLAY XTS1.
+           MOVE TS1 TO Q. DISPLAY Q.
+           MOVE " " TO XT1. MOVE T1 TO Q. DISPLAY Q.
+           MOVE " " TO XL1. MOVE L1 TO Q. DISPLAY Q.
+           MOVE " " TO XU1. MOVE U1 TO Q. DISPLAY Q.
+           MOVE "A" TO XT1. MOVE T1 TO Q. DISPLAY Q.
+           MOVE "A" TO XL1. MOVE L1 TO Q. DISPLAY Q.
+           MOVE "A" TO XU1. MOVE U1 TO Q. DISPLAY Q.
+           MOVE "p" TO XT1. MOVE T1 TO Q. DISPLAY Q.
+           MOVE "p" TO XL1. MOVE L1 TO Q. DISPLAY Q.
+           MOVE "p" TO XU1. MOVE U1 TO Q. DISPLAY Q.
+           MOVE " " TO XT1. MOVE T1 TO Q. DISPLAY Q.
+           MOVE " " TO XL1. MOVE L1 TO Q. DISPLAY Q.
+           MOVE " " TO XU1. MOVE U1 TO Q. DISPLAY Q.
+           MOVE "}" TO XT1. MOVE T1 TO Q. DISPLAY Q.
+           MOVE "}" TO XL1. MOVE L1 TO Q. DISPLAY Q.
+           MOVE "}" TO XU1. MOVE U1 TO Q. DISPLAY Q.
+           MOVE 0 TO U2. DISPLAY XU2.
+           COMPUTE U2 = U2 - 1. DISPLAY XU2.
+           MOVE U2 TO Q. DISPLAY Q.
+           MOVE 1 TO U2. DISPLAY XU2.
+           COMPUTE U2 = U2 - 1. DISPLAY XU2.
+           MOVE U2 TO Q. DISPLAY Q.
+           MOVE -1 TO U2. DISPLAY XU2.
+           COMPUTE U2 = U2 - 1. DISPLAY XU2.
+           MOVE U2 TO Q. DISPLAY Q.
+           MOVE 99 TO U2. DISPLAY XU2.
+           COMPUTE U2 = U2 - 1. DISPLAY XU2.
+           MOVE U2 TO Q. DISPLAY Q.
+           MOVE -99 TO U2. DISPLAY XU2.
+           COMPUTE U2 = U2 - 1. DISPLAY XU2.
+           MOVE U2 TO Q. DISPLAY Q.
+           MOVE 63 TO U2. DISPLAY XU2.
+           COMPUTE U2 = U2 - 1. DISPLAY XU2.
+           MOVE U2 TO Q. DISPLAY Q.
+           MOVE -27 TO U2. DISPLAY XU2.
+           COMPUTE U2 = U2 - 1. DISPLAY XU2.
+           MOVE U2 TO Q. DISPLAY Q.
+           MOVE 23 TO U2. DISPLAY XU2.
+           COMPUTE U2 = U2 - 1. DISPLAY XU2.
+           MOVE U2 TO Q. DISPLAY Q.
+           MOVE 0 TO T2. DISPLAY XT2.
+           COMPUTE T2 = T2 - 1. DISPLAY XT2.
+           MOVE T2 TO Q. DISPLAY Q.
+           MOVE 1 TO T2. DISPLAY XT2.
+           COMPUTE T2 = T2 - 1. DISPLAY XT2.
+           MOVE T2 TO Q. DISPLAY Q.
+           MOVE -1 TO T2. DISPLAY XT2.
+           COMPUTE T2 = T2 - 1. DISPLAY XT2.
+           MOVE T2 TO Q. DISPLAY Q.
+           MOVE 99 TO T2. DISPLAY XT2.
+           COMPUTE T2 = T2 - 1. DISPLAY XT2.
+           MOVE T2 TO Q. DISPLAY Q.
+           MOVE -99 TO T2. DISPLAY XT2.
+           COMPUTE T2 = T2 - 1. DISPLAY XT2.
+           MOVE T2 TO Q. DISPLAY Q.
+           MOVE 63 TO T2. DISPLAY XT2.
+           COMPUTE T2 = T2 - 1. DISPLAY XT2.
+           MOVE T2 TO Q. DISPLAY Q.
+           MOVE -27 TO T2. DISPLAY XT2.
+           COMPUTE T2 = T2 - 1. DISPLAY XT2.
+           MOVE T2 TO Q. DISPLAY Q.
+           MOVE 23 TO T2. DISPLAY XT2.
+           COMPUTE T2 = T2 - 1. DISPLAY XT2.
+           MOVE T2 TO Q. DISPLAY Q.
+           MOVE 0 TO L2. DISPLAY XL2.
+           COMPUTE L2 = L2 - 1. DISPLAY XL2.
+           MOVE L2 TO Q. DISPLAY Q.
+           MOVE 1 TO L2. DISPLAY XL2.
+           COMPUTE L2 = L2 - 1. DISPLAY XL2.
+           MOVE L2 TO Q. DISPLAY Q.
+           MOVE -1 TO L2. DISPLAY XL2.
+           COMPUTE L2 = L2 - 1. DISPLAY XL2.
+           MOVE L2 TO Q. DISPLAY Q.
+           MOVE 99 TO L2. DISPLAY XL2.
+           COMPUTE L2 = L2 - 1. DISPLAY XL2.
+           MOVE L2 TO Q. DISPLAY Q.
+           MOVE -99 TO L2. DISPLAY XL2.
+           COMPUTE L2 = L2 - 1. DISPLAY XL2.
+           MOVE L2 TO Q. DISPLAY Q.
+           MOVE 63 TO L2. DISPLAY XL2.
+           COMPUTE L2 = L2 - 1. DISPLAY XL2.
+           MOVE L2 TO Q. DISPLAY Q.
+           MOVE -27 TO L2. DISPLAY XL2.
+           COMPUTE L2 = L2 - 1. DISPLAY XL2.
+           MOVE L2 TO Q. DISPLAY Q.
+           MOVE 23 TO L2. DISPLAY XL2.
+           COMPUTE L2 = L2 - 1. DISPLAY XL2.
+           MOVE L2 TO Q. DISPLAY Q.
+           MOVE 0 TO LS2. DISPLAY XLS2.
+           COMPUTE LS2 = LS2 - 1. DISPLAY XLS2.
+           MOVE LS2 TO Q. DISPLAY Q.
+           MOVE 1 TO LS2. DISPLAY XLS2.
+           COMPUTE LS2 = LS2 - 1. DISPLAY XLS2.
+           MOVE LS2 TO Q. DISPLAY Q.
+           MOVE -1 TO LS2. DISPLAY XLS2.
+           COMPUTE LS2 = LS2 - 1. DISPLAY XLS2.
+           MOVE LS2 TO Q. DISPLAY Q.
+           MOVE 99 TO LS2. DISPLAY XLS2.
+           COMPUTE LS2 = LS2 - 1. DISPLAY XLS2.
+           MOVE LS2 TO Q. DISPLAY Q.
+           MOVE -99 TO LS2. DISPLAY XLS2.
+           COMPUTE LS2 = LS2 - 1. DISPLAY XLS2.
+           MOVE LS2 TO Q. DISPLAY Q.
+           MOVE 63 TO LS2. DISPLAY XLS2.
+           COMPUTE LS2 = LS2 - 1. DISPLAY XLS2.
+           MOVE LS2 TO Q. DISPLAY Q.
+           MOVE -27 TO LS2. DISPLAY XLS2.
+           COMPUTE LS2 = LS2 - 1. DISPLAY XLS2.
+           MOVE LS2 TO Q. DISPLAY Q.
+           MOVE 23 TO LS2. DISPLAY XLS2.
+           COMPUTE LS2 = LS2 - 1. DISPLAY XLS2.
+           MOVE LS2 TO Q. DISPLAY Q.
+           MOVE 0 TO TS2. DISPLAY XTS2.
+           COMPUTE TS2 = TS2 - 1. DISPLAY XTS2.
+           MOVE TS2 TO Q. DISPLAY Q.
+           MOVE 1 TO TS2. DISPLAY XTS2.
+           COMPUTE TS2 = TS2 - 1. DISPLAY XTS2.
+           MOVE TS2 TO Q. DISPLAY Q.
+           MOVE -1 TO TS2. DISPLAY XTS2.
+           COMPUTE TS2 = TS2 - 1. DISPLAY XTS2.
+           MOVE TS2 TO Q. DISPLAY Q.
+           MOVE 99 TO TS2. DISPLAY XTS2.
+           COMPUTE TS2 = TS2 - 1. DISPLAY XTS2.
+           MOVE TS2 TO Q. DISPLAY Q.
+           MOVE -99 TO TS2. DISPLAY XTS2.
+           COMPUTE TS2 = TS2 - 1. DISPLAY XTS2.
+           MOVE TS2 TO Q. DISPLAY Q.
+           MOVE 63 TO TS2. DISPLAY XTS2.
+           COMPUTE TS2 = TS2 - 1. DISPLAY XTS2.
+           MOVE TS2 TO Q. DISPLAY Q.
+           MOVE -27 TO TS2. DISPLAY XTS2.
+           COMPUTE TS2 = TS2 - 1. DISPLAY XTS2.
+           MOVE TS2 TO Q. DISPLAY Q.
+           MOVE 23 TO TS2. DISPLAY XTS2.
+           COMPUTE TS2 = TS2 - 1. DISPLAY XTS2.
+           MOVE TS2 TO Q. DISPLAY Q.
+           MOVE "  " TO XT2. MOVE T2 TO Q. DISPLAY Q.
+           MOVE "  " TO XL2. MOVE L2 TO Q. DISPLAY Q.
+           MOVE "  " TO XU2. MOVE U2 TO Q. DISPLAY Q.
+           MOVE "A1" TO XT2. MOVE T2 TO Q. DISPLAY Q.
+           MOVE "A1" TO XL2. MOVE L2 TO Q. DISPLAY Q.
+           MOVE "A1" TO XU2. MOVE U2 TO Q. DISPLAY Q.
+           MOVE "1p" TO XT2. MOVE T2 TO Q. DISPLAY Q.
+           MOVE "1p" TO XL2. MOVE L2 TO Q. DISPLAY Q.
+           MOVE "1p" TO XU2. MOVE U2 TO Q. DISPLAY Q.
+           MOVE "1 " TO XT2. MOVE T2 TO Q. DISPLAY Q.
+           MOVE "1 " TO XL2. MOVE L2 TO Q. DISPLAY Q.
+           MOVE "1 " TO XU2. MOVE U2 TO Q. DISPLAY Q.
+           MOVE "}2" TO XT2. MOVE T2 TO Q. DISPLAY Q.
+           MOVE "}2" TO XL2. MOVE L2 TO Q. DISPLAY Q.
+           MOVE "}2" TO XU2. MOVE U2 TO Q. DISPLAY Q.
+           MOVE 0 TO U3. DISPLAY XU3.
+           COMPUTE U3 = U3 - 1. DISPLAY XU3.
+           MOVE U3 TO Q. DISPLAY Q.
+           MOVE 1 TO U3. DISPLAY XU3.
+           COMPUTE U3 = U3 - 1. DISPLAY XU3.
+           MOVE U3 TO Q. DISPLAY Q.
+           MOVE -1 TO U3. DISPLAY XU3.
+           COMPUTE U3 = U3 - 1. DISPLAY XU3.
+           MOVE U3 TO Q. DISPLAY Q.
+           MOVE 999 TO U3. DISPLAY XU3.
+           COMPUTE U3 = U3 - 1. DISPLAY XU3.
+           MOVE U3 TO Q. DISPLAY Q.
+           MOVE -999 TO U3. DISPLAY XU3.
+           COMPUTE U3 = U3 - 1. DISPLAY XU3.
+           MOVE U3 TO Q. DISPLAY Q.
+           MOVE 728 TO U3. DISPLAY XU3.
+           COMPUTE U3 = U3 - 1. DISPLAY XU3.
+           MOVE U3 TO Q. DISPLAY Q.
+           MOVE -557 TO U3. DISPLAY XU3.
+           COMPUTE U3 = U3 - 1. DISPLAY XU3.
+           MOVE U3 TO Q. DISPLAY Q.
+           MOVE 624 TO U3. DISPLAY XU3.
+           COMPUTE U3 = U3 - 1. DISPLAY XU3.
+           MOVE U3 TO Q. DISPLAY Q.
+           MOVE 0 TO T3. DISPLAY XT3.
+           COMPUTE T3 = T3 - 1. DISPLAY XT3.
+           MOVE T3 TO Q. DISPLAY Q.
+           MOVE 1 TO T3. DISPLAY XT3.
+           COMPUTE T3 = T3 - 1. DISPLAY XT3.
+           MOVE T3 TO Q. DISPLAY Q.
+           MOVE -1 TO T3. DISPLAY XT3.
+           COMPUTE T3 = T3 - 1. DISPLAY XT3.
+           MOVE T3 TO Q. DISPLAY Q.
+           MOVE 999 TO T3. DISPLAY XT3.
+           COMPUTE T3 = T3 - 1. DISPLAY XT3.
+           MOVE T3 TO Q. DISPLAY Q.
+           MOVE -999 TO T3. DISPLAY XT3.
+           COMPUTE T3 = T3 - 1. DISPLAY XT3.
+           MOVE T3 TO Q. DISPLAY Q.
+           MOVE 728 TO T3. DISPLAY XT3.
+           COMPUTE T3 = T3 - 1. DISPLAY XT3.
+           MOVE T3 TO Q. DISPLAY Q.
+           MOVE -557 TO T3. DISPLAY XT3.
+           COMPUTE T3 = T3 - 1. DISPLAY XT3.
+           MOVE T3 TO Q. DISPLAY Q.
+           MOVE 624 TO T3. DISPLAY XT3.
+           COMPUTE T3 = T3 - 1. DISPLAY XT3.
+           MOVE T3 TO Q. DISPLAY Q.
+           MOVE 0 TO L3. DISPLAY XL3.
+           COMPUTE L3 = L3 - 1. DISPLAY XL3.
+           MOVE L3 TO Q. DISPLAY Q.
+           MOVE 1 TO L3. DISPLAY XL3.
+           COMPUTE L3 = L3 - 1. DISPLAY XL3.
+           MOVE L3 TO Q. DISPLAY Q.
+           MOVE -1 TO L3. DISPLAY XL3.
+           COMPUTE L3 = L3 - 1. DISPLAY XL3.
+           MOVE L3 TO Q. DISPLAY Q.
+           MOVE 999 TO L3. DISPLAY XL3.
+           COMPUTE L3 = L3 - 1. DISPLAY XL3.
+           MOVE L3 TO Q. DISPLAY Q.
+           MOVE -999 TO L3. DISPLAY XL3.
+           COMPUTE L3 = L3 - 1. DISPLAY XL3.
+           MOVE L3 TO Q. DISPLAY Q.
+           MOVE 728 TO L3. DISPLAY XL3.
+           COMPUTE L3 = L3 - 1. DISPLAY XL3.
+           MOVE L3 TO Q. DISPLAY Q.
+           MOVE -557 TO L3. DISPLAY XL3.
+           COMPUTE L3 = L3 - 1. DISPLAY XL3.
+           MOVE L3 TO Q. DISPLAY Q.
+           MOVE 624 TO L3. DISPLAY XL3.
+           COMPUTE L3 = L3 - 1. DISPLAY XL3.
+           MOVE L3 TO Q. DISPLAY Q.
+           MOVE 0 TO LS3. DISPLAY XLS3.
+           COMPUTE LS3 = LS3 - 1. DISPLAY XLS3.
+           MOVE LS3 TO Q. DISPLAY Q.
+           MOVE 1 TO LS3. DISPLAY XLS3.
+           COMPUTE LS3 = LS3 - 1. DISPLAY XLS3.
+           MOVE LS3 TO Q. DISPLAY Q.
+           MOVE -1 TO LS3. DISPLAY XLS3.
+           COMPUTE LS3 = LS3 - 1. DISPLAY XLS3.
+           MOVE LS3 TO Q. DISPLAY Q.
+           MOVE 999 TO LS3. DISPLAY XLS3.
+           COMPUTE LS3 = LS3 - 1. DISPLAY XLS3.
+           MOVE LS3 TO Q. DISPLAY Q.
+           MOVE -999 TO LS3. DISPLAY XLS3.
+           COMPUTE LS3 = LS3 - 1. DISPLAY XLS3.
+           MOVE LS3 TO Q. DISPLAY Q.
+           MOVE 728 TO LS3. DISPLAY XLS3.
+           COMPUTE LS3 = LS3 - 1. DISPLAY XLS3.
+           MOVE LS3 TO Q. DISPLAY Q.
+           MOVE -557 TO LS3. DISPLAY XLS3.
+           COMPUTE LS3 = LS3 - 1. DISPLAY XLS3.
+           MOVE LS3 TO Q. DISPLAY Q.
+           MOVE 624 TO LS3. DISPLAY XLS3.
+           COMPUTE LS3 = LS3 - 1. DISPLAY XLS3.
+           MOVE LS3 TO Q. DISPLAY Q.
+           MOVE 0 TO TS3. DISPLAY XTS3.
+           COMPUTE TS3 = TS3 - 1. DISPLAY XTS3.
+           MOVE TS3 TO Q. DISPLAY Q.
+           MOVE 1 TO TS3. DISPLAY XTS3.
+           COMPUTE TS3 = TS3 - 1. DISPLAY XTS3.
+           MOVE TS3 TO Q. DISPLAY Q.
+           MOVE -1 TO TS3. DISPLAY XTS3.
+           COMPUTE TS3 = TS3 - 1. DISPLAY XTS3.
+           MOVE TS3 TO Q. DISPLAY Q.
+           MOVE 999 TO TS3. DISPLAY XTS3.
+           COMPUTE TS3 = TS3 - 1. DISPLAY XTS3.
+           MOVE TS3 TO Q. DISPLAY Q.
+           MOVE -999 TO TS3. DISPLAY XTS3.
+           COMPUTE TS3 = TS3 - 1. DISPLAY XTS3.
+           MOVE TS3 TO Q. DISPLAY Q.
+           MOVE 728 TO TS3. DISPLAY XTS3.
+           COMPUTE TS3 = TS3 - 1. DISPLAY XTS3.
+           MOVE TS3 TO Q. DISPLAY Q.
+           MOVE -557 TO TS3. DISPLAY XTS3.
+           COMPUTE TS3 = TS3 - 1. DISPLAY XTS3.
+           MOVE TS3 TO Q. DISPLAY Q.
+           MOVE 624 TO TS3. DISPLAY XTS3.
+           COMPUTE TS3 = TS3 - 1. DISPLAY XTS3.
+           MOVE TS3 TO Q. DISPLAY Q.
+           MOVE "   " TO XT3. MOVE T3 TO Q. DISPLAY Q.
+           MOVE "   " TO XL3. MOVE L3 TO Q. DISPLAY Q.
+           MOVE "   " TO XU3. MOVE U3 TO Q. DISPLAY Q.
+           MOVE "A11" TO XT3. MOVE T3 TO Q. DISPLAY Q.
+           MOVE "A11" TO XL3. MOVE L3 TO Q. DISPLAY Q.
+           MOVE "A11" TO XU3. MOVE U3 TO Q. DISPLAY Q.
+           MOVE "11p" TO XT3. MOVE T3 TO Q. DISPLAY Q.
+           MOVE "11p" TO XL3. MOVE L3 TO Q. DISPLAY Q.
+           MOVE "11p" TO XU3. MOVE U3 TO Q. DISPLAY Q.
+           MOVE "11 " TO XT3. MOVE T3 TO Q. DISPLAY Q.
+           MOVE "11 " TO XL3. MOVE L3 TO Q. DISPLAY Q.
+           MOVE "11 " TO XU3. MOVE U3 TO Q. DISPLAY Q.
+           MOVE "}22" TO XT3. MOVE T3 TO Q. DISPLAY Q.
+           MOVE "}22" TO XL3. MOVE L3 TO Q. DISPLAY Q.
+           MOVE "}22" TO XU3. MOVE U3 TO Q. DISPLAY Q.
+           MOVE 0 TO U4. DISPLAY XU4.
+           COMPUTE U4 = U4 - 1. DISPLAY XU4.
+           MOVE U4 TO Q. DISPLAY Q.
+           MOVE 1 TO U4. DISPLAY XU4.
+           COMPUTE U4 = U4 - 1. DISPLAY XU4.
+           MOVE U4 TO Q. DISPLAY Q.
+           MOVE -1 TO U4. DISPLAY XU4.
+           COMPUTE U4 = U4 - 1. DISPLAY XU4.
+           MOVE U4 TO Q. DISPLAY Q.
+           MOVE 9999 TO U4. DISPLAY XU4.
+           COMPUTE U4 = U4 - 1. DISPLAY XU4.
+           MOVE U4 TO Q. DISPLAY Q.
+           MOVE -9999 TO U4. DISPLAY XU4.
+           COMPUTE U4 = U4 - 1. DISPLAY XU4.
+           MOVE U4 TO Q. DISPLAY Q.
+           MOVE 5554 TO U4. DISPLAY XU4.
+           COMPUTE U4 = U4 - 1. DISPLAY XU4.
+           MOVE U4 TO Q. DISPLAY Q.
+           MOVE 6793 TO U4. DISPLAY XU4.
+           COMPUTE U4 = U4 - 1. DISPLAY XU4.
+           MOVE U4 TO Q. DISPLAY Q.
+           MOVE -3984 TO U4. DISPLAY XU4.
+           COMPUTE U4 = U4 - 1. DISPLAY XU4.
+           MOVE U4 TO Q. DISPLAY Q.
+           MOVE 0 TO T4. DISPLAY XT4.
+           COMPUTE T4 = T4 - 1. DISPLAY XT4.
+           MOVE T4 TO Q. DISPLAY Q.
+           MOVE 1 TO T4. DISPLAY XT4.
+           COMPUTE T4 = T4 - 1. DISPLAY XT4.
+           MOVE T4 TO Q. DISPLAY Q.
+           MOVE -1 TO T4. DISPLAY XT4.
+           COMPUTE T4 = T4 - 1. DISPLAY XT4.
+           MOVE T4 TO Q. DISPLAY Q.
+           MOVE 9999 TO T4. DISPLAY XT4.
+           COMPUTE T4 = T4 - 1. DISPLAY XT4.
+           MOVE T4 TO Q. DISPLAY Q.
+           MOVE -9999 TO T4. DISPLAY XT4.
+           COMPUTE T4 = T4 - 1. DISPLAY XT4.
+           MOVE T4 TO Q. DISPLAY Q.
+           MOVE 5554 TO T4. DISPLAY XT4.
+           COMPUTE T4 = T4 - 1. DISPLAY XT4.
+           MOVE T4 TO Q. DISPLAY Q.
+           MOVE 6793 TO T4. DISPLAY XT4.
+           COMPUTE T4 = T4 - 1. DISPLAY XT4.
+           MOVE T4 TO Q. DISPLAY Q.
+           MOVE -3984 TO T4. DISPLAY XT4.
+           COMPUTE T4 = T4 - 1. DISPLAY XT4.
+           MOVE T4 TO Q. DISPLAY Q.
+           MOVE 0 TO L4. DISPLAY XL4.
+           COMPUTE L4 = L4 - 1. DISPLAY XL4.
+           MOVE L4 TO Q. DISPLAY Q.
+           MOVE 1 TO L4. DISPLAY XL4.
+           COMPUTE L4 = L4 - 1. DISPLAY XL4.
+           MOVE L4 TO Q. DISPLAY Q.
+           MOVE -1 TO L4. DISPLAY XL4.
+           COMPUTE L4 = L4 - 1. DISPLAY XL4.
+           MOVE L4 TO Q. DISPLAY Q.
+           MOVE 9999 TO L4. DISPLAY XL4.
+           COMPUTE L4 = L4 - 1. DISPLAY XL4.
+           MOVE L4 TO Q. DISPLAY Q.
+           MOVE -9999 TO L4. DISPLAY XL4.
+           COMPUTE L4 = L4 - 1. DISPLAY XL4.
+           MOVE L4 TO Q. DISPLAY Q.
+           MOVE 5554 TO L4. DISPLAY XL4.
+           COMPUTE L4 = L4 - 1. DISPLAY XL4.
+           MOVE L4 TO Q. DISPLAY Q.
+           MOVE 6793 TO L4. DISPLAY XL4.
+           COMPUTE L4 = L4 - 1. DISPLAY XL4.
+           MOVE L4 TO Q. DISPLAY Q.
+           MOVE -3984 TO L4. DISPLAY XL4.
+           COMPUTE L4 = L4 - 1. DISPLAY XL4.
+           MOVE L4 TO Q. DISPLAY Q.
+           MOVE 0 TO LS4. DISPLAY XLS4.
+           COMPUTE LS4 = LS4 - 1. DISPLAY XLS4.
+           MOVE LS4 TO Q. DISPLAY Q.
+           MOVE 1 TO LS4. DISPLAY XLS4.
+           COMPUTE LS4 = LS4 - 1. DISPLAY XLS4.
+           MOVE LS4 TO Q. DISPLAY Q.
+           MOVE -1 TO LS4. DISPLAY XLS4.
+           COMPUTE LS4 = LS4 - 1. DISPLAY XLS4.
+           MOVE LS4 TO Q. DISPLAY Q.
+           MOVE 9999 TO LS4. DISPLAY XLS4.
+           COMPUTE LS4 = LS4 - 1. DISPLAY XLS4.
+           MOVE LS4 TO Q. DISPLAY Q.
+           MOVE -9999 TO LS4. DISPLAY XLS4.
+           COMPUTE LS4 = LS4 - 1. DISPLAY XLS4.
+           MOVE LS4 TO Q. DISPLAY Q.
+           MOVE 5554 TO LS4. DISPLAY XLS4.
+           COMPUTE LS4 = LS4 - 1. DISPLAY XLS4.
+           MOVE LS4 TO Q. DISPLAY Q.
+           MOVE 6793 TO LS4. DISPLAY XLS4.
+           COMPUTE LS4 = LS4 - 1. DISPLAY XLS4.
+           MOVE LS4 TO Q. DISPLAY Q.
+           MOVE -3984 TO LS4. DISPLAY XLS4.
+           COMPUTE LS4 = LS4 - 1. DISPLAY XLS4.
+           MOVE LS4 TO Q. DISPLAY Q.
+           MOVE 0 TO TS4. DISPLAY XTS4.
+           COMPUTE TS4 = TS4 - 1. DISPLAY XTS4.
+           MOVE TS4 TO Q. DISPLAY Q.
+           MOVE 1 TO TS4. DISPLAY XTS4.
+           COMPUTE TS4 = TS4 - 1. DISPLAY XTS4.
+           MOVE TS4 TO Q. DISPLAY Q.
+           MOVE -1 TO TS4. DISPLAY XTS4.
+           COMPUTE TS4 = TS4 - 1. DISPLAY XTS4.
+           MOVE TS4 TO Q. DISPLAY Q.
+           MOVE 9999 TO TS4. DISPLAY XTS4.
+           COMPUTE TS4 = TS4 - 1. DISPLAY XTS4.
+           MOVE TS4 TO Q. DISPLAY Q.
+           MOVE -9999 TO TS4. DISPLAY XTS4.
+           COMPUTE TS4 = TS4 - 1. DISPLAY XTS4.
+           MOVE TS4 TO Q. DISPLAY Q.
+           MOVE 5554 TO TS4. DISPLAY XTS4.
+           COMPUTE TS4 = TS4 - 1. DISPLAY XTS4.
+           MOVE TS4 TO Q. DISPLAY Q.
+           MOVE 6793 TO TS4. DISPLAY XTS4.
+           COMPUTE TS4 = TS4 - 1. DISPLAY XTS4.
+           MOVE TS4 TO Q. DISPLAY Q.
+           MOVE -3984 TO TS4. DISPLAY XTS4.
+           COMPUTE TS4 = TS4 - 1. DISPLAY XTS4.
+           MOVE TS4 TO Q. DISPLAY Q.
+           MOVE "    " TO XT4. MOVE T4 TO Q. DISPLAY Q.
+           MOVE "    " TO XL4. MOVE L4 TO Q. DISPLAY Q.
+           MOVE "    " TO XU4. MOVE U4 TO Q. DISPLAY Q.
+           MOVE "A111" TO XT4. MOVE T4 TO Q. DISPLAY Q.
+           MOVE "A111" TO XL4. MOVE L4 TO Q. DISPLAY Q.
+           MOVE "A111" TO XU4. MOVE U4 TO Q. DISPLAY Q.
+           MOVE "111p" TO XT4. MOVE T4 TO Q. DISPLAY Q.
+           MOVE "111p" TO XL4. MOVE L4 TO Q. DISPLAY Q.
+           MOVE "111p" TO XU4. MOVE U4 TO Q. DISPLAY Q.
+           MOVE "111 " TO XT4. MOVE T4 TO Q. DISPLAY Q.
+           MOVE "111 " TO XL4. MOVE L4 TO Q. DISPLAY Q.
+           MOVE "111 " TO XU4. MOVE U4 TO Q. DISPLAY Q.
+           MOVE "}222" TO XT4. MOVE T4 TO Q. DISPLAY Q.
+           MOVE "}222" TO XL4. MOVE L4 TO Q. DISPLAY Q.
+           MOVE "}222" TO XU4. MOVE U4 TO Q. DISPLAY Q.
+           MOVE 0 TO U5. DISPLAY XU5.
+           COMPUTE U5 = U5 - 1. DISPLAY XU5.
+           MOVE U5 TO Q. DISPLAY Q.
+           MOVE 1 TO U5. DISPLAY XU5.
+           COMPUTE U5 = U5 - 1. DISPLAY XU5.
+           MOVE U5 TO Q. DISPLAY Q.
+           MOVE -1 TO U5. DISPLAY XU5.
+           COMPUTE U5 = U5 - 1. DISPLAY XU5.
+           MOVE U5 TO Q. DISPLAY Q.
+           MOVE 99999 TO U5. DISPLAY XU5.
+           COMPUTE U5 = U5 - 1. DISPLAY XU5.
+           MOVE U5 TO Q. DISPLAY Q.
+           MOVE -99999 TO U5. DISPLAY XU5.
+           COMPUTE U5 = U5 - 1. DISPLAY XU5.
+           MOVE U5 TO Q. DISPLAY Q.
+           MOVE 32405 TO U5. DISPLAY XU5.
+           COMPUTE U5 = U5 - 1. DISPLAY XU5.
+           MOVE U5 TO Q. DISPLAY Q.
+           MOVE 38294 TO U5. DISPLAY XU5.
+           COMPUTE U5 = U5 - 1. DISPLAY XU5.
+           MOVE U5 TO Q. DISPLAY Q.
+           MOVE -38119 TO U5. DISPLAY XU5.
+           COMPUTE U5 = U5 - 1. DISPLAY XU5.
+           MOVE U5 TO Q. DISPLAY Q.
+           MOVE 0 TO T5. DISPLAY XT5.
+           COMPUTE T5 = T5 - 1. DISPLAY XT5.
+           MOVE T5 TO Q. DISPLAY Q.
+           MOVE 1 TO T5. DISPLAY XT5.
+           COMPUTE T5 = T5 - 1. DISPLAY XT5.
+           MOVE T5 TO Q. DISPLAY Q.
+           MOVE -1 TO T5. DISPLAY XT5.
+           COMPUTE T5 = T5 - 1. DISPLAY XT5.
+           MOVE T5 TO Q. DISPLAY Q.
+           MOVE 99999 TO T5. DISPLAY XT5.
+           COMPUTE T5 = T5 - 1. DISPLAY XT5.
+           MOVE T5 TO Q. DISPLAY Q.
+           MOVE -99999 TO T5. DISPLAY XT5.
+           COMPUTE T5 = T5 - 1. DISPLAY XT5.
+           MOVE T5 TO Q. DISPLAY Q.
+           MOVE 32405 TO T5. DISPLAY XT5.
+           COMPUTE T5 = T5 - 1. DISPLAY XT5.
+           MOVE T5 TO Q. DISPLAY Q.
+           MOVE 38294 TO T5. DISPLAY XT5.
+           COMPUTE T5 = T5 - 1. DISPLAY XT5.
+           MOVE T5 TO Q. DISPLAY Q.
+           MOVE -38119 TO T5. DISPLAY XT5.
+           COMPUTE T5 = T5 - 1. DISPLAY XT5.
+           MOVE T5 TO Q. DISPLAY Q.
+           MOVE 0 TO L5. DISPLAY XL5.
+           COMPUTE L5 = L5 - 1. DISPLAY XL5.
+           MOVE L5 TO Q. DISPLAY Q.
+           MOVE 1 TO L5. DISPLAY XL5.
+           COMPUTE L5 = L5 - 1. DISPLAY XL5.
+           MOVE L5 TO Q. DISPLAY Q.
+           MOVE -1 TO L5. DISPLAY XL5.
+           COMPUTE L5 = L5 - 1. DISPLAY XL5.
+           MOVE L5 TO Q. DISPLAY Q.
+           MOVE 99999 TO L5. DISPLAY XL5.
+           COMPUTE L5 = L5 - 1. DISPLAY XL5.
+           MOVE L5 TO Q. DISPLAY Q.
+           MOVE -99999 TO L5. DISPLAY XL5.
+           COMPUTE L5 = L5 - 1. DISPLAY XL5.
+           MOVE L5 TO Q. DISPLAY Q.
+           MOVE 32405 TO L5. DISPLAY XL5.
+           COMPUTE L5 = L5 - 1. DISPLAY XL5.
+           MOVE L5 TO Q. DISPLAY Q.
+           MOVE 38294 TO L5. DISPLAY XL5.
+           COMPUTE L5 = L5 - 1. DISPLAY XL5.
+           MOVE L5 TO Q. DISPLAY Q.
+           MOVE -38119 TO L5. DISPLAY XL5.
+           COMPUTE L5 = L5 - 1. DISPLAY XL5.
+           MOVE L5 TO Q. DISPLAY Q.
+           MOVE 0 TO LS5. DISPLAY XLS5.
+           COMPUTE LS5 = LS5 - 1. DISPLAY XLS5.
+           MOVE LS5 TO Q. DISPLAY Q.
+           MOVE 1 TO LS5. DISPLAY XLS5.
+           COMPUTE LS5 = LS5 - 1. DISPLAY XLS5.
+           MOVE LS5 TO Q. DISPLAY Q.
+           MOVE -1 TO LS5. DISPLAY XLS5.
+           COMPUTE LS5 = LS5 - 1. DISPLAY XLS5.
+           MOVE LS5 TO Q. DISPLAY Q.
+           MOVE 99999 TO LS5. DISPLAY XLS5.
+           COMPUTE LS5 = LS5 - 1. DISPLAY XLS5.
+           MOVE LS5 TO Q. DISPLAY Q.
+           MOVE -99999 TO LS5. DISPLAY XLS5.
+           COMPUTE LS5 = LS5 - 1. DISPLAY XLS5.
+           MOVE LS5 TO Q. DISPLAY Q.
+           MOVE 32405 TO LS5. DISPLAY XLS5.
+           COMPUTE LS5 = LS5 - 1. DISPLAY XLS5.
+           MOVE LS5 TO Q. DISPLAY Q.
+           MOVE 38294 TO LS5. DISPLAY XLS5.
+           COMPUTE LS5 = LS5 - 1. DISPLAY XLS5.
+           MOVE LS5 TO Q. DISPLAY Q.
+           MOVE -38119 TO LS5. DISPLAY XLS5.
+           COMPUTE LS5 = LS5 - 1. DISPLAY XLS5.
+           MOVE LS5 TO Q. DISPLAY Q.
+           MOVE 0 TO TS5. DISPLAY XTS5.
+           COMPUTE TS5 = TS5 - 1. DISPLAY XTS5.
+           MOVE TS5 TO Q. DISPLAY Q.
+           MOVE 1 TO TS5. DISPLAY XTS5.
+           COMPUTE TS5 = TS5 - 1. DISPLAY XTS5.
+           MOVE TS5 TO Q. DISPLAY Q.
+           MOVE -1 TO TS5. DISPLAY XTS5.
+           COMPUTE TS5 = TS5 - 1. DISPLAY XTS5.
+           MOVE TS5 TO Q. DISPLAY Q.
+           MOVE 99999 TO TS5. DISPLAY XTS5.
+           COMPUTE TS5 = TS5 - 1. DISPLAY XTS5.
+           MOVE TS5 TO Q. DISPLAY Q.
+           MOVE -99999 TO TS5. DISPLAY XTS5.
+           COMPUTE TS5 = TS5 - 1. DISPLAY XTS5.
+           MOVE TS5 TO Q. DISPLAY Q.
+           MOVE 32405 TO TS5. DISPLAY XTS5.
+           COMPUTE TS5 = TS5 - 1. DISPLAY XTS5.
+           MOVE TS5 TO Q. DISPLAY Q.
+           MOVE 38294 TO TS5. DISPLAY XTS5.
+           COMPUTE TS5 = TS5 - 1. DISPLAY XTS5.
+           MOVE TS5 TO Q. DISPLAY Q.
+           MOVE -38119 TO TS5. DISPLAY XTS5.
+           COMPUTE TS5 = TS5 - 1. DISPLAY XTS5.
+           MOVE TS5 TO Q. DISPLAY Q.
+           MOVE "     " TO XT5. MOVE T5 TO Q. DISPLAY Q.
+           MOVE "     " TO XL5. MOVE L5 TO Q. DISPLAY Q.
+           MOVE "     " TO XU5. MOVE U5 TO Q. DISPLAY Q.
+           MOVE "A1111" TO XT5. MOVE T5 TO Q. DISPLAY Q.
+           MOVE "A1111" TO XL5. MOVE L5 TO Q. DISPLAY Q.
+           MOVE "A1111" TO XU5. MOVE U5 TO Q. DISPLAY Q.
+           MOVE "1111p" TO XT5. MOVE T5 TO Q. DISPLAY Q.
+           MOVE "1111p" TO XL5. MOVE L5 TO Q. DISPLAY Q.
+           MOVE "1111p" TO XU5. MOVE U5 TO Q. DISPLAY Q.
+           MOVE "1111 " TO XT5. MOVE T5 TO Q. DISPLAY Q.
+           MOVE "1111 " TO XL5. MOVE L5 TO Q. DISPLAY Q.
+           MOVE "1111 " TO XU5. MOVE U5 TO Q. DISPLAY Q.
+           MOVE "}2222" TO XT5. MOVE T5 TO Q. DISPLAY Q.
+           MOVE "}2222" TO XL5. MOVE L5 TO Q. DISPLAY Q.
+           MOVE "}2222" TO XU5. MOVE U5 TO Q. DISPLAY Q.
+           MOVE 0 TO U6. DISPLAY XU6.
+           COMPUTE U6 = U6 - 1. DISPLAY XU6.
+           MOVE U6 TO Q. DISPLAY Q.
+           MOVE 1 TO U6. DISPLAY XU6.
+           COMPUTE U6 = U6 - 1. DISPLAY XU6.
+           MOVE U6 TO Q. DISPLAY Q.
+           MOVE -1 TO U6. DISPLAY XU6.
+           COMPUTE U6 = U6 - 1. DISPLAY XU6.
+           MOVE U6 TO Q. DISPLAY Q.
+           MOVE 999999 TO U6. DISPLAY XU6.
+           COMPUTE U6 = U6 - 1. DISPLAY XU6.
+           MOVE U6 TO Q. DISPLAY Q.
+           MOVE -999999 TO U6. DISPLAY XU6.
+           COMPUTE U6 = U6 - 1. DISPLAY XU6.
+           MOVE U6 TO Q. DISPLAY Q.
+           MOVE 653403 TO U6. DISPLAY XU6.
+           COMPUTE U6 = U6 - 1. DISPLAY XU6.
+           MOVE U6 TO Q. DISPLAY Q.
+           MOVE -993329 TO U6. DISPLAY XU6.
+           COMPUTE U6 = U6 - 1. DISPLAY XU6.
+           MOVE U6 TO Q. DISPLAY Q.
+           MOVE -970385 TO U6. DISPLAY XU6.
+           COMPUTE U6 = U6 - 1. DISPLAY XU6.
+           MOVE U6 TO Q. DISPLAY Q.
+           MOVE 0 TO T6. DISPLAY XT6.
+           COMPUTE T6 = T6 - 1. DISPLAY XT6.
+           MOVE T6 TO Q. DISPLAY Q.
+           MOVE 1 TO T6. DISPLAY XT6.
+           COMPUTE T6 = T6 - 1. DISPLAY XT6.
+           MOVE T6 TO Q. DISPLAY Q.
+           MOVE -1 TO T6. DISPLAY XT6.
+           COMPUTE T6 = T6 - 1. DISPLAY XT6.
+           MOVE T6 TO Q. DISPLAY Q.
+           MOVE 999999 TO T6. DISPLAY XT6.
+           COMPUTE T6 = T6 - 1. DISPLAY XT6.
+           MOVE T6 TO Q. DISPLAY Q.
+           MOVE -999999 TO T6. DISPLAY XT6.
+           COMPUTE T6 = T6 - 1. DISPLAY XT6.
+           MOVE T6 TO Q. DISPLAY Q.
+           MOVE 653403 TO T6. DISPLAY XT6.
+           COMPUTE T6 = T6 - 1. DISPLAY XT6.
+           MOVE T6 TO Q. DISPLAY Q.
+           MOVE -993329 TO T6. DISPLAY XT6.
+           COMPUTE T6 = T6 - 1. DISPLAY XT6.
+           MOVE T6 TO Q. DISPLAY Q.
+           MOVE -970385 TO T6. DISPLAY XT6.
+           COMPUTE T6 = T6 - 1. DISPLAY XT6.
+           MOVE T6 TO Q. DISPLAY Q.
+           MOVE 0 TO L6. DISPLAY XL6.
+           COMPUTE L6 = L6 - 1. DISPLAY XL6.
+           MOVE L6 TO Q. DISPLAY Q.
+           MOVE 1 TO L6. DISPLAY XL6.
+           COMPUTE L6 = L6 - 1. DISPLAY XL6.
+           MOVE L6 TO Q. DISPLAY Q.
+           MOVE -1 TO L6. DISPLAY XL6.
+           COMPUTE L6 = L6 - 1. DISPLAY XL6.
+           MOVE L6 TO Q. DISPLAY Q.
+           MOVE 999999 TO L6. DISPLAY XL6.
+           COMPUTE L6 = L6 - 1. DISPLAY XL6.
+           MOVE L6 TO Q. DISPLAY Q.
+           MOVE -999999 TO L6. DISPLAY XL6.
+           COMPUTE L6 = L6 - 1. DISPLAY XL6.
+           MOVE L6 TO Q. DISPLAY Q.
+           MOVE 653403 TO L6. DISPLAY XL6.
+           COMPUTE L6 = L6 - 1. DISPLAY XL6.
+           MOVE L6 TO Q. DISPLAY Q.
+           MOVE -993329 TO L6. DISPLAY XL6.
+           COMPUTE L6 = L6 - 1. DISPLAY XL6.
+           MOVE L6 TO Q. DISPLAY Q.
+           MOVE -970385 TO L6. DISPLAY XL6.
+           COMPUTE L6 = L6 - 1. DISPLAY XL6.
+           MOVE L6 TO Q. DISPLAY Q.
+           MOVE 0 TO LS6. DISPLAY XLS6.
+           COMPUTE LS6 = LS6 - 1. DISPLAY XLS6.
+           MOVE LS6 TO Q. DISPLAY Q.
+           MOVE 1 TO LS6. DISPLAY XLS6.
+           COMPUTE LS6 = LS6 - 1. DISPLAY XLS6.
+           MOVE LS6 TO Q. DISPLAY Q.
+           MOVE -1 TO LS6. DISPLAY XLS6.
+           COMPUTE LS6 = LS6 - 1. DISPLAY XLS6.
+           MOVE LS6 TO Q. DISPLAY Q.
+           MOVE 999999 TO LS6. DISPLAY XLS6.
+           COMPUTE LS6 = LS6 - 1. DISPLAY XLS6.
+           MOVE LS6 TO Q. DISPLAY Q.
+           MOVE -999999 TO LS6. DISPLAY XLS6.
+           COMPUTE LS6 = LS6 - 1. DISPLAY XLS6.
+           MOVE LS6 TO Q. DISPLAY Q.
+           MOVE 653403 TO LS6. DISPLAY XLS6.
+           COMPUTE LS6 = LS6 - 1. DISPLAY XLS6.
+           MOVE LS6 TO Q. DISPLAY Q.
+           MOVE -993329 TO LS6. DISPLAY XLS6.
+           COMPUTE LS6 = LS6 - 1. DISPLAY XLS6.
+           MOVE LS6 TO Q. DISPLAY Q.
+           MOVE -970385 TO LS6. DISPLAY XLS6.
+           COMPUTE LS6 = LS6 - 1. DISPLAY XLS6.
+           MOVE LS6 TO Q. DISPLAY Q.
+           MOVE 0 TO TS6. DISPLAY XTS6.
+           COMPUTE TS6 = TS6 - 1. DISPLAY XTS6.
+           MOVE TS6 TO Q. DISPLAY Q.
+           MOVE 1 TO TS6. DISPLAY XTS6.
+           COMPUTE TS6 = TS6 - 1. DISPLAY XTS6.
+           MOVE TS6 TO Q. DISPLAY Q.
+           MOVE -1 TO TS6. DISPLAY XTS6.
+           COMPUTE TS6 = TS6 - 1. DISPLAY XTS6.
+           MOVE TS6 TO Q. DISPLAY Q.
+           MOVE 999999 TO TS6. DISPLAY XTS6.
+           COMPUTE TS6 = TS6 - 1. DISPLAY XTS6.
+           MOVE TS6 TO Q. DISPLAY Q.
+           MOVE -999999 TO TS6. DISPLAY XTS6.
+           COMPUTE TS6 = TS6 - 1. DISPLAY XTS6.
+           MOVE TS6 TO Q. DISPLAY Q.
+           MOVE 653403 TO TS6. DISPLAY XTS6.
+           COMPUTE TS6 = TS6 - 1. DISPLAY XTS6.
+           MOVE TS6 TO Q. DISPLAY Q.
+           MOVE -993329 TO TS6. DISPLAY XTS6.
+           COMPUTE TS6 = TS6 - 1. DISPLAY XTS6.
+           MOVE TS6 TO Q. DISPLAY Q.
+           MOVE -970385 TO TS6. DISPLAY XTS6.
+           COMPUTE TS6 = TS6 - 1. DISPLAY XTS6.
+           MOVE TS6 TO Q. DISPLAY Q.
+           MOVE "      " TO XT6. MOVE T6 TO Q. DISPLAY Q.
+           MOVE "      " TO XL6. MOVE L6 TO Q. DISPLAY Q.
+           MOVE "      " TO XU6. MOVE U6 TO Q. DISPLAY Q.
+           MOVE "A11111" TO XT6. MOVE T6 TO Q. DISPLAY Q.
+           MOVE "A11111" TO XL6. MOVE L6 TO Q. DISPLAY Q.
+           MOVE "A11111" TO XU6. MOVE U6 TO Q. DISPLAY Q.
+           MOVE "11111p" TO XT6. MOVE T6 TO Q. DISPLAY Q.
+           MOVE "11111p" TO XL6. MOVE L6 TO Q. DISPLAY Q.
+           MOVE "11111p" TO XU6. MOVE U6 TO Q. DISPLAY Q.
+           MOVE "11111 " TO XT6. MOVE T6 TO Q. DISPLAY Q.
+           MOVE "11111 " TO XL6. MOVE L6 TO Q. DISPLAY Q.
+           MOVE "11111 " TO XU6. MOVE U6 TO Q. DISPLAY Q.
+           MOVE "}22222" TO XT6. MOVE T6 TO Q. DISPLAY Q.
+           MOVE "}22222" TO XL6. MOVE L6 TO Q. DISPLAY Q.
+           MOVE "}22222" TO XU6. MOVE U6 TO Q. DISPLAY Q.
+           MOVE 0 TO U7. DISPLAY XU7.
+           COMPUTE U7 = U7 - 1. DISPLAY XU7.
+           MOVE U7 TO Q. DISPLAY Q.
+           MOVE 1 TO U7. DISPLAY XU7.
+           COMPUTE U7 = U7 - 1. DISPLAY XU7.
+           MOVE U7 TO Q. DISPLAY Q.
+           MOVE -1 TO U7. DISPLAY XU7.
+           COMPUTE U7 = U7 - 1. DISPLAY XU7.
+           MOVE U7 TO Q. DISPLAY Q.
+           MOVE 9999999 TO U7. DISPLAY XU7.
+           COMPUTE U7 = U7 - 1. DISPLAY XU7.
+           MOVE U7 TO Q. DISPLAY Q.
+           MOVE -9999999 TO U7. DISPLAY XU7.
+           COMPUTE U7 = U7 - 1. DISPLAY XU7.
+           MOVE U7 TO Q. DISPLAY Q.
+           MOVE 2450261 TO U7. DISPLAY XU7.
+           COMPUTE U7 = U7 - 1. DISPLAY XU7.
+           MOVE U7 TO Q. DISPLAY Q.
+           MOVE 9641507 TO U7. DISPLAY XU7.
+           COMPUTE U7 = U7 - 1. DISPLAY XU7.
+           MOVE U7 TO Q. DISPLAY Q.
+           MOVE 4367710 TO U7. DISPLAY XU7.
+           COMPUTE U7 = U7 - 1. DISPLAY XU7.
+           MOVE U7 TO Q. DISPLAY Q.
+           MOVE 0 TO T7. DISPLAY XT7.
+           COMPUTE T7 = T7 - 1. DISPLAY XT7.
+           MOVE T7 TO Q. DISPLAY Q.
+           MOVE 1 TO T7. DISPLAY XT7.
+           COMPUTE T7 = T7 - 1. DISPLAY XT7.
+           MOVE T7 TO Q. DISPLAY Q.
+           MOVE -1 TO T7. DISPLAY XT7.
+           COMPUTE T7 = T7 - 1. DISPLAY XT7.
+           MOVE T7 TO Q. DISPLAY Q.
+           MOVE 9999999 TO T7. DISPLAY XT7.
+           COMPUTE T7 = T7 - 1. DISPLAY XT7.
+           MOVE T7 TO Q. DISPLAY Q.
+           MOVE -9999999 TO T7. DISPLAY XT7.
+           COMPUTE T7 = T7 - 1. DISPLAY XT7.
+           MOVE T7 TO Q. DISPLAY Q.
+           MOVE 2450261 TO T7. DISPLAY XT7.
+           COMPUTE T7 = T7 - 1. DISPLAY XT7.
+           MOVE T7 TO Q. DISPLAY Q.
+           MOVE 9641507 TO T7. DISPLAY XT7.
+           COMPUTE T7 = T7 - 1. DISPLAY XT7.
+           MOVE T7 TO Q. DISPLAY Q.
+           MOVE 4367710 TO T7. DISPLAY XT7.
+           COMPUTE T7 = T7 - 1. DISPLAY XT7.
+           MOVE T7 TO Q. DISPLAY Q.
+           MOVE 0 TO L7. DISPLAY XL7.
+           COMPUTE L7 = L7 - 1. DISPLAY XL7.
+           MOVE L7 TO Q. DISPLAY Q.
+           MOVE 1 TO L7. DISPLAY XL7.
+           COMPUTE L7 = L7 - 1. DISPLAY XL7.
+           MOVE L7 TO Q. DISPLAY Q.
+           MOVE -1 TO L7. DISPLAY XL7.
+           COMPUTE L7 = L7 - 1. DISPLAY XL7.
+           MOVE L7 TO Q. DISPLAY Q.
+           MOVE 9999999 TO L7. DISPLAY XL7.
+           COMPUTE L7 = L7 - 1. DISPLAY XL7.
+           MOVE L7 TO Q. DISPLAY Q.
+           MOVE -9999999 TO L7. DISPLAY XL7.
+           COMPUTE L7 = L7 - 1. DISPLAY XL7.
+           MOVE L7 TO Q. DISPLAY Q.
+           MOVE 2450261 TO L7. DISPLAY XL7.
+           COMPUTE L7 = L7 - 1. DISPLAY XL7.
+           MOVE L7 TO Q. DISPLAY Q.
+           MOVE 9641507 TO L7. DISPLAY XL7.
+           COMPUTE L7 = L7 - 1. DISPLAY XL7.
+           MOVE L7 TO Q. DISPLAY Q.
+           MOVE 4367710 TO L7. DISPLAY XL7.
+           COMPUTE L7 = L7 - 1. DISPLAY XL7.
+           MOVE L7 TO Q. DISPLAY Q.
+           MOVE 0 TO LS7. DISPLAY XLS7.
+           COMPUTE LS7 = LS7 - 1. DISPLAY XLS7.
+           MOVE LS7 TO Q. DISPLAY Q.
+           MOVE 1 TO LS7. DISPLAY XLS7.
+           COMPUTE LS7 = LS7 - 1. DISPLAY XLS7.
+           MOVE LS7 TO Q. DISPLAY Q.
+           MOVE -1 TO LS7. DISPLAY XLS7.
+           COMPUTE LS7 = LS7 - 1. DISPLAY XLS7.
+           MOVE LS7 TO Q. DISPLAY Q.
+           MOVE 9999999 TO LS7. DISPLAY XLS7.
+           COMPUTE LS7 = LS7 - 1. DISPLAY XLS7.
+           MOVE LS7 TO Q. DISPLAY Q.
+           MOVE -9999999 TO LS7. DISPLAY XLS7.
+           COMPUTE LS7 = LS7 - 1. DISPLAY XLS7.
+           MOVE LS7 TO Q. DISPLAY Q.
+           MOVE 2450261 TO LS7. DISPLAY XLS7.
+           COMPUTE LS7 = LS7 - 1. DISPLAY XLS7.
+           MOVE LS7 TO Q. DISPLAY Q.
+           MOVE 9641507 TO LS7. DISPLAY XLS7.
+           COMPUTE LS7 = LS7 - 1. DISPLAY XLS7.
+           MOVE LS7 TO Q. DISPLAY Q.
+           MOVE 4367710 TO LS7. DISPLAY XLS7.
+           COMPUTE LS7 = LS7 - 1. DISPLAY XLS7.
+           MOVE LS7 TO Q. DISPLAY Q.
+           MOVE 0 TO TS7. DISPLAY XTS7.
+           COMPUTE TS7 = TS7 - 1. DISPLAY XTS7.
+           MOVE TS7 TO Q. DISPLAY Q.
+           MOVE 1 TO TS7. DISPLAY XTS7.
+           COMPUTE TS7 = TS7 - 1. DISPLAY XTS7.
+           MOVE TS7 TO Q. DISPLAY Q.
+           MOVE -1 TO TS7. DISPLAY XTS7.
+           COMPUTE TS7 = TS7 - 1. DISPLAY XTS7.
+           MOVE TS7 TO Q. DISPLAY Q.
+           MOVE 9999999 TO TS7. DISPLAY XTS7.
+           COMPUTE TS7 = TS7 - 1. DISPLAY XTS7.
+           MOVE TS7 TO Q. DISPLAY Q.
+           MOVE -9999999 TO TS7. DISPLAY XTS7.
+           COMPUTE TS7 = TS7 - 1. DISPLAY XTS7.
+           MOVE TS7 TO Q. DISPLAY Q.
+           MOVE 2450261 TO TS7. DISPLAY XTS7.
+           COMPUTE TS7 = TS7 - 1. DISPLAY XTS7.
+           MOVE TS7 TO Q. DISPLAY Q.
+           MOVE 9641507 TO TS7. DISPLAY XTS7.
+           COMPUTE TS7 = TS7 - 1. DISPLAY XTS7.
+           MOVE TS7 TO Q. DISPLAY Q.
+           MOVE 4367710 TO TS7. DISPLAY XTS7.
+           COMPUTE TS7 = TS7 - 1. DISPLAY XTS7.
+           MOVE TS7 TO Q. DISPLAY Q.
+           MOVE "       " TO XT7. MOVE T7 TO Q. DISPLAY Q.
+           MOVE "       " TO XL7. MOVE L7 TO Q. DISPLAY Q.
+           MOVE "       " TO XU7. MOVE U7 TO Q. DISPLAY Q.
+           MOVE "A111111" TO XT7. MOVE T7 TO Q. DISPLAY Q.
+           MOVE "A111111" TO XL7. MOVE L7 TO Q. DISPLAY Q.
+           MOVE "A111111" TO XU7. MOVE U7 TO Q. DISPLAY Q.
+           MOVE "111111p" TO XT7. MOVE T7 TO Q. DISPLAY Q.
+           MOVE "111111p" TO XL7. MOVE L7 TO Q. DISPLAY Q.
+           MOVE "111111p" TO XU7. MOVE U7 TO Q. DISPLAY Q.
+           MOVE "111111 " TO XT7. MOVE T7 TO Q. DISPLAY Q.
+           MOVE "111111 " TO XL7. MOVE L7 TO Q. DISPLAY Q.
+           MOVE "111111 " TO XU7. MOVE U7 TO Q. DISPLAY Q.
+           MOVE "}222222" TO XT7. MOVE T7 TO Q. DISPLAY Q.
+           MOVE "}222222" TO XL7. MOVE L7 TO Q. DISPLAY Q.
+           MOVE "}222222" TO XU7. MOVE U7 TO Q. DISPLAY Q.
+           MOVE 0 TO U8. DISPLAY XU8.
+           COMPUTE U8 = U8 - 1. DISPLAY XU8.
+           MOVE U8 TO Q. DISPLAY Q.
+           MOVE 1 TO U8. DISPLAY XU8.
+           COMPUTE U8 = U8 - 1. DISPLAY XU8.
+           MOVE U8 TO Q. DISPLAY Q.
+           MOVE -1 TO U8. DISPLAY XU8.
+           COMPUTE U8 = U8 - 1. DISPLAY XU8.
+           MOVE U8 TO Q. DISPLAY Q.
+           MOVE 99999999 TO U8. DISPLAY XU8.
+           COMPUTE U8 = U8 - 1. DISPLAY XU8.
+           MOVE U8 TO Q. DISPLAY Q.
+           MOVE -99999999 TO U8. DISPLAY XU8.
+           COMPUTE U8 = U8 - 1. DISPLAY XU8.
+           MOVE U8 TO Q. DISPLAY Q.
+           MOVE -81406880 TO U8. DISPLAY XU8.
+           COMPUTE U8 = U8 - 1. DISPLAY XU8.
+           MOVE U8 TO Q. DISPLAY Q.
+           MOVE -61097769 TO U8. DISPLAY XU8.
+           COMPUTE U8 = U8 - 1. DISPLAY XU8.
+           MOVE U8 TO Q. DISPLAY Q.
+           MOVE -37655136 TO U8. DISPLAY XU8.
+           COMPUTE U8 = U8 - 1. DISPLAY XU8.
+           MOVE U8 TO Q. DISPLAY Q.
+           MOVE 0 TO T8. DISPLAY XT8.
+           COMPUTE T8 = T8 - 1. DISPLAY XT8.
+           MOVE T8 TO Q. DISPLAY Q.
+           MOVE 1 TO T8. DISPLAY XT8.
+           COMPUTE T8 = T8 - 1. DISPLAY XT8.
+           MOVE T8 TO Q. DISPLAY Q.
+           MOVE -1 TO T8. DISPLAY XT8.
+           COMPUTE T8 = T8 - 1. DISPLAY XT8.
+           MOVE T8 TO Q. DISPLAY Q.
+           MOVE 99999999 TO T8. DISPLAY XT8.
+           COMPUTE T8 = T8 - 1. DISPLAY XT8.
+           MOVE T8 TO Q. DISPLAY Q.
+           MOVE -99999999 TO T8. DISPLAY XT8.
+           COMPUTE T8 = T8 - 1. DISPLAY XT8.
+           MOVE T8 TO Q. DISPLAY Q.
+           MOVE -81406880 TO T8. DISPLAY XT8.
+           COMPUTE T8 = T8 - 1. DISPLAY XT8.
+           MOVE T8 TO Q. DISPLAY Q.
+           MOVE -61097769 TO T8. DISPLAY XT8.
+           COMPUTE T8 = T8 - 1. DISPLAY XT8.
+           MOVE T8 TO Q. DISPLAY Q.
+           MOVE -37655136 TO T8. DISPLAY XT8.
+           COMPUTE T8 = T8 - 1. DISPLAY XT8.
+           MOVE T8 TO Q. DISPLAY Q.
+           MOVE 0 TO L8. DISPLAY XL8.
+           COMPUTE L8 = L8 - 1. DISPLAY XL8.
+           MOVE L8 TO Q. DISPLAY Q.
+           MOVE 1 TO L8. DISPLAY XL8.
+           COMPUTE L8 = L8 - 1. DISPLAY XL8.
+           MOVE L8 TO Q. DISPLAY Q.
+           MOVE -1 TO L8. DISPLAY XL8.
+           COMPUTE L8 = L8 - 1. DISPLAY XL8.
+           MOVE L8 TO Q. DISPLAY Q.
+           MOVE 99999999 TO L8. DISPLAY XL8.
+           COMPUTE L8 = L8 - 1. DISPLAY XL8.
+           MOVE L8 TO Q. DISPLAY Q.
+           MOVE -99999999 TO L8. DISPLAY XL8.
+           COMPUTE L8 = L8 - 1. DISPLAY XL8.
+           MOVE L8 TO Q. DISPLAY Q.
+           MOVE -81406880 TO L8. DISPLAY XL8.
+           COMPUTE L8 = L8 - 1. DISPLAY XL8.
+           MOVE L8 TO Q. DISPLAY Q.
+           MOVE -61097769 TO L8. DISPLAY XL8.
+           COMPUTE L8 = L8 - 1. DISPLAY XL8.
+           MOVE L8 TO Q. DISPLAY Q.
+           MOVE -37655136 TO L8. DISPLAY XL8.
+           COMPUTE L8 = L8 - 1. DISPLAY XL8.
+           MOVE L8 TO Q. DISPLAY Q.
+           MOVE 0 TO LS8. DISPLAY XLS8.
+           COMPUTE LS8 = LS8 - 1. DISPLAY XLS8.
+           MOVE LS8 TO Q. DISPLAY Q.
+           MOVE 1 TO LS8. DISPLAY XLS8.
+           COMPUTE LS8 = LS8 - 1. DISPLAY XLS8.
+           MOVE LS8 TO Q. DISPLAY Q.
+           MOVE -1 TO LS8. DISPLAY XLS8.
+           COMPUTE LS8 = LS8 - 1. DISPLAY XLS8.
+           MOVE LS8 TO Q. DISPLAY Q.
+           MOVE 99999999 TO LS8. DISPLAY XLS8.
+           COMPUTE LS8 = LS8 - 1. DISPLAY XLS8.
+           MOVE LS8 TO Q. DISPLAY Q.
+           MOVE -99999999 TO LS8. DISPLAY XLS8.
+           COMPUTE LS8 = LS8 - 1. DISPLAY XLS8.
+           MOVE LS8 TO Q. DISPLAY Q.
+           MOVE -81406880 TO LS8. DISPLAY XLS8.
+           COMPUTE LS8 = LS8 - 1. DISPLAY XLS8.
+           MOVE LS8 TO Q. DISPLAY Q.
+           MOVE -61097769 TO LS8. DISPLAY XLS8.
+           COMPUTE LS8 = LS8 - 1. DISPLAY XLS8.
+           MOVE LS8 TO Q. DISPLAY Q.
+           MOVE -37655136 TO LS8. DISPLAY XLS8.
+           COMPUTE LS8 = LS8 - 1. DISPLAY XLS8.
+           MOVE LS8 TO Q. DISPLAY Q.
+           MOVE 0 TO TS8. DISPLAY XTS8.
+           COMPUTE TS8 = TS8 - 1. DISPLAY XTS8.
+           MOVE TS8 TO Q. DISPLAY Q.
+           MOVE 1 TO TS8. DISPLAY XTS8.
+           COMPUTE TS8 = TS8 - 1. DISPLAY XTS8.
+           MOVE TS8 TO Q. DISPLAY Q.
+           MOVE -1 TO TS8. DISPLAY XTS8.
+           COMPUTE TS8 = TS8 - 1. DISPLAY XTS8.
+           MOVE TS8 TO Q. DISPLAY Q.
+           MOVE 99999999 TO TS8. DISPLAY XTS8.
+           COMPUTE TS8 = TS8 - 1. DISPLAY XTS8.
+           MOVE TS8 TO Q. DISPLAY Q.
+           MOVE -99999999 TO TS8. DISPLAY XTS8.
+           COMPUTE TS8 = TS8 - 1. DISPLAY XTS8.
+           MOVE TS8 TO Q. DISPLAY Q.
+           MOVE -81406880 TO TS8. DISPLAY XTS8.
+           COMPUTE TS8 = TS8 - 1. DISPLAY XTS8.
+           MOVE TS8 TO Q. DISPLAY Q.
+           MOVE -61097769 TO TS8. DISPLAY XTS8.
+           COMPUTE TS8 = TS8 - 1. DISPLAY XTS8.
+           MOVE TS8 TO Q. DISPLAY Q.
+           MOVE -37655136 TO TS8. DISPLAY XTS8.
+           COMPUTE TS8 = TS8 - 1. DISPLAY XTS8.
+           MOVE TS8 TO Q. DISPLAY Q.
+           MOVE "        " TO XT8. MOVE T8 TO Q. DISPLAY Q.
+           MOVE "        " TO XL8. MOVE L8 TO Q. DISPLAY Q.
+           MOVE "        " TO XU8. MOVE U8 TO Q. DISPLAY Q.
+           MOVE "A1111111" TO XT8. MOVE T8 TO Q. DISPLAY Q.
+           MOVE "A1111111" TO XL8. MOVE L8 TO Q. DISPLAY Q.
+           MOVE "A1111111" TO XU8. MOVE U8 TO Q. DISPLAY Q.
+           MOVE "1111111p" TO XT8. MOVE T8 TO Q. DISPLAY Q.
+           MOVE "1111111p" TO XL8. MOVE L8 TO Q. DISPLAY Q.
+           MOVE "1111111p" TO XU8. MOVE U8 TO Q. DISPLAY Q.
+           MOVE "1111111 " TO XT8. MOVE T8 TO Q. DISPLAY Q.
+           MOVE "1111111 " TO XL8. MOVE L8 TO Q. DISPLAY Q.
+           MOVE "1111111 " TO XU8. MOVE U8 TO Q. DISPLAY Q.
+           MOVE "}2222222" TO XT8. MOVE T8 TO Q. DISPLAY Q.
+           MOVE "}2222222" TO XL8. MOVE L8 TO Q. DISPLAY Q.
+           MOVE "}2222222" TO XU8. MOVE U8 TO Q. DISPLAY Q.
+           MOVE 0 TO U9. DISPLAY XU9.
+           COMPUTE U9 = U9 - 1. DISPLAY XU9.
+           MOVE U9 TO Q. DISPLAY Q.
+           MOVE 1 TO U9. DISPLAY XU9.
+           COMPUTE U9 = U9 - 1. DISPLAY XU9.
+           MOVE U9 TO Q. DISPLAY Q.
+           MOVE -1 TO U9. DISPLAY XU9.
+           COMPUTE U9 = U9 - 1. DISPLAY XU9.
+           MOVE U9 TO Q. DISPLAY Q.
+           MOVE 999999999 TO U9. DISPLAY XU9.
+           COMPUTE U9 = U9 - 1. DISPLAY XU9.
+           MOVE U9 TO Q. DISPLAY Q.
+           MOVE -999999999 TO U9. DISPLAY XU9.
+           COMPUTE U9 = U9 - 1. DISPLAY XU9.
+           MOVE U9 TO Q. DISPLAY Q.
+           MOVE 978895472 TO U9. DISPLAY XU9.
+           COMPUTE U9 = U9 - 1. DISPLAY XU9.
+           MOVE U9 TO Q. DISPLAY Q.
+           MOVE -500291398 TO U9. DISPLAY XU9.
+           COMPUTE U9 = U9 - 1. DISPLAY XU9.
+           MOVE U9 TO Q. DISPLAY Q.
+           MOVE 490178685 TO U9. DISPLAY XU9.
+           COMPUTE U9 = U9 - 1. DISPLAY XU9.
+           MOVE U9 TO Q. DISPLAY Q.
+           MOVE 0 TO T9. DISPLAY XT9.
+           COMPUTE T9 = T9 - 1. DISPLAY XT9.
+           MOVE T9 TO Q. DISPLAY Q.
+           MOVE 1 TO T9. DISPLAY XT9.
+           COMPUTE T9 = T9 - 1. DISPLAY XT9.
+           MOVE T9 TO Q. DISPLAY Q.
+           MOVE -1 TO T9. DISPLAY XT9.
+           COMPUTE T9 = T9 - 1. DISPLAY XT9.
+           MOVE T9 TO Q. DISPLAY Q.
+           MOVE 999999999 TO T9. DISPLAY XT9.
+           COMPUTE T9 = T9 - 1. DISPLAY XT9.
+           MOVE T9 TO Q. DISPLAY Q.
+           MOVE -999999999 TO T9. DISPLAY XT9.
+           COMPUTE T9 = T9 - 1. DISPLAY XT9.
+           MOVE T9 TO Q. DISPLAY Q.
+           MOVE 978895472 TO T9. DISPLAY XT9.
+           COMPUTE T9 = T9 - 1. DISPLAY XT9.
+           MOVE T9 TO Q. DISPLAY Q.
+           MOVE -500291398 TO T9. DISPLAY XT9.
+           COMPUTE T9 = T9 - 1. DISPLAY XT9.
+           MOVE T9 TO Q. DISPLAY Q.
+           MOVE 490178685 TO T9. DISPLAY XT9.
+           COMPUTE T9 = T9 - 1. DISPLAY XT9.
+           MOVE T9 TO Q. DISPLAY Q.
+           MOVE 0 TO L9. DISPLAY XL9.
+           COMPUTE L9 = L9 - 1. DISPLAY XL9.
+           MOVE L9 TO Q. DISPLAY Q.
+           MOVE 1 TO L9. DISPLAY XL9.
+           COMPUTE L9 = L9 - 1. DISPLAY XL9.
+           MOVE L9 TO Q. DISPLAY Q.
+           MOVE -1 TO L9. DISPLAY XL9.
+           COMPUTE L9 = L9 - 1. DISPLAY XL9.
+           MOVE L9 TO Q. DISPLAY Q.
+           MOVE 999999999 TO L9. DISPLAY XL9.
+           COMPUTE L9 = L9 - 1. DISPLAY XL9.
+           MOVE L9 TO Q. DISPLAY Q.
+           MOVE -999999999 TO L9. DISPLAY XL9.
+           COMPUTE L9 = L9 - 1. DISPLAY XL9.
+           MOVE L9 TO Q. DISPLAY Q.
+           MOVE 978895472 TO L9. DISPLAY XL9.
+           COMPUTE L9 = L9 - 1. DISPLAY XL9.
+           MOVE L9 TO Q. DISPLAY Q.
+           MOVE -500291398 TO L9. DISPLAY XL9.
+           COMPUTE L9 = L9 - 1. DISPLAY XL9.
+           MOVE L9 TO Q. DISPLAY Q.
+           MOVE 490178685 TO L9. DISPLAY XL9.
+           COMPUTE L9 = L9 - 1. DISPLAY XL9.
+           MOVE L9 TO Q. DISPLAY Q.
+           MOVE 0 TO LS9. DISPLAY XLS9.
+           COMPUTE LS9 = LS9 - 1. DISPLAY XLS9.
+           MOVE LS9 TO Q. DISPLAY Q.
+           MOVE 1 TO LS9. DISPLAY XLS9.
+           COMPUTE LS9 = LS9 - 1. DISPLAY XLS9.
+           MOVE LS9 TO Q. DISPLAY Q.
+           MOVE -1 TO LS9. DISPLAY XLS9.
+           COMPUTE LS9 = LS9 - 1. DISPLAY XLS9.
+           MOVE LS9 TO Q. DISPLAY Q.
+           MOVE 999999999 TO LS9. DISPLAY XLS9.
+           COMPUTE LS9 = LS9 - 1. DISPLAY XLS9.
+           MOVE LS9 TO Q. DISPLAY Q.
+           MOVE -999999999 TO LS9. DISPLAY XLS9.
+           COMPUTE LS9 = LS9 - 1. DISPLAY XLS9.
+           MOVE LS9 TO Q. DISPLAY Q.
+           MOVE 978895472 TO LS9. DISPLAY XLS9.
+           COMPUTE LS9 = LS9 - 1. DISPLAY XLS9.
+           MOVE LS9 TO Q. DISPLAY Q.
+           MOVE -500291398 TO LS9. DISPLAY XLS9.
+           COMPUTE LS9 = LS9 - 1. DISPLAY XLS9.
+           MOVE LS9 TO Q. DISPLAY Q.
+           MOVE 490178685 TO LS9. DISPLAY XLS9.
+           COMPUTE LS9 = LS9 - 1. DISPLAY XLS9.
+           MOVE LS9 TO Q. DISPLAY Q.
+           MOVE 0 TO TS9. DISPLAY XTS9.
+           COMPUTE TS9 = TS9 - 1. DISPLAY XTS9.
+           MOVE TS9 TO Q. DISPLAY Q.
+           MOVE 1 TO TS9. DISPLAY XTS9.
+           COMPUTE TS9 = TS9 - 1. DISPLAY XTS9.
+           MOVE TS9 TO Q. DISPLAY Q.
+           MOVE -1 TO TS9. DISPLAY XTS9.
+           COMPUTE TS9 = TS9 - 1. DISPLAY XTS9.
+           MOVE TS9 TO Q. DISPLAY Q.
+           MOVE 999999999 TO TS9. DISPLAY XTS9.
+           COMPUTE TS9 = TS9 - 1. DISPLAY XTS9.
+           MOVE TS9 TO Q. DISPLAY Q.
+           MOVE -999999999 TO TS9. DISPLAY XTS9.
+           COMPUTE TS9 = TS9 - 1. DISPLAY XTS9.
+           MOVE TS9 TO Q. DISPLAY Q.
+           MOVE 978895472 TO TS9. DISPLAY XTS9.
+           COMPUTE TS9 = TS9 - 1. DISPLAY XTS9.
+           MOVE TS9 TO Q. DISPLAY Q.
+           MOVE -500291398 TO TS9. DISPLAY XTS9.
+           COMPUTE TS9 = TS9 - 1. DISPLAY XTS9.
+           MOVE TS9 TO Q. DISPLAY Q.
+           MOVE 490178685 TO TS9. DISPLAY XTS9.
+           COMPUTE TS9 = TS9 - 1. DISPLAY XTS9.
+           MOVE TS9 TO Q. DISPLAY Q.
+           MOVE "         " TO XT9. MOVE T9 TO Q. DISPLAY Q.
+           MOVE "         " TO XL9. MOVE L9 TO Q. DISPLAY Q.
+           MOVE "         " TO XU9. MOVE U9 TO Q. DISPLAY Q.
+           MOVE "A11111111" TO XT9. MOVE T9 TO Q. DISPLAY Q.
+           MOVE "A11111111" TO XL9. MOVE L9 TO Q. DISPLAY Q.
+           MOVE "A11111111" TO XU9. MOVE U9 TO Q. DISPLAY Q.
+           MOVE "11111111p" TO XT9. MOVE T9 TO Q. DISPLAY Q.
+           MOVE "11111111p" TO XL9. MOVE L9 TO Q. DISPLAY Q.
+           MOVE "11111111p" TO XU9. MOVE U9 TO Q. DISPLAY Q.
+           MOVE "11111111 " TO XT9. MOVE T9 TO Q. DISPLAY Q.
+           MOVE "11111111 " TO XL9. MOVE L9 TO Q. DISPLAY Q.
+           MOVE "11111111 " TO XU9. MOVE U9 TO Q. DISPLAY Q.
+           MOVE "}22222222" TO XT9. MOVE T9 TO Q. DISPLAY Q.
+           MOVE "}22222222" TO XL9. MOVE L9 TO Q. DISPLAY Q.
+           MOVE "}22222222" TO XU9. MOVE U9 TO Q. DISPLAY Q.
+           MOVE 0 TO U10. DISPLAY XU10.
+           COMPUTE U10 = U10 - 1. DISPLAY XU10.
+           MOVE U10 TO Q. DISPLAY Q.
+           MOVE 1 TO U10. DISPLAY XU10.
+           COMPUTE U10 = U10 - 1. DISPLAY XU10.
+           MOVE U10 TO Q. DISPLAY Q.
+           MOVE -1 TO U10. DISPLAY XU10.
+           COMPUTE U10 = U10 - 1. DISPLAY XU10.
+           MOVE U10 TO Q. DISPLAY Q.
+           MOVE 9999999999 TO U10. DISPLAY XU10.
+           COMPUTE U10 = U10 - 1. DISPLAY XU10.
+           MOVE U10 TO Q. DISPLAY Q.
+           MOVE -9999999999 TO U10. DISPLAY XU10.
+           COMPUTE U10 = U10 - 1. DISPLAY XU10.
+           MOVE U10 TO Q. DISPLAY Q.
+           MOVE 3066731123 TO U10. DISPLAY XU10.
+           COMPUTE U10 = U10 - 1. DISPLAY XU10.
+           MOVE U10 TO Q. DISPLAY Q.
+           MOVE 6643168022 TO U10. DISPLAY XU10.
+           COMPUTE U10 = U10 - 1. DISPLAY XU10.
+           MOVE U10 TO Q. DISPLAY Q.
+           MOVE 5530129690 TO U10. DISPLAY XU10.
+           COMPUTE U10 = U10 - 1. DISPLAY XU10.
+           MOVE U10 TO Q. DISPLAY Q.
+           MOVE 0 TO T10. DISPLAY XT10.
+           COMPUTE T10 = T10 - 1. DISPLAY XT10.
+           MOVE T10 TO Q. DISPLAY Q.
+           MOVE 1 TO T10. DISPLAY XT10.
+           COMPUTE T10 = T10 - 1. DISPLAY XT10.
+           MOVE T10 TO Q. DISPLAY Q.
+           MOVE -1 TO T10. DISPLAY XT10.
+           COMPUTE T10 = T10 - 1. DISPLAY XT10.
+           MOVE T10 TO Q. DISPLAY Q.
+           MOVE 9999999999 TO T10. DISPLAY XT10.
+           COMPUTE T10 = T10 - 1. DISPLAY XT10.
+           MOVE T10 TO Q. DISPLAY Q.
+           MOVE -9999999999 TO T10. DISPLAY XT10.
+           COMPUTE T10 = T10 - 1. DISPLAY XT10.
+           MOVE T10 TO Q. DISPLAY Q.
+           MOVE 3066731123 TO T10. DISPLAY XT10.
+           COMPUTE T10 = T10 - 1. DISPLAY XT10.
+           MOVE T10 TO Q. DISPLAY Q.
+           MOVE 6643168022 TO T10. DISPLAY XT10.
+           COMPUTE T10 = T10 - 1. DISPLAY XT10.
+           MOVE T10 TO Q. DISPLAY Q.
+           MOVE 5530129690 TO T10. DISPLAY XT10.
+           COMPUTE T10 = T10 - 1. DISPLAY XT10.
+           MOVE T10 TO Q. DISPLAY Q.
+           MOVE 0 TO L10. DISPLAY XL10.
+           COMPUTE L10 = L10 - 1. DISPLAY XL10.
+           MOVE L10 TO Q. DISPLAY Q.
+           MOVE 1 TO L10. DISPLAY XL10.
+           COMPUTE L10 = L10 - 1. DISPLAY XL10.
+           MOVE L10 TO Q. DISPLAY Q.
+           MOVE -1 TO L10. DISPLAY XL10.
+           COMPUTE L10 = L10 - 1. DISPLAY XL10.
+           MOVE L10 TO Q. DISPLAY Q.
+           MOVE 9999999999 TO L10. DISPLAY XL10.
+           COMPUTE L10 = L10 - 1. DISPLAY XL10.
+           MOVE L10 TO Q. DISPLAY Q.
+           MOVE -9999999999 TO L10. DISPLAY XL10.
+           COMPUTE L10 = L10 - 1. DISPLAY XL10.
+           MOVE L10 TO Q. DISPLAY Q.
+           MOVE 3066731123 TO L10. DISPLAY XL10.
+           COMPUTE L10 = L10 - 1. DISPLAY XL10.
+           MOVE L10 TO Q. DISPLAY Q.
+           MOVE 6643168022 TO L10. DISPLAY XL10.
+           COMPUTE L10 = L10 - 1. DISPLAY XL10.
+           MOVE L10 TO Q. DISPLAY Q.
+           MOVE 5530129690 TO L10. DISPLAY XL10.
+           COMPUTE L10 = L10 - 1. DISPLAY XL10.
+           MOVE L10 TO Q. DISPLAY Q.
+           MOVE 0 TO LS10. DISPLAY XLS10.
+           COMPUTE LS10 = LS10 - 1. DISPLAY XLS10.
+           MOVE LS10 TO Q. DISPLAY Q.
+           MOVE 1 TO LS10. DISPLAY XLS10.
+           COMPUTE LS10 = LS10 - 1. DISPLAY XLS10.
+           MOVE LS10 TO Q. DISPLAY Q.
+           MOVE -1 TO LS10. DISPLAY XLS10.
+           COMPUTE LS10 = LS10 - 1. DISPLAY XLS10.
+           MOVE LS10 TO Q. DISPLAY Q.
+           MOVE 9999999999 TO LS10. DISPLAY XLS10.
+           COMPUTE LS10 = LS10 - 1. DISPLAY XLS10.
+           MOVE LS10 TO Q. DISPLAY Q.
+           MOVE -9999999999 TO LS10. DISPLAY XLS10.
+           COMPUTE LS10 = LS10 - 1. DISPLAY XLS10.
+           MOVE LS10 TO Q. DISPLAY Q.
+           MOVE 3066731123 TO LS10. DISPLAY XLS10.
+           COMPUTE LS10 = LS10 - 1. DISPLAY XLS10.
+           MOVE LS10 TO Q. DISPLAY Q.
+           MOVE 6643168022 TO LS10. DISPLAY XLS10.
+           COMPUTE LS10 = LS10 - 1. DISPLAY XLS10.
+           MOVE LS10 TO Q. DISPLAY Q.
+           MOVE 5530129690 TO LS10. DISPLAY XLS10.
+           COMPUTE LS10 = LS10 - 1. DISPLAY XLS10.
+           MOVE LS10 TO Q. DISPLAY Q.
+           MOVE 0 TO TS10. DISPLAY XTS10.
+           COMPUTE TS10 = TS10 - 1. DISPLAY XTS10.
+           MOVE TS10 TO Q. DISPLAY Q.
+           MOVE 1 TO TS10. DISPLAY XTS10.
+           COMPUTE TS10 = TS10 - 1. DISPLAY XTS10.
+           MOVE TS10 TO Q. DISPLAY Q.
+           MOVE -1 TO TS10. DISPLAY XTS10.
+           COMPUTE TS10 = TS10 - 1. DISPLAY XTS10.
+           MOVE TS10 TO Q. DISPLAY Q.
+           MOVE 9999999999 TO TS10. DISPLAY XTS10.
+           COMPUTE TS10 = TS10 - 1. DISPLAY XTS10.
+           MOVE TS10 TO Q. DISPLAY Q.
+           MOVE -9999999999 TO TS10. DISPLAY XTS10.
+           COMPUTE TS10 = TS10 - 1. DISPLAY XTS10.
+           MOVE TS10 TO Q. DISPLAY Q.
+           MOVE 3066731123 TO TS10. DISPLAY XTS10.
+           COMPUTE TS10 = TS10 - 1. DISPLAY XTS10.
+           MOVE TS10 TO Q. DISPLAY Q.
+           MOVE 6643168022 TO TS10. DISPLAY XTS10.
+           COMPUTE TS10 = TS10 - 1. DISPLAY XTS10.
+           MOVE TS10 TO Q. DISPLAY Q.
+           MOVE 5530129690 TO TS10. DISPLAY XTS10.
+           COMPUTE TS10 = TS10 - 1. DISPLAY XTS10.
+           MOVE TS10 TO Q. DISPLAY Q.
+           MOVE "          " TO XT10. MOVE T10 TO Q. DISPLAY Q.
+           MOVE "          " TO XL10. MOVE L10 TO Q. DISPLAY Q.
+           MOVE "          " TO XU10. MOVE U10 TO Q. DISPLAY Q.
+           MOVE "A111111111" TO XT10. MOVE T10 TO Q. DISPLAY Q.
+           MOVE "A111111111" TO XL10. MOVE L10 TO Q. DISPLAY Q.
+           MOVE "A111111111" TO XU10. MOVE U10 TO Q. DISPLAY Q.
+           MOVE "111111111p" TO XT10. MOVE T10 TO Q. DISPLAY Q.
+           MOVE "111111111p" TO XL10. MOVE L10 TO Q. DISPLAY Q.
+           MOVE "111111111p" TO XU10. MOVE U10 TO Q. DISPLAY Q.
+           MOVE "111111111 " TO XT10. MOVE T10 TO Q. DISPLAY Q.
+           MOVE "111111111 " TO XL10. MOVE L10 TO Q. DISPLAY Q.
+           MOVE "111111111 " TO XU10. MOVE U10 TO Q. DISPLAY Q.
+           MOVE "}222222222" TO XT10. MOVE T10 TO Q. DISPLAY Q.
+           MOVE "}222222222" TO XL10. MOVE L10 TO Q. DISPLAY Q.
+           MOVE "}222222222" TO XU10. MOVE U10 TO Q. DISPLAY Q.
+           MOVE 0 TO U11. DISPLAY XU11.
+           COMPUTE U11 = U11 - 1. DISPLAY XU11.
+           MOVE U11 TO Q. DISPLAY Q.
+           MOVE 1 TO U11. DISPLAY XU11.
+           COMPUTE U11 = U11 - 1. DISPLAY XU11.
+           MOVE U11 TO Q. DISPLAY Q.
+           MOVE -1 TO U11. DISPLAY XU11.
+           COMPUTE U11 = U11 - 1. DISPLAY XU11.
+           MOVE U11 TO Q. DISPLAY Q.
+           MOVE 99999999999 TO U11. DISPLAY XU11.
+           COMPUTE U11 = U11 - 1. DISPLAY XU11.
+           MOVE U11 TO Q. DISPLAY Q.
+           MOVE -99999999999 TO U11. DISPLAY XU11.
+           COMPUTE U11 = U11 - 1. DISPLAY XU11.
+           MOVE U11 TO Q. DISPLAY Q.
+           MOVE 47441628854 TO U11. DISPLAY XU11.
+           COMPUTE U11 = U11 - 1. DISPLAY XU11.
+           MOVE U11 TO Q. DISPLAY Q.
+           MOVE 91115531959 TO U11. DISPLAY XU11.
+           COMPUTE U11 = U11 - 1. DISPLAY XU11.
+           MOVE U11 TO Q. DISPLAY Q.
+           MOVE 76591058472 TO U11. DISPLAY XU11.
+           COMPUTE U11 = U11 - 1. DISPLAY XU11.
+           MOVE U11 TO Q. DISPLAY Q.
+           MOVE 0 TO T11. DISPLAY XT11.
+           COMPUTE T11 = T11 - 1. DISPLAY XT11.
+           MOVE T11 TO Q. DISPLAY Q.
+           MOVE 1 TO T11. DISPLAY XT11.
+           COMPUTE T11 = T11 - 1. DISPLAY XT11.
+           MOVE T11 TO Q. DISPLAY Q.
+           MOVE -1 TO T11. DISPLAY XT11.
+           COMPUTE T11 = T11 - 1. DISPLAY XT11.
+           MOVE T11 TO Q. DISPLAY Q.
+           MOVE 99999999999 TO T11. DISPLAY XT11.
+           COMPUTE T11 = T11 - 1. DISPLAY XT11.
+           MOVE T11 TO Q. DISPLAY Q.
+           MOVE -99999999999 TO T11. DISPLAY XT11.
+           COMPUTE T11 = T11 - 1. DISPLAY XT11.
+           MOVE T11 TO Q. DISPLAY Q.
+           MOVE 47441628854 TO T11. DISPLAY XT11.
+           COMPUTE T11 = T11 - 1. DISPLAY XT11.
+           MOVE T11 TO Q. DISPLAY Q.
+           MOVE 91115531959 TO T11. DISPLAY XT11.
+           COMPUTE T11 = T11 - 1. DISPLAY XT11.
+           MOVE T11 TO Q. DISPLAY Q.
+           MOVE 76591058472 TO T11. DISPLAY XT11.
+           COMPUTE T11 = T11 - 1. DISPLAY XT11.
+           MOVE T11 TO Q. DISPLAY Q.
+           MOVE 0 TO L11. DISPLAY XL11.
+           COMPUTE L11 = L11 - 1. DISPLAY XL11.
+           MOVE L11 TO Q. DISPLAY Q.
+           MOVE 1 TO L11. DISPLAY XL11.
+           COMPUTE L11 = L11 - 1. DISPLAY XL11.
+           MOVE L11 TO Q. DISPLAY Q.
+           MOVE -1 TO L11. DISPLAY XL11.
+           COMPUTE L11 = L11 - 1. DISPLAY XL11.
+           MOVE L11 TO Q. DISPLAY Q.
+           MOVE 99999999999 TO L11. DISPLAY XL11.
+           COMPUTE L11 = L11 - 1. DISPLAY XL11.
+           MOVE L11 TO Q. DISPLAY Q.
+           MOVE -99999999999 TO L11. DISPLAY XL11.
+           COMPUTE L11 = L11 - 1. DISPLAY XL11.
+           MOVE L11 TO Q. DISPLAY Q.
+           MOVE 47441628854 TO L11. DISPLAY XL11.
+           COMPUTE L11 = L11 - 1. DISPLAY XL11.
+           MOVE L11 TO Q. DISPLAY Q.
+           MOVE 91115531959 TO L11. DISPLAY XL11.
+           COMPUTE L11 = L11 - 1. DISPLAY XL11.
+           MOVE L11 TO Q. DISPLAY Q.
+           MOVE 76591058472 TO L11. DISPLAY XL11.
+           COMPUTE L11 = L11 - 1. DISPLAY XL11.
+           MOVE L11 TO Q. DISPLAY Q.
+           MOVE 0 TO LS11. DISPLAY XLS11.
+           COMPUTE LS11 = LS11 - 1. DISPLAY XLS11.
+           MOVE LS11 TO Q. DISPLAY Q.
+           MOVE 1 TO LS11. DISPLAY XLS11.
+           COMPUTE LS11 = LS11 - 1. DISPLAY XLS11.
+           MOVE LS11 TO Q. DISPLAY Q.
+           MOVE -1 TO LS11. DISPLAY XLS11.
+           COMPUTE LS11 = LS11 - 1. DISPLAY XLS11.
+           MOVE LS11 TO Q. DISPLAY Q.
+           MOVE 99999999999 TO LS11. DISPLAY XLS11.
+           COMPUTE LS11 = LS11 - 1. DISPLAY XLS11.
+           MOVE LS11 TO Q. DISPLAY Q.
+           MOVE -99999999999 TO LS11. DISPLAY XLS11.
+           COMPUTE LS11 = LS11 - 1. DISPLAY XLS11.
+           MOVE LS11 TO Q. DISPLAY Q.
+           MOVE 47441628854 TO LS11. DISPLAY XLS11.
+           COMPUTE LS11 = LS11 - 1. DISPLAY XLS11.
+           MOVE LS11 TO Q. DISPLAY Q.
+           MOVE 91115531959 TO LS11. DISPLAY XLS11.
+           COMPUTE LS11 = LS11 - 1. DISPLAY XLS11.
+           MOVE LS11 TO Q. DISPLAY Q.
+           MOVE 76591058472 TO LS11. DISPLAY XLS11.
+           COMPUTE LS11 = LS11 - 1. DISPLAY XLS11.
+           MOVE LS11 TO Q. DISPLAY Q.
+           MOVE 0 TO TS11. DISPLAY XTS11.
+           COMPUTE TS11 = TS11 - 1. DISPLAY XTS11.
+           MOVE TS11 TO Q. DISPLAY Q.
+           MOVE 1 TO TS11. DISPLAY XTS11.
+           COMPUTE TS11 = TS11 - 1. DISPLAY XTS11.
+           MOVE TS11 TO Q. DISPLAY Q.
+           MOVE -1 TO TS11. DISPLAY XTS11.
+           COMPUTE TS11 = TS11 - 1. DISPLAY XTS11.
+           MOVE TS11 TO Q. DISPLAY Q.
+           MOVE 99999999999 TO TS11. DISPLAY XTS11.
+           COMPUTE TS11 = TS11 - 1. DISPLAY XTS11.
+           MOVE TS11 TO Q. DISPLAY Q.
+           MOVE -99999999999 TO TS11. DISPLAY XTS11.
+           COMPUTE TS11 = TS11 - 1. DISPLAY XTS11.
+           MOVE TS11 TO Q. DISPLAY Q.
+           MOVE 47441628854 TO TS11. DISPLAY XTS11.
+           COMPUTE TS11 = TS11 - 1. DISPLAY XTS11.
+           MOVE TS11 TO Q. DISPLAY Q.
+           MOVE 91115531959 TO TS11. DISPLAY XTS11.
+           COMPUTE TS11 = TS11 - 1. DISPLAY XTS11.
+           MOVE TS11 TO Q. DISPLAY Q.
+           MOVE 76591058472 TO TS11. DISPLAY XTS11.
+           COMPUTE TS11 = TS11 - 1. DISPLAY XTS11.
+           MOVE TS11 TO Q. DISPLAY Q.
+           MOVE "           " TO XT11. MOVE T11 TO Q. DISPLAY Q.
+           MOVE "           " TO XL11. MOVE L11 TO Q. DISPLAY Q.
+           MOVE "           " TO XU11. MOVE U11 TO Q. DISPLAY Q.
+           MOVE "A1111111111" TO XT11. MOVE T11 TO Q. DISPLAY Q.
+           MOVE "A1111111111" TO XL11. MOVE L11 TO Q. DISPLAY Q.
+           MOVE "A1111111111" TO XU11. MOVE U11 TO Q. DISPLAY Q.
+           MOVE "1111111111p" TO XT11. MOVE T11 TO Q. DISPLAY Q.
+           MOVE "1111111111p" TO XL11. MOVE L11 TO Q. DISPLAY Q.
+           MOVE "1111111111p" TO XU11. MOVE U11 TO Q. DISPLAY Q.
+           MOVE "1111111111 " TO XT11. MOVE T11 TO Q. DISPLAY Q.
+           MOVE "1111111111 " TO XL11. MOVE L11 TO Q. DISPLAY Q.
+           MOVE "1111111111 " TO XU11. MOVE U11 TO Q. DISPLAY Q.
+           MOVE "}2222222222" TO XT11. MOVE T11 TO Q. DISPLAY Q.
+           MOVE "}2222222222" TO XL11. MOVE L11 TO Q. DISPLAY Q.
+           MOVE "}2222222222" TO XU11. MOVE U11 TO Q. DISPLAY Q.
+           MOVE 0 TO U12. DISPLAY XU12.
+           COMPUTE U12 = U12 - 1. DISPLAY XU12.
+           MOVE U12 TO Q. DISPLAY Q.
+           MOVE 1 TO U12. DISPLAY XU12.
+           COMPUTE U12 = U12 - 1. DISPLAY XU12.
+           MOVE U12 TO Q. DISPLAY Q.
+           MOVE -1 TO U12. DISPLAY XU12.
+           COMPUTE U12 = U12 - 1. DISPLAY XU12.
+           MOVE U12 TO Q. DISPLAY Q.
+           MOVE 999999999999 TO U12. DISPLAY XU12.
+           COMPUTE U12 = U12 - 1. DISPLAY XU12.
+           MOVE U12 TO Q. DISPLAY Q.
+           MOVE -999999999999 TO U12. DISPLAY XU12.
+           COMPUTE U12 = U12 - 1. DISPLAY XU12.
+           MOVE U12 TO Q. DISPLAY Q.
+           MOVE -951172893467 TO U12. DISPLAY XU12.
+           COMPUTE U12 = U12 - 1. DISPLAY XU12.
+           MOVE U12 TO Q. DISPLAY Q.
+           MOVE 628457522179 TO U12. DISPLAY XU12.
+           COMPUTE U12 = U12 - 1. DISPLAY XU12.
+           MOVE U12 TO Q. DISPLAY Q.
+           MOVE -803215295340 TO U12. DISPLAY XU12.
+           COMPUTE U12 = U12 - 1. DISPLAY XU12.
+           MOVE U12 TO Q. DISPLAY Q.
+           MOVE 0 TO T12. DISPLAY XT12.
+           COMPUTE T12 = T12 - 1. DISPLAY XT12.
+           MOVE T12 TO Q. DISPLAY Q.
+           MOVE 1 TO T12. DISPLAY XT12.
+           COMPUTE T12 = T12 - 1. DISPLAY XT12.
+           MOVE T12 TO Q. DISPLAY Q.
+           MOVE -1 TO T12. DISPLAY XT12.
+           COMPUTE T12 = T12 - 1. DISPLAY XT12.
+           MOVE T12 TO Q. DISPLAY Q.
+           MOVE 999999999999 TO T12. DISPLAY XT12.
+           COMPUTE T12 = T12 - 1. DISPLAY XT12.
+           MOVE T12 TO Q. DISPLAY Q.
+           MOVE -999999999999 TO T12. DISPLAY XT12.
+           COMPUTE T12 = T12 - 1. DISPLAY XT12.
+           MOVE T12 TO Q. DISPLAY Q.
+           MOVE -951172893467 TO T12. DISPLAY XT12.
+           COMPUTE T12 = T12 - 1. DISPLAY XT12.
+           MOVE T12 TO Q. DISPLAY Q.
+           MOVE 628457522179 TO T12. DISPLAY XT12.
+           COMPUTE T12 = T12 - 1. DISPLAY XT12.
+           MOVE T12 TO Q. DISPLAY Q.
+           MOVE -803215295340 TO T12. DISPLAY XT12.
+           COMPUTE T12 = T12 - 1. DISPLAY XT12.
+           MOVE T12 TO Q. DISPLAY Q.
+           MOVE 0 TO L12. DISPLAY XL12.
+           COMPUTE L12 = L12 - 1. DISPLAY XL12.
+           MOVE L12 TO Q. DISPLAY Q.
+           MOVE 1 TO L12. DISPLAY XL12.
+           COMPUTE L12 = L12 - 1. DISPLAY XL12.
+           MOVE L12 TO Q. DISPLAY Q.
+           MOVE -1 TO L12. DISPLAY XL12.
+           COMPUTE L12 = L12 - 1. DISPLAY XL12.
+           MOVE L12 TO Q. DISPLAY Q.
+           MOVE 999999999999 TO L12. DISPLAY XL12.
+           COMPUTE L12 = L12 - 1. DISPLAY XL12.
+           MOVE L12 TO Q. DISPLAY Q.
+           MOVE -999999999999 TO L12. DISPLAY XL12.
+           COMPUTE L12 = L12 - 1. DISPLAY XL12.
+           MOVE L12 TO Q. DISPLAY Q.
+           MOVE -951172893467 TO L12. DISPLAY XL12.
+           COMPUTE L12 = L12 - 1. DISPLAY XL12.
+           MOVE L12 TO Q. DISPLAY Q.
+           MOVE 628457522179 TO L12. DISPLAY XL12.
+           COMPUTE L12 = L12 - 1. DISPLAY XL12.
+           MOVE L12 TO Q. DISPLAY Q.
+           MOVE -803215295340 TO L12. DISPLAY XL12.
+           COMPUTE L12 = L12 - 1. DISPLAY XL12.
+           MOVE L12 TO Q. DISPLAY Q.
+           MOVE 0 TO LS12. DISPLAY XLS12.
+           COMPUTE LS12 = LS12 - 1. DISPLAY XLS12.
+           MOVE LS12 TO Q. DISPLAY Q.
+           MOVE 1 TO LS12. DISPLAY XLS12.
+           COMPUTE LS12 = LS12 - 1. DISPLAY XLS12.
+           MOVE LS12 TO Q. DISPLAY Q.
+           MOVE -1 TO LS12. DISPLAY XLS12.
+           COMPUTE LS12 = LS12 - 1. DISPLAY XLS12.
+           MOVE LS12 TO Q. DISPLAY Q.
+           MOVE 999999999999 TO LS12. DISPLAY XLS12.
+           COMPUTE LS12 = LS12 - 1. DISPLAY XLS12.
+           MOVE LS12 TO Q. DISPLAY Q.
+           MOVE -999999999999 TO LS12. DISPLAY XLS12.
+           COMPUTE LS12 = LS12 - 1. DISPLAY XLS12.
+           MOVE LS12 TO Q. DISPLAY Q.
+           MOVE -951172893467 TO LS12. DISPLAY XLS12.
+           COMPUTE LS12 = LS12 - 1. DISPLAY XLS12.
+           MOVE LS12 TO Q. DISPLAY Q.
+           MOVE 628457522179 TO LS12. DISPLAY XLS12.
+           COMPUTE LS12 = LS12 - 1. DISPLAY XLS12.
+           MOVE LS12 TO Q. DISPLAY Q.
+           MOVE -803215295340 TO LS12. DISPLAY XLS12.
+           COMPUTE LS12 = LS12 - 1. DISPLAY XLS12.
+           MOVE LS12 TO Q. DISPLAY Q.
+           MOVE 0 TO TS12. DISPLAY XTS12.
+           COMPUTE TS12 = TS12 - 1. DISPLAY XTS12.
+           MOVE TS12 TO Q. DISPLAY Q.
+           MOVE 1 TO TS12. DISPLAY XTS12.
+           COMPUTE TS12 = TS12 - 1. DISPLAY XTS12.
+           MOVE TS12 TO Q. DISPLAY Q.
+           MOVE -1 TO TS12. DISPLAY XTS12.
+           COMPUTE TS12 = TS12 - 1. DISPLAY XTS12.
+           MOVE TS12 TO Q. DISPLAY Q.
+           MOVE 999999999999 TO TS12. DISPLAY XTS12.
+           COMPUTE TS12 = TS12 - 1. DISPLAY XTS12.
+           MOVE TS12 TO Q. DISPLAY Q.
+           MOVE -999999999999 TO TS12. DISPLAY XTS12.
+           COMPUTE TS12 = TS12 - 1. DISPLAY XTS12.
+           MOVE TS12 TO Q. DISPLAY Q.
+           MOVE -951172893467 TO TS12. DISPLAY XTS12.
+           COMPUTE TS12 = TS12 - 1. DISPLAY XTS12.
+           MOVE TS12 TO Q. DISPLAY Q.
+           MOVE 628457522179 TO TS12. DISPLAY XTS12.
+           COMPUTE TS12 = TS12 - 1. DISPLAY XTS12.
+           MOVE TS12 TO Q. DISPLAY Q.
+           MOVE -803215295340 TO TS12. DISPLAY XTS12.
+           COMPUTE TS12 = TS12 - 1. DISPLAY XTS12.
+           MOVE TS12 TO Q. DISPLAY Q.
+           MOVE "            " TO XT12. MOVE T12 TO Q. DISPLAY Q.
+           MOVE "            " TO XL12. MOVE L12 TO Q. DISPLAY Q.
+           MOVE "            " TO XU12. MOVE U12 TO Q. DISPLAY Q.
+           MOVE "A11111111111" TO XT12. MOVE T12 TO Q. DISPLAY Q.
+           MOVE "A11111111111" TO XL12. MOVE L12 TO Q. DISPLAY Q.
+           MOVE "A11111111111" TO XU12. MOVE U12 TO Q. DISPLAY Q.
+           MOVE "11111111111p" TO XT12. MOVE T12 TO Q. DISPLAY Q.
+           MOVE "11111111111p" TO XL12. MOVE L12 TO Q. DISPLAY Q.
+           MOVE "11111111111p" TO XU12. MOVE U12 TO Q. DISPLAY Q.
+           MOVE "11111111111 " TO XT12. MOVE T12 TO Q. DISPLAY Q.
+           MOVE "11111111111 " TO XL12. MOVE L12 TO Q. DISPLAY Q.
+           MOVE "11111111111 " TO XU12. MOVE U12 TO Q. DISPLAY Q.
+           MOVE "}22222222222" TO XT12. MOVE T12 TO Q. DISPLAY Q.
+           MOVE "}22222222222" TO XL12. MOVE L12 TO Q. DISPLAY Q.
+           MOVE "}22222222222" TO XU12. MOVE U12 TO Q. DISPLAY Q.
+           MOVE 0 TO U13. DISPLAY XU13.
+           COMPUTE U13 = U13 - 1. DISPLAY XU13.
+           MOVE U13 TO Q. DISPLAY Q.
+           MOVE 1 TO U13. DISPLAY XU13.
+           COMPUTE U13 = U13 - 1. DISPLAY XU13.
+           MOVE U13 TO Q. DISPLAY Q.
+           MOVE -1 TO U13. DISPLAY XU13.
+           COMPUTE U13 = U13 - 1. DISPLAY XU13.
+           MOVE U13 TO Q. DISPLAY Q.
+           MOVE 9999999999999 TO U13. DISPLAY XU13.
+           COMPUTE U13 = U13 - 1. DISPLAY XU13.
+           MOVE U13 TO Q. DISPLAY Q.
+           MOVE -9999999999999 TO U13. DISPLAY XU13.
+           COMPUTE U13 = U13 - 1. DISPLAY XU13.
+           MOVE U13 TO Q. DISPLAY Q.
+           MOVE -9308819744073 TO U13. DISPLAY XU13.
+           COMPUTE U13 = U13 - 1. DISPLAY XU13.
+           MOVE U13 TO Q. DISPLAY Q.
+           MOVE -4332991968369 TO U13. DISPLAY XU13.
+           COMPUTE U13 = U13 - 1. DISPLAY XU13.
+           MOVE U13 TO Q. DISPLAY Q.
+           MOVE 4119030338241 TO U13. DISPLAY XU13.
+           COMPUTE U13 = U13 - 1. DISPLAY XU13.
+           MOVE U13 TO Q. DISPLAY Q.
+           MOVE 0 TO T13. DISPLAY XT13.
+           COMPUTE T13 = T13 - 1. DISPLAY XT13.
+           MOVE T13 TO Q. DISPLAY Q.
+           MOVE 1 TO T13. DISPLAY XT13.
+           COMPUTE T13 = T13 - 1. DISPLAY XT13.
+           MOVE T13 TO Q. DISPLAY Q.
+           MOVE -1 TO T13. DISPLAY XT13.
+           COMPUTE T13 = T13 - 1. DISPLAY XT13.
+           MOVE T13 TO Q. DISPLAY Q.
+           MOVE 9999999999999 TO T13. DISPLAY XT13.
+           COMPUTE T13 = T13 - 1. DISPLAY XT13.
+           MOVE T13 TO Q. DISPLAY Q.
+           MOVE -9999999999999 TO T13. DISPLAY XT13.
+           COMPUTE T13 = T13 - 1. DISPLAY XT13.
+           MOVE T13 TO Q. DISPLAY Q.
+           MOVE -9308819744073 TO T13. DISPLAY XT13.
+           COMPUTE T13 = T13 - 1. DISPLAY XT13.
+           MOVE T13 TO Q. DISPLAY Q.
+           MOVE -4332991968369 TO T13. DISPLAY XT13.
+           COMPUTE T13 = T13 - 1. DISPLAY XT13.
+           MOVE T13 TO Q. DISPLAY Q.
+           MOVE 4119030338241 TO T13. DISPLAY XT13.
+           COMPUTE T13 = T13 - 1. DISPLAY XT13.
+           MOVE T13 TO Q. DISPLAY Q.
+           MOVE 0 TO L13. DISPLAY XL13.
+           COMPUTE L13 = L13 - 1. DISPLAY XL13.
+           MOVE L13 TO Q. DISPLAY Q.
+           MOVE 1 TO L13. DISPLAY XL13.
+           COMPUTE L13 = L13 - 1. DISPLAY XL13.
+           MOVE L13 TO Q. DISPLAY Q.
+           MOVE -1 TO L13. DISPLAY XL13.
+           COMPUTE L13 = L13 - 1. DISPLAY XL13.
+           MOVE L13 TO Q. DISPLAY Q.
+           MOVE 9999999999999 TO L13. DISPLAY XL13.
+           COMPUTE L13 = L13 - 1. DISPLAY XL13.
+           MOVE L13 TO Q. DISPLAY Q.
+           MOVE -9999999999999 TO L13. DISPLAY XL13.
+           COMPUTE L13 = L13 - 1. DISPLAY XL13.
+           MOVE L13 TO Q. DISPLAY Q.
+           MOVE -9308819744073 TO L13. DISPLAY XL13.
+           COMPUTE L13 = L13 - 1. DISPLAY XL13.
+           MOVE L13 TO Q. DISPLAY Q.
+           MOVE -4332991968369 TO L13. DISPLAY XL13.
+           COMPUTE L13 = L13 - 1. DISPLAY XL13.
+           MOVE L13 TO Q. DISPLAY Q.
+           MOVE 4119030338241 TO L13. DISPLAY XL13.
+           COMPUTE L13 = L13 - 1. DISPLAY XL13.
+           MOVE L13 TO Q. DISPLAY Q.
+           MOVE 0 TO LS13. DISPLAY XLS13.
+           COMPUTE LS13 = LS13 - 1. DISPLAY XLS13.
+           MOVE LS13 TO Q. DISPLAY Q.
+           MOVE 1 TO LS13. DISPLAY XLS13.
+           COMPUTE LS13 = LS13 - 1. DISPLAY XLS13.
+           MOVE LS13 TO Q. DISPLAY Q.
+           MOVE -1 TO LS13. DISPLAY XLS13.
+           COMPUTE LS13 = LS13 - 1. DISPLAY XLS13.
+           MOVE LS13 TO Q. DISPLAY Q.
+           MOVE 9999999999999 TO LS13. DISPLAY XLS13.
+           COMPUTE LS13 = LS13 - 1. DISPLAY XLS13.
+           MOVE LS13 TO Q. DISPLAY Q.
+           MOVE -9999999999999 TO LS13. DISPLAY XLS13.
+           COMPUTE LS13 = LS13 - 1. DISPLAY XLS13.
+           MOVE LS13 TO Q. DISPLAY Q.
+           MOVE -9308819744073 TO LS13. DISPLAY XLS13.
+           COMPUTE LS13 = LS13 - 1. DISPLAY XLS13.
+           MOVE LS13 TO Q. DISPLAY Q.
+           MOVE -4332991968369 TO LS13. DISPLAY XLS13.
+           COMPUTE LS13 = LS13 - 1. DISPLAY XLS13.
+           MOVE LS13 TO Q. DISPLAY Q.
+           MOVE 4119030338241 TO LS13. DISPLAY XLS13.
+           COMPUTE LS13 = LS13 - 1. DISPLAY XLS13.
+           MOVE LS13 TO Q. DISPLAY Q.
+           MOVE 0 TO TS13. DISPLAY XTS13.
+           COMPUTE TS13 = TS13 - 1. DISPLAY XTS13.
+           MOVE TS13 TO Q. DISPLAY Q.
+           MOVE 1 TO TS13. DISPLAY XTS13.
+           COMPUTE TS13 = TS13 - 1. DISPLAY XTS13.
+           MOVE TS13 TO Q. DISPLAY Q.
+           MOVE -1 TO TS13. DISPLAY XTS13.
+           COMPUTE TS13 = TS13 - 1. DISPLAY XTS13.
+           MOVE TS13 TO Q. DISPLAY Q.
+           MOVE 9999999999999 TO TS13. DISPLAY XTS13.
+           COMPUTE TS13 = TS13 - 1. DISPLAY XTS13.
+           MOVE TS13 TO Q. DISPLAY Q.
+           MOVE -9999999999999 TO TS13. DISPLAY XTS13.
+           COMPUTE TS13 = TS13 - 1. DISPLAY XTS13.
+           MOVE TS13 TO Q. DISPLAY Q.
+           MOVE -9308819744073 TO TS13. DISPLAY XTS13.
+           COMPUTE TS13 = TS13 - 1. DISPLAY XTS13.
+           MOVE TS13 TO Q. DISPLAY Q.
+           MOVE -4332991968369 TO TS13. DISPLAY XTS13.
+           COMPUTE TS13 = TS13 - 1. DISPLAY XTS13.
+           MOVE TS13 TO Q. DISPLAY Q.
+           MOVE 4119030338241 TO TS13. DISPLAY XTS13.
+           COMPUTE TS13 = TS13 - 1. DISPLAY XTS13.
+           MOVE TS13 TO Q. DISPLAY Q.
+           MOVE "             " TO XT13. MOVE T13 TO Q. DISPLAY Q.
+           MOVE "             " TO XL13. MOVE L13 TO Q. DISPLAY Q.
+           MOVE "             " TO XU13. MOVE U13 TO Q. DISPLAY Q.
+           MOVE "A111111111111" TO XT13. MOVE T13 TO Q. DISPLAY Q.
+           MOVE "A111111111111" TO XL13. MOVE L13 TO Q. DISPLAY Q.
+           MOVE "A111111111111" TO XU13. MOVE U13 TO Q. DISPLAY Q.
+           MOVE "111111111111p" TO XT13. MOVE T13 TO Q. DISPLAY Q.
+           MOVE "111111111111p" TO XL13. MOVE L13 TO Q. DISPLAY Q.
+           MOVE "111111111111p" TO XU13. MOVE U13 TO Q. DISPLAY Q.
+           MOVE "111111111111 " TO XT13. MOVE T13 TO Q. DISPLAY Q.
+           MOVE "111111111111 " TO XL13. MOVE L13 TO Q. DISPLAY Q.
+           MOVE "111111111111 " TO XU13. MOVE U13 TO Q. DISPLAY Q.
+           MOVE "}222222222222" TO XT13. MOVE T13 TO Q. DISPLAY Q.
+           MOVE "}222222222222" TO XL13. MOVE L13 TO Q. DISPLAY Q.
+           MOVE "}222222222222" TO XU13. MOVE U13 TO Q. DISPLAY Q.
+           MOVE 0 TO U14. DISPLAY XU14.
+           COMPUTE U14 = U14 - 1. DISPLAY XU14.
+           MOVE U14 TO Q. DISPLAY Q.
+           MOVE 1 TO U14. DISPLAY XU14.
+           COMPUTE U14 = U14 - 1. DISPLAY XU14.
+           MOVE U14 TO Q. DISPLAY Q.
+           MOVE -1 TO U14. DISPLAY XU14.
+           COMPUTE U14 = U14 - 1. DISPLAY XU14.
+           MOVE U14 TO Q. DISPLAY Q.
+           MOVE 99999999999999 TO U14. DISPLAY XU14.
+           COMPUTE U14 = U14 - 1. DISPLAY XU14.
+           MOVE U14 TO Q. DISPLAY Q.
+           MOVE -99999999999999 TO U14. DISPLAY XU14.
+           COMPUTE U14 = U14 - 1. DISPLAY XU14.
+           MOVE U14 TO Q. DISPLAY Q.
+           MOVE -57469152048715 TO U14. DISPLAY XU14.
+           COMPUTE U14 = U14 - 1. DISPLAY XU14.
+           MOVE U14 TO Q. DISPLAY Q.
+           MOVE 87209837265084 TO U14. DISPLAY XU14.
+           COMPUTE U14 = U14 - 1. DISPLAY XU14.
+           MOVE U14 TO Q. DISPLAY Q.
+           MOVE 32276562295386 TO U14. DISPLAY XU14.
+           COMPUTE U14 = U14 - 1. DISPLAY XU14.
+           MOVE U14 TO Q. DISPLAY Q.
+           MOVE 0 TO T14. DISPLAY XT14.
+           COMPUTE T14 = T14 - 1. DISPLAY XT14.
+           MOVE T14 TO Q. DISPLAY Q.
+           MOVE 1 TO T14. DISPLAY XT14.
+           COMPUTE T14 = T14 - 1. DISPLAY XT14.
+           MOVE T14 TO Q. DISPLAY Q.
+           MOVE -1 TO T14. DISPLAY XT14.
+           COMPUTE T14 = T14 - 1. DISPLAY XT14.
+           MOVE T14 TO Q. DISPLAY Q.
+           MOVE 99999999999999 TO T14. DISPLAY XT14.
+           COMPUTE T14 = T14 - 1. DISPLAY XT14.
+           MOVE T14 TO Q. DISPLAY Q.
+           MOVE -99999999999999 TO T14. DISPLAY XT14.
+           COMPUTE T14 = T14 - 1. DISPLAY XT14.
+           MOVE T14 TO Q. DISPLAY Q.
+           MOVE -57469152048715 TO T14. DISPLAY XT14.
+           COMPUTE T14 = T14 - 1. DISPLAY XT14.
+           MOVE T14 TO Q. DISPLAY Q.
+           MOVE 87209837265084 TO T14. DISPLAY XT14.
+           COMPUTE T14 = T14 - 1. DISPLAY XT14.
+           MOVE T14 TO Q. DISPLAY Q.
+           MOVE 32276562295386 TO T14. DISPLAY XT14.
+           COMPUTE T14 = T14 - 1. DISPLAY XT14.
+           MOVE T14 TO Q. DISPLAY Q.
+           MOVE 0 TO L14. DISPLAY XL14.
+           COMPUTE L14 = L14 - 1. DISPLAY XL14.
+           MOVE L14 TO Q. DISPLAY Q.
+           MOVE 1 TO L14. DISPLAY XL14.
+           COMPUTE L14 = L14 - 1. DISPLAY XL14.
+           MOVE L14 TO Q. DISPLAY Q.
+           MOVE -1 TO L14. DISPLAY XL14.
+           COMPUTE L14 = L14 - 1. DISPLAY XL14.
+           MOVE L14 TO Q. DISPLAY Q.
+           MOVE 99999999999999 TO L14. DISPLAY XL14.
+           COMPUTE L14 = L14 - 1. DISPLAY XL14.
+           MOVE L14 TO Q. DISPLAY Q.
+           MOVE -99999999999999 TO L14. DISPLAY XL14.
+           COMPUTE L14 = L14 - 1. DISPLAY XL14.
+           MOVE L14 TO Q. DISPLAY Q.
+           MOVE -57469152048715 TO L14. DISPLAY XL14.
+           COMPUTE L14 = L14 - 1. DISPLAY XL14.
+           MOVE L14 TO Q. DISPLAY Q.
+           MOVE 87209837265084 TO L14. DISPLAY XL14.
+           COMPUTE L14 = L14 - 1. DISPLAY XL14.
+           MOVE L14 TO Q. DISPLAY Q.
+           MOVE 32276562295386 TO L14. DISPLAY XL14.
+           COMPUTE L14 = L14 - 1. DISPLAY XL14.
+           MOVE L14 TO Q. DISPLAY Q.
+           MOVE 0 TO LS14. DISPLAY XLS14.
+           COMPUTE LS14 = LS14 - 1. DISPLAY XLS14.
+           MOVE LS14 TO Q. DISPLAY Q.
+           MOVE 1 TO LS14. DISPLAY XLS14.
+           COMPUTE LS14 = LS14 - 1. DISPLAY XLS14.
+           MOVE LS14 TO Q. DISPLAY Q.
+           MOVE -1 TO LS14. DISPLAY XLS14.
+           COMPUTE LS14 = LS14 - 1. DISPLAY XLS14.
+           MOVE LS14 TO Q. DISPLAY Q.
+           MOVE 99999999999999 TO LS14. DISPLAY XLS14.
+           COMPUTE LS14 = LS14 - 1. DISPLAY XLS14.
+           MOVE LS14 TO Q. DISPLAY Q.
+           MOVE -99999999999999 TO LS14. DISPLAY XLS14.
+           COMPUTE LS14 = LS14 - 1. DISPLAY XLS14.
+           MOVE LS14 TO Q. DISPLAY Q.
+           MOVE -57469152048715 TO LS14. DISPLAY XLS14.
+           COMPUTE LS14 = LS14 - 1. DISPLAY XLS14.
+           MOVE LS14 TO Q. DISPLAY Q.
+           MOVE 87209837265084 TO LS14. DISPLAY XLS14.
+           COMPUTE LS14 = LS14 - 1. DISPLAY XLS14.
+           MOVE LS14 TO Q. DISPLAY Q.
+           MOVE 32276562295386 TO LS14. DISPLAY XLS14.
+           COMPUTE LS14 = LS14 - 1. DISPLAY XLS14.
+           MOVE LS14 TO Q. DISPLAY Q.
+           MOVE 0 TO TS14. DISPLAY XTS14.
+           COMPUTE TS14 = TS14 - 1. DISPLAY XTS14.
+           MOVE TS14 TO Q. DISPLAY Q.
+           MOVE 1 TO TS14. DISPLAY XTS14.
+           COMPUTE TS14 = TS14 - 1. DISPLAY XTS14.
+           MOVE TS14 TO Q. DISPLAY Q.
+           MOVE -1 TO TS14. DISPLAY XTS14.
+           COMPUTE TS14 = TS14 - 1. DISPLAY XTS14.
+           MOVE TS14 TO Q. DISPLAY Q.
+           MOVE 99999999999999 TO TS14. DISPLAY XTS14.
+           COMPUTE TS14 = TS14 - 1. DISPLAY XTS14.
+           MOVE TS14 TO Q. DISPLAY Q.
+           MOVE -99999999999999 TO TS14. DISPLAY XTS14.
+           COMPUTE TS14 = TS14 - 1. DISPLAY XTS14.
+           MOVE TS14 TO Q. DISPLAY Q.
+           MOVE -57469152048715 TO TS14. DISPLAY XTS14.
+           COMPUTE TS14 = TS14 - 1. DISPLAY XTS14.
+           MOVE TS14 TO Q. DISPLAY Q.
+           MOVE 87209837265084 TO TS14. DISPLAY XTS14.
+           COMPUTE TS14 = TS14 - 1. DISPLAY XTS14.
+           MOVE TS14 TO Q. DISPLAY Q.
+           MOVE 32276562295386 TO TS14. DISPLAY XTS14.
+           COMPUTE TS14 = TS14 - 1. DISPLAY XTS14.
+           MOVE TS14 TO Q. DISPLAY Q.
+           MOVE "              " TO XT14. MOVE T14 TO Q. DISPLAY Q.
+           MOVE "              " TO XL14. MOVE L14 TO Q. DISPLAY Q.
+           MOVE "              " TO XU14. MOVE U14 TO Q. DISPLAY Q.
+           MOVE "A1111111111111" TO XT14. MOVE T14 TO Q. DISPLAY Q.
+           MOVE "A1111111111111" TO XL14. MOVE L14 TO Q. DISPLAY Q.
+           MOVE "A1111111111111" TO XU14. MOVE U14 TO Q. DISPLAY Q.
+           MOVE "1111111111111p" TO XT14. MOVE T14 TO Q. DISPLAY Q.
+           MOVE "1111111111111p" TO XL14. MOVE L14 TO Q. DISPLAY Q.
+           MOVE "1111111111111p" TO XU14. MOVE U14 TO Q. DISPLAY Q.
+           MOVE "1111111111111 " TO XT14. MOVE T14 TO Q. DISPLAY Q.
+           MOVE "1111111111111 " TO XL14. MOVE L14 TO Q. DISPLAY Q.
+           MOVE "1111111111111 " TO XU14. MOVE U14 TO Q. DISPLAY Q.
+           MOVE "}2222222222222" TO XT14. MOVE T14 TO Q. DISPLAY Q.
+           MOVE "}2222222222222" TO XL14. MOVE L14 TO Q. DISPLAY Q.
+           MOVE "}2222222222222" TO XU14. MOVE U14 TO Q. DISPLAY Q.
+           MOVE 0 TO U15. DISPLAY XU15.
+           COMPUTE U15 = U15 - 1. DISPLAY XU15.
+           MOVE U15 TO Q. DISPLAY Q.
+           MOVE 1 TO U15. DISPLAY XU15.
+           COMPUTE U15 = U15 - 1. DISPLAY XU15.
+           MOVE U15 TO Q. DISPLAY Q.
+           MOVE -1 TO U15. DISPLAY XU15.
+           COMPUTE U15 = U15 - 1. DISPLAY XU15.
+           MOVE U15 TO Q. DISPLAY Q.
+           MOVE 999999999999999 TO U15. DISPLAY XU15.
+           COMPUTE U15 = U15 - 1. DISPLAY XU15.
+           MOVE U15 TO Q. DISPLAY Q.
+           MOVE -999999999999999 TO U15. DISPLAY XU15.
+           COMPUTE U15 = U15 - 1. DISPLAY XU15.
+           MOVE U15 TO Q. DISPLAY Q.
+           MOVE 846801001524593 TO U15. DISPLAY XU15.
+           COMPUTE U15 = U15 - 1. DISPLAY XU15.
+           MOVE U15 TO Q. DISPLAY Q.
+           MOVE -831962690768975 TO U15. DISPLAY XU15.
+           COMPUTE U15 = U15 - 1. DISPLAY XU15.
+           MOVE U15 TO Q. DISPLAY Q.
+           MOVE -555544843086933 TO U15. DISPLAY XU15.
+           COMPUTE U15 = U15 - 1. DISPLAY XU15.
+           MOVE U15 TO Q. DISPLAY Q.
+           MOVE 0 TO T15. DISPLAY XT15.
+           COMPUTE T15 = T15 - 1. DISPLAY XT15.
+           MOVE T15 TO Q. DISPLAY Q.
+           MOVE 1 TO T15. DISPLAY XT15.
+           COMPUTE T15 = T15 - 1. DISPLAY XT15.
+           MOVE T15 TO Q. DISPLAY Q.
+           MOVE -1 TO T15. DISPLAY XT15.
+           COMPUTE T15 = T15 - 1. DISPLAY XT15.
+           MOVE T15 TO Q. DISPLAY Q.
+           MOVE 999999999999999 TO T15. DISPLAY XT15.
+           COMPUTE T15 = T15 - 1. DISPLAY XT15.
+           MOVE T15 TO Q. DISPLAY Q.
+           MOVE -999999999999999 TO T15. DISPLAY XT15.
+           COMPUTE T15 = T15 - 1. DISPLAY XT15.
+           MOVE T15 TO Q. DISPLAY Q.
+           MOVE 846801001524593 TO T15. DISPLAY XT15.
+           COMPUTE T15 = T15 - 1. DISPLAY XT15.
+           MOVE T15 TO Q. DISPLAY Q.
+           MOVE -831962690768975 TO T15. DISPLAY XT15.
+           COMPUTE T15 = T15 - 1. DISPLAY XT15.
+           MOVE T15 TO Q. DISPLAY Q.
+           MOVE -555544843086933 TO T15. DISPLAY XT15.
+           COMPUTE T15 = T15 - 1. DISPLAY XT15.
+           MOVE T15 TO Q. DISPLAY Q.
+           MOVE 0 TO L15. DISPLAY XL15.
+           COMPUTE L15 = L15 - 1. DISPLAY XL15.
+           MOVE L15 TO Q. DISPLAY Q.
+           MOVE 1 TO L15. DISPLAY XL15.
+           COMPUTE L15 = L15 - 1. DISPLAY XL15.
+           MOVE L15 TO Q. DISPLAY Q.
+           MOVE -1 TO L15. DISPLAY XL15.
+           COMPUTE L15 = L15 - 1. DISPLAY XL15.
+           MOVE L15 TO Q. DISPLAY Q.
+           MOVE 999999999999999 TO L15. DISPLAY XL15.
+           COMPUTE L15 = L15 - 1. DISPLAY XL15.
+           MOVE L15 TO Q. DISPLAY Q.
+           MOVE -999999999999999 TO L15. DISPLAY XL15.
+           COMPUTE L15 = L15 - 1. DISPLAY XL15.
+           MOVE L15 TO Q. DISPLAY Q.
+           MOVE 846801001524593 TO L15. DISPLAY XL15.
+           COMPUTE L15 = L15 - 1. DISPLAY XL15.
+           MOVE L15 TO Q. DISPLAY Q.
+           MOVE -831962690768975 TO L15. DISPLAY XL15.
+           COMPUTE L15 = L15 - 1. DISPLAY XL15.
+           MOVE L15 TO Q. DISPLAY Q.
+           MOVE -555544843086933 TO L15. DISPLAY XL15.
+           COMPUTE L15 = L15 - 1. DISPLAY XL15.
+           MOVE L15 TO Q. DISPLAY Q.
+           MOVE 0 TO LS15. DISPLAY XLS15.
+           COMPUTE LS15 = LS15 - 1. DISPLAY XLS15.
+           MOVE LS15 TO Q. DISPLAY Q.
+           MOVE 1 TO LS15. DISPLAY XLS15.
+           COMPUTE LS15 = LS15 - 1. DISPLAY XLS15.
+           MOVE LS15 TO Q. DISPLAY Q.
+           MOVE -1 TO LS15. DISPLAY XLS15.
+           COMPUTE LS15 = LS15 - 1. DISPLAY XLS15.
+           MOVE LS15 TO Q. DISPLAY Q.
+           MOVE 999999999999999 TO LS15. DISPLAY XLS15.
+           COMPUTE LS15 = LS15 - 1. DISPLAY XLS15.
+           MOVE LS15 TO Q. DISPLAY Q.
+           MOVE -999999999999999 TO LS15. DISPLAY XLS15.
+           COMPUTE LS15 = LS15 - 1. DISPLAY XLS15.
+           MOVE LS15 TO Q. DISPLAY Q.
+           MOVE 846801001524593 TO LS15. DISPLAY XLS15.
+           COMPUTE LS15 = LS15 - 1. DISPLAY XLS15.
+           MOVE LS15 TO Q. DISPLAY Q.
+           MOVE -831962690768975 TO LS15. DISPLAY XLS15.
+           COMPUTE LS15 = LS15 - 1. DISPLAY XLS15.
+           MOVE LS15 TO Q. DISPLAY Q.
+           MOVE -555544843086933 TO LS15. DISPLAY XLS15.
+           COMPUTE LS15 = LS15 - 1. DISPLAY XLS15.
+           MOVE LS15 TO Q. DISPLAY Q.
+           MOVE 0 TO TS15. DISPLAY XTS15.
+           COMPUTE TS15 = TS15 - 1. DISPLAY XTS15.
+           MOVE TS15 TO Q. DISPLAY Q.
+           MOVE 1 TO TS15. DISPLAY XTS15.
+           COMPUTE TS15 = TS15 - 1. DISPLAY XTS15.
+           MOVE TS15 TO Q. DISPLAY Q.
+           MOVE -1 TO TS15. DISPLAY XTS15.
+           COMPUTE TS15 = TS15 - 1. DISPLAY XTS15.
+           MOVE TS15 TO Q. DISPLAY Q.
+           MOVE 999999999999999 TO TS15. DISPLAY XTS15.
+           COMPUTE TS15 = TS15 - 1. DISPLAY XTS15.
+           MOVE TS15 TO Q. DISPLAY Q.
+           MOVE -999999999999999 TO TS15. DISPLAY XTS15.
+           COMPUTE TS15 = TS15 - 1. DISPLAY XTS15.
+           MOVE TS15 TO Q. DISPLAY Q.
+           MOVE 846801001524593 TO TS15. DISPLAY XTS15.
+           COMPUTE TS15 = TS15 - 1. DISPLAY XTS15.
+           MOVE TS15 TO Q. DISPLAY Q.
+           MOVE -831962690768975 TO TS15. DISPLAY XTS15.
+           COMPUTE TS15 = TS15 - 1. DISPLAY XTS15.
+           MOVE TS15 TO Q. DISPLAY Q.
+           MOVE -555544843086933 TO TS15. DISPLAY XTS15.
+           COMPUTE TS15 = TS15 - 1. DISPLAY XTS15.
+           MOVE TS15 TO Q. DISPLAY Q.
+           MOVE "               " TO XT15. MOVE T15 TO Q. DISPLAY Q.
+           MOVE "               " TO XL15. MOVE L15 TO Q. DISPLAY Q.
+           MOVE "               " TO XU15. MOVE U15 TO Q. DISPLAY Q.
+           MOVE "A11111111111111" TO XT15. MOVE T15 TO Q. DISPLAY Q.
+           MOVE "A11111111111111" TO XL15. MOVE L15 TO Q. DISPLAY Q.
+           MOVE "A11111111111111" TO XU15. MOVE U15 TO Q. DISPLAY Q.
+           MOVE "11111111111111p" TO XT15. MOVE T15 TO Q. DISPLAY Q.
+           MOVE "11111111111111p" TO XL15. MOVE L15 TO Q. DISPLAY Q.
+           MOVE "11111111111111p" TO XU15. MOVE U15 TO Q. DISPLAY Q.
+           MOVE "11111111111111 " TO XT15. MOVE T15 TO Q. DISPLAY Q.
+           MOVE "11111111111111 " TO XL15. MOVE L15 TO Q. DISPLAY Q.
+           MOVE "11111111111111 " TO XU15. MOVE U15 TO Q. DISPLAY Q.
+           MOVE "}22222222222222" TO XT15. MOVE T15 TO Q. DISPLAY Q.
+           MOVE "}22222222222222" TO XL15. MOVE L15 TO Q. DISPLAY Q.
+           MOVE "}22222222222222" TO XU15. MOVE U15 TO Q. DISPLAY Q.
+           MOVE 0 TO U16. DISPLAY XU16.
+           COMPUTE U16 = U16 - 1. DISPLAY XU16.
+           MOVE U16 TO Q. DISPLAY Q.
+           MOVE 1 TO U16. DISPLAY XU16.
+           COMPUTE U16 = U16 - 1. DISPLAY XU16.
+           MOVE U16 TO Q. DISPLAY Q.
+           MOVE -1 TO U16. DISPLAY XU16.
+           COMPUTE U16 = U16 - 1. DISPLAY XU16.
+           MOVE U16 TO Q. DISPLAY Q.
+           MOVE 9999999999999999 TO U16. DISPLAY XU16.
+           COMPUTE U16 = U16 - 1. DISPLAY XU16.
+           MOVE U16 TO Q. DISPLAY Q.
+           MOVE -9999999999999999 TO U16. DISPLAY XU16.
+           COMPUTE U16 = U16 - 1. DISPLAY XU16.
+           MOVE U16 TO Q. DISPLAY Q.
+           MOVE -7444590108843733 TO U16. DISPLAY XU16.
+           COMPUTE U16 = U16 - 1. DISPLAY XU16.
+           MOVE U16 TO Q. DISPLAY Q.
+           MOVE 3979512215139600 TO U16. DISPLAY XU16.
+           COMPUTE U16 = U16 - 1. DISPLAY XU16.
+           MOVE U16 TO Q. DISPLAY Q.
+           MOVE 2294147179933935 TO U16. DISPLAY XU16.
+           COMPUTE U16 = U16 - 1. DISPLAY XU16.
+           MOVE U16 TO Q. DISPLAY Q.
+           MOVE 0 TO T16. DISPLAY XT16.
+           COMPUTE T16 = T16 - 1. DISPLAY XT16.
+           MOVE T16 TO Q. DISPLAY Q.
+           MOVE 1 TO T16. DISPLAY XT16.
+           COMPUTE T16 = T16 - 1. DISPLAY XT16.
+           MOVE T16 TO Q. DISPLAY Q.
+           MOVE -1 TO T16. DISPLAY XT16.
+           COMPUTE T16 = T16 - 1. DISPLAY XT16.
+           MOVE T16 TO Q. DISPLAY Q.
+           MOVE 9999999999999999 TO T16. DISPLAY XT16.
+           COMPUTE T16 = T16 - 1. DISPLAY XT16.
+           MOVE T16 TO Q. DISPLAY Q.
+           MOVE -9999999999999999 TO T16. DISPLAY XT16.
+           COMPUTE T16 = T16 - 1. DISPLAY XT16.
+           MOVE T16 TO Q. DISPLAY Q.
+           MOVE -7444590108843733 TO T16. DISPLAY XT16.
+           COMPUTE T16 = T16 - 1. DISPLAY XT16.
+           MOVE T16 TO Q. DISPLAY Q.
+           MOVE 3979512215139600 TO T16. DISPLAY XT16.
+           COMPUTE T16 = T16 - 1. DISPLAY XT16.
+           MOVE T16 TO Q. DISPLAY Q.
+           MOVE 2294147179933935 TO T16. DISPLAY XT16.
+           COMPUTE T16 = T16 - 1. DISPLAY XT16.
+           MOVE T16 TO Q. DISPLAY Q.
+           MOVE 0 TO L16. DISPLAY XL16.
+           COMPUTE L16 = L16 - 1. DISPLAY XL16.
+           MOVE L16 TO Q. DISPLAY Q.
+           MOVE 1 TO L16. DISPLAY XL16.
+           COMPUTE L16 = L16 - 1. DISPLAY XL16.
+           MOVE L16 TO Q. DISPLAY Q.
+           MOVE -1 TO L16. DISPLAY XL16.
+           COMPUTE L16 = L16 - 1. DISPLAY XL16.
+           MOVE L16 TO Q. DISPLAY Q.
+           MOVE 9999999999999999 TO L16. DISPLAY XL16.
+           COMPUTE L16 = L16 - 1. DISPLAY XL16.
+           MOVE L16 TO Q. DISPLAY Q.
+           MOVE -9999999999999999 TO L16. DISPLAY XL16.
+           COMPUTE L16 = L16 - 1. DISPLAY XL16.
+           MOVE L16 TO Q. DISPLAY Q.
+           MOVE -7444590108843733 TO L16. DISPLAY XL16.
+           COMPUTE L16 = L16 - 1. DISPLAY XL16.
+           MOVE L16 TO Q. DISPLAY Q.
+           MOVE 3979512215139600 TO L16. DISPLAY XL16.
+           COMPUTE L16 = L16 - 1. DISPLAY XL16.
+           MOVE L16 TO Q. DISPLAY Q.
+           MOVE 2294147179933935 TO L16. DISPLAY XL16.
+           COMPUTE L16 = L16 - 1. DISPLAY XL16.
+           MOVE L16 TO Q. DISPLAY Q.
+           MOVE 0 TO LS16. DISPLAY XLS16.
+           COMPUTE LS16 = LS16 - 1. DISPLAY XLS16.
+           MOVE LS16 TO Q. DISPLAY Q.
+           MOVE 1 TO LS16. DISPLAY XLS16.
+           COMPUTE LS16 = LS16 - 1. DISPLAY XLS16.
+           MOVE LS16 TO Q. DISPLAY Q.
+           MOVE -1 TO LS16. DISPLAY XLS16.
+           COMPUTE LS16 = LS16 - 1. DISPLAY XLS16.
+           MOVE LS16 TO Q. DISPLAY Q.
+           MOVE 9999999999999999 TO LS16. DISPLAY XLS16.
+           COMPUTE LS16 = LS16 - 1. DISPLAY XLS16.
+           MOVE LS16 TO Q. DISPLAY Q.
+           MOVE -9999999999999999 TO LS16. DISPLAY XLS16.
+           COMPUTE LS16 = LS16 - 1. DISPLAY XLS16.
+           MOVE LS16 TO Q. DISPLAY Q.
+           MOVE -7444590108843733 TO LS16. DISPLAY XLS16.
+           COMPUTE LS16 = LS16 - 1. DISPLAY XLS16.
+           MOVE LS16 TO Q. DISPLAY Q.
+           MOVE 3979512215139600 TO LS16. DISPLAY XLS16.
+           COMPUTE LS16 = LS16 - 1. DISPLAY XLS16.
+           MOVE LS16 TO Q. DISPLAY Q.
+           MOVE 2294147179933935 TO LS16. DISPLAY XLS16.
+           COMPUTE LS16 = LS16 - 1. DISPLAY XLS16.
+           MOVE LS16 TO Q. DISPLAY Q.
+           MOVE 0 TO TS16. DISPLAY XTS16.
+           COMPUTE TS16 = TS16 - 1. DISPLAY XTS16.
+           MOVE TS16 TO Q. DISPLAY Q.
+           MOVE 1 TO TS16. DISPLAY XTS16.
+           COMPUTE TS16 = TS16 - 1. DISPLAY XTS16.
+           MOVE TS16 TO Q. DISPLAY Q.
+           MOVE -1 TO TS16. DISPLAY XTS16.
+           COMPUTE TS16 = TS16 - 1. DISPLAY XTS16.
+           MOVE TS16 TO Q. DISPLAY Q.
+           MOVE 9999999999999999 TO TS16. DISPLAY XTS16.
+           COMPUTE TS16 = TS16 - 1. DISPLAY XTS16.
+           MOVE TS16 TO Q. DISPLAY Q.
+           MOVE -9999999999999999 TO TS16. DISPLAY XTS16.
+           COMPUTE TS16 = TS16 - 1. DISPLAY XTS16.
+           MOVE TS16 TO Q. DISPLAY Q.
+           MOVE -7444590108843733 TO TS16. DISPLAY XTS16.
+           COMPUTE TS16 = TS16 - 1. DISPLAY XTS16.
+           MOVE TS16 TO Q. DISPLAY Q.
+           MOVE 3979512215139600 TO TS16. DISPLAY XTS16.
+           COMPUTE TS16 = TS16 - 1. DISPLAY XTS16.
+           MOVE TS16 TO Q. DISPLAY Q.
+           MOVE 2294147179933935 TO TS16. DISPLAY XTS16.
+           COMPUTE TS16 = TS16 - 1. DISPLAY XTS16.
+           MOVE TS16 TO Q. DISPLAY Q.
+           MOVE "                " TO XT16. MOVE T16 TO Q. DISPLAY Q.
+           MOVE "                " TO XL16. MOVE L16 TO Q. DISPLAY Q.
+           MOVE "                " TO XU16. MOVE U16 TO Q. DISPLAY Q.
+           MOVE "A111111111111111" TO XT16. MOVE T16 TO Q. DISPLAY Q.
+           MOVE "A111111111111111" TO XL16. MOVE L16 TO Q. DISPLAY Q.
+           MOVE "A111111111111111" TO XU16. MOVE U16 TO Q. DISPLAY Q.
+           MOVE "111111111111111p" TO XT16. MOVE T16 TO Q. DISPLAY Q.
+           MOVE "111111111111111p" TO XL16. MOVE L16 TO Q. DISPLAY Q.
+           MOVE "111111111111111p" TO XU16. MOVE U16 TO Q. DISPLAY Q.
+           MOVE "111111111111111 " TO XT16. MOVE T16 TO Q. DISPLAY Q.
+           MOVE "111111111111111 " TO XL16. MOVE L16 TO Q. DISPLAY Q.
+           MOVE "111111111111111 " TO XU16. MOVE U16 TO Q. DISPLAY Q.
+           MOVE "}222222222222222" TO XT16. MOVE T16 TO Q. DISPLAY Q.
+           MOVE "}222222222222222" TO XL16. MOVE L16 TO Q. DISPLAY Q.
+           MOVE "}222222222222222" TO XU16. MOVE U16 TO Q. DISPLAY Q.
+           MOVE 0 TO U17. DISPLAY XU17.
+           COMPUTE U17 = U17 - 1. DISPLAY XU17.
+           MOVE U17 TO Q. DISPLAY Q.
+           MOVE 1 TO U17. DISPLAY XU17.
+           COMPUTE U17 = U17 - 1. DISPLAY XU17.
+           MOVE U17 TO Q. DISPLAY Q.
+           MOVE -1 TO U17. DISPLAY XU17.
+           COMPUTE U17 = U17 - 1. DISPLAY XU17.
+           MOVE U17 TO Q. DISPLAY Q.
+           MOVE 99999999999999999 TO U17. DISPLAY XU17.
+           COMPUTE U17 = U17 - 1. DISPLAY XU17.
+           MOVE U17 TO Q. DISPLAY Q.
+           MOVE -99999999999999999 TO U17. DISPLAY XU17.
+           COMPUTE U17 = U17 - 1. DISPLAY XU17.
+           MOVE U17 TO Q. DISPLAY Q.
+           MOVE -57874810766969932 TO U17. DISPLAY XU17.
+           COMPUTE U17 = U17 - 1. DISPLAY XU17.
+           MOVE U17 TO Q. DISPLAY Q.
+           MOVE 54440482246040834 TO U17. DISPLAY XU17.
+           COMPUTE U17 = U17 - 1. DISPLAY XU17.
+           MOVE U17 TO Q. DISPLAY Q.
+           MOVE -15840393248528361 TO U17. DISPLAY XU17.
+           COMPUTE U17 = U17 - 1. DISPLAY XU17.
+           MOVE U17 TO Q. DISPLAY Q.
+           MOVE 0 TO T17. DISPLAY XT17.
+           COMPUTE T17 = T17 - 1. DISPLAY XT17.
+           MOVE T17 TO Q. DISPLAY Q.
+           MOVE 1 TO T17. DISPLAY XT17.
+           COMPUTE T17 = T17 - 1. DISPLAY XT17.
+           MOVE T17 TO Q. DISPLAY Q.
+           MOVE -1 TO T17. DISPLAY XT17.
+           COMPUTE T17 = T17 - 1. DISPLAY XT17.
+           MOVE T17 TO Q. DISPLAY Q.
+           MOVE 99999999999999999 TO T17. DISPLAY XT17.
+           COMPUTE T17 = T17 - 1. DISPLAY XT17.
+           MOVE T17 TO Q. DISPLAY Q.
+           MOVE -99999999999999999 TO T17. DISPLAY XT17.
+           COMPUTE T17 = T17 - 1. DISPLAY XT17.
+           MOVE T17 TO Q. DISPLAY Q.
+           MOVE -57874810766969932 TO T17. DISPLAY XT17.
+           COMPUTE T17 = T17 - 1. DISPLAY XT17.
+           MOVE T17 TO Q. DISPLAY Q.
+           MOVE 54440482246040834 TO T17. DISPLAY XT17.
+           COMPUTE T17 = T17 - 1. DISPLAY XT17.
+           MOVE T17 TO Q. DISPLAY Q.
+           MOVE -15840393248528361 TO T17. DISPLAY XT17.
+           COMPUTE T17 = T17 - 1. DISPLAY XT17.
+           MOVE T17 TO Q. DISPLAY Q.
+           MOVE 0 TO L17. DISPLAY XL17.
+           COMPUTE L17 = L17 - 1. DISPLAY XL17.
+           MOVE L17 TO Q. DISPLAY Q.
+           MOVE 1 TO L17. DISPLAY XL17.
+           COMPUTE L17 = L17 - 1. DISPLAY XL17.
+           MOVE L17 TO Q. DISPLAY Q.
+           MOVE -1 TO L17. DISPLAY XL17.
+           COMPUTE L17 = L17 - 1. DISPLAY XL17.
+           MOVE L17 TO Q. DISPLAY Q.
+           MOVE 99999999999999999 TO L17. DISPLAY XL17.
+           COMPUTE L17 = L17 - 1. DISPLAY XL17.
+           MOVE L17 TO Q. DISPLAY Q.
+           MOVE -99999999999999999 TO L17. DISPLAY XL17.
+           COMPUTE L17 = L17 - 1. DISPLAY XL17.
+           MOVE L17 TO Q. DISPLAY Q.
+           MOVE -57874810766969932 TO L17. DISPLAY XL17.
+           COMPUTE L17 = L17 - 1. DISPLAY XL17.
+           MOVE L17 TO Q. DISPLAY Q.
+           MOVE 54440482246040834 TO L17. DISPLAY XL17.
+           COMPUTE L17 = L17 - 1. DISPLAY XL17.
+           MOVE L17 TO Q. DISPLAY Q.
+           MOVE -15840393248528361 TO L17. DISPLAY XL17.
+           COMPUTE L17 = L17 - 1. DISPLAY XL17.
+           MOVE L17 TO Q. DISPLAY Q.
+           MOVE 0 TO LS17. DISPLAY XLS17.
+           COMPUTE LS17 = LS17 - 1. DISPLAY XLS17.
+           MOVE LS17 TO Q. DISPLAY Q.
+           MOVE 1 TO LS17. DISPLAY XLS17.
+           COMPUTE LS17 = LS17 - 1. DISPLAY XLS17.
+           MOVE LS17 TO Q. DISPLAY Q.
+           MOVE -1 TO LS17. DISPLAY XLS17.
+           COMPUTE LS17 = LS17 - 1. DISPLAY XLS17.
+           MOVE LS17 TO Q. DISPLAY Q.
+           MOVE 99999999999999999 TO LS17. DISPLAY XLS17.
+           COMPUTE LS17 = LS17 - 1. DISPLAY XLS17.
+           MOVE LS17 TO Q. DISPLAY Q.
+           MOVE -99999999999999999 TO LS17. DISPLAY XLS17.
+           COMPUTE LS17 = LS17 - 1. DISPLAY XLS17.
+           MOVE LS17 TO Q. DISPLAY Q.
+           MOVE -57874810766969932 TO LS17. DISPLAY XLS17.
+           COMPUTE LS17 = LS17 - 1. DISPLAY XLS17.
+           MOVE LS17 TO Q. DISPLAY Q.
+           MOVE 54440482246040834 TO LS17. DISPLAY XLS17.
+           COMPUTE LS17 = LS17 - 1. DISPLAY XLS17.
+           MOVE LS17 TO Q. DISPLAY Q.
+           MOVE -15840393248528361 TO LS17. DISPLAY XLS17.
+           COMPUTE LS17 = LS17 - 1. DISPLAY XLS17.
+           MOVE LS17 TO Q. DISPLAY Q.
+           MOVE 0 TO TS17. DISPLAY XTS17.
+           COMPUTE TS17 = TS17 - 1. DISPLAY XTS17.
+           MOVE TS17 TO Q. DISPLAY Q.
+           MOVE 1 TO TS17. DISPLAY XTS17.
+           COMPUTE TS17 = TS17 - 1. DISPLAY XTS17.
+           MOVE TS17 TO Q. DISPLAY Q.
+           MOVE -1 TO TS17. DISPLAY XTS17.
+           COMPUTE TS17 = TS17 - 1. DISPLAY XTS17.
+           MOVE TS17 TO Q. DISPLAY Q.
+           MOVE 99999999999999999 TO TS17. DISPLAY XTS17.
+           COMPUTE TS17 = TS17 - 1. DISPLAY XTS17.
+           MOVE TS17 TO Q. DISPLAY Q.
+           MOVE -99999999999999999 TO TS17. DISPLAY XTS17.
+           COMPUTE TS17 = TS17 - 1. DISPLAY XTS17.
+           MOVE TS17 TO Q. DISPLAY Q.
+           MOVE -57874810766969932 TO TS17. DISPLAY XTS17.
+           COMPUTE TS17 = TS17 - 1. DISPLAY XTS17.
+           MOVE TS17 TO Q. DISPLAY Q.
+           MOVE 54440482246040834 TO TS17. DISPLAY XTS17.
+           COMPUTE TS17 = TS17 - 1. DISPLAY XTS17.
+           MOVE TS17 TO Q. DISPLAY Q.
+           MOVE -15840393248528361 TO TS17. DISPLAY XTS17.
+           COMPUTE TS17 = TS17 - 1. DISPLAY XTS17.
+           MOVE TS17 TO Q. DISPLAY Q.
+           MOVE "                 " TO XT17. MOVE T17 TO Q. DISPLAY Q.
+           MOVE "                 " TO XL17. MOVE L17 TO Q. DISPLAY Q.
+           MOVE "                 " TO XU17. MOVE U17 TO Q. DISPLAY Q.
+           MOVE "A1111111111111111" TO XT17. MOVE T17 TO Q. DISPLAY Q.
+           MOVE "A1111111111111111" TO XL17. MOVE L17 TO Q. DISPLAY Q.
+           MOVE "A1111111111111111" TO XU17. MOVE U17 TO Q. DISPLAY Q.
+           MOVE "1111111111111111p" TO XT17. MOVE T17 TO Q. DISPLAY Q.
+           MOVE "1111111111111111p" TO XL17. MOVE L17 TO Q. DISPLAY Q.
+           MOVE "1111111111111111p" TO XU17. MOVE U17 TO Q. DISPLAY Q.
+           MOVE "1111111111111111 " TO XT17. MOVE T17 TO Q. DISPLAY Q.
+           MOVE "1111111111111111 " TO XL17. MOVE L17 TO Q. DISPLAY Q.
+           MOVE "1111111111111111 " TO XU17. MOVE U17 TO Q. DISPLAY Q.
+           MOVE "}2222222222222222" TO XT17. MOVE T17 TO Q. DISPLAY Q.
+           MOVE "}2222222222222222" TO XL17. MOVE L17 TO Q. DISPLAY Q.
+           MOVE "}2222222222222222" TO XU17. MOVE U17 TO Q. DISPLAY Q.
+           MOVE 0 TO U18. DISPLAY XU18.
+           COMPUTE U18 = U18 - 1. DISPLAY XU18.
+           MOVE U18 TO Q. DISPLAY Q.
+           MOVE 1 TO U18. DISPLAY XU18.
+           COMPUTE U18 = U18 - 1. DISPLAY XU18.
+           MOVE U18 TO Q. DISPLAY Q.
+           MOVE -1 TO U18. DISPLAY XU18.
+           COMPUTE U18 = U18 - 1. DISPLAY XU18.
+           MOVE U18 TO Q. DISPLAY Q.
+           MOVE 999999999999999999 TO U18. DISPLAY XU18.
+           COMPUTE U18 = U18 - 1. DISPLAY XU18.
+           MOVE U18 TO Q. DISPLAY Q.
+           MOVE -999999999999999999 TO U18. DISPLAY XU18.
+           COMPUTE U18 = U18 - 1. DISPLAY XU18.
+           MOVE U18 TO Q. DISPLAY Q.
+           MOVE 156239832637886578 TO U18. DISPLAY XU18.
+           COMPUTE U18 = U18 - 1. DISPLAY XU18.
+           MOVE U18 TO Q. DISPLAY Q.
+           MOVE -266852959271365752 TO U18. DISPLAY XU18.
+           COMPUTE U18 = U18 - 1. DISPLAY XU18.
+           MOVE U18 TO Q. DISPLAY Q.
+           MOVE 117071330960606018 TO U18. DISPLAY XU18.
+           COMPUTE U18 = U18 - 1. DISPLAY XU18.
+           MOVE U18 TO Q. DISPLAY Q.
+           MOVE 0 TO T18. DISPLAY XT18.
+           COMPUTE T18 = T18 - 1. DISPLAY XT18.
+           MOVE T18 TO Q. DISPLAY Q.
+           MOVE 1 TO T18. DISPLAY XT18.
+           COMPUTE T18 = T18 - 1. DISPLAY XT18.
+           MOVE T18 TO Q. DISPLAY Q.
+           MOVE -1 TO T18. DISPLAY XT18.
+           COMPUTE T18 = T18 - 1. DISPLAY XT18.
+           MOVE T18 TO Q. DISPLAY Q.
+           MOVE 999999999999999999 TO T18. DISPLAY XT18.
+           COMPUTE T18 = T18 - 1. DISPLAY XT18.
+           MOVE T18 TO Q. DISPLAY Q.
+           MOVE -999999999999999999 TO T18. DISPLAY XT18.
+           COMPUTE T18 = T18 - 1. DISPLAY XT18.
+           MOVE T18 TO Q. DISPLAY Q.
+           MOVE 156239832637886578 TO T18. DISPLAY XT18.
+           COMPUTE T18 = T18 - 1. DISPLAY XT18.
+           MOVE T18 TO Q. DISPLAY Q.
+           MOVE -266852959271365752 TO T18. DISPLAY XT18.
+           COMPUTE T18 = T18 - 1. DISPLAY XT18.
+           MOVE T18 TO Q. DISPLAY Q.
+           MOVE 117071330960606018 TO T18. DISPLAY XT18.
+           COMPUTE T18 = T18 - 1. DISPLAY XT18.
+           MOVE T18 TO Q. DISPLAY Q.
+           MOVE 0 TO L18. DISPLAY XL18.
+           COMPUTE L18 = L18 - 1. DISPLAY XL18.
+           MOVE L18 TO Q. DISPLAY Q.
+           MOVE 1 TO L18. DISPLAY XL18.
+           COMPUTE L18 = L18 - 1. DISPLAY XL18.
+           MOVE L18 TO Q. DISPLAY Q.
+           MOVE -1 TO L18. DISPLAY XL18.
+           COMPUTE L18 = L18 - 1. DISPLAY XL18.
+           MOVE L18 TO Q. DISPLAY Q.
+           MOVE 999999999999999999 TO L18. DISPLAY XL18.
+           COMPUTE L18 = L18 - 1. DISPLAY XL18.
+           MOVE L18 TO Q. DISPLAY Q.
+           MOVE -999999999999999999 TO L18. DISPLAY XL18.
+           COMPUTE L18 = L18 - 1. DISPLAY XL18.
+           MOVE L18 TO Q. DISPLAY Q.
+           MOVE 156239832637886578 TO L18. DISPLAY XL18.
+           COMPUTE L18 = L18 - 1. DISPLAY XL18.
+           MOVE L18 TO Q. DISPLAY Q.
+           MOVE -266852959271365752 TO L18. DISPLAY XL18.
+           COMPUTE L18 = L18 - 1. DISPLAY XL18.
+           MOVE L18 TO Q. DISPLAY Q.
+           MOVE 117071330960606018 TO L18. DISPLAY XL18.
+           COMPUTE L18 = L18 - 1. DISPLAY XL18.
+           MOVE L18 TO Q. DISPLAY Q.
+           MOVE 0 TO LS18. DISPLAY XLS18.
+           COMPUTE LS18 = LS18 - 1. DISPLAY XLS18.
+           MOVE LS18 TO Q. DISPLAY Q.
+           MOVE 1 TO LS18. DISPLAY XLS18.
+           COMPUTE LS18 = LS18 - 1. DISPLAY XLS18.
+           MOVE LS18 TO Q. DISPLAY Q.
+           MOVE -1 TO LS18. DISPLAY XLS18.
+           COMPUTE LS18 = LS18 - 1. DISPLAY XLS18.
+           MOVE LS18 TO Q. DISPLAY Q.
+           MOVE 999999999999999999 TO LS18. DISPLAY XLS18.
+           COMPUTE LS18 = LS18 - 1. DISPLAY XLS18.
+           MOVE LS18 TO Q. DISPLAY Q.
+           MOVE -999999999999999999 TO LS18. DISPLAY XLS18.
+           COMPUTE LS18 = LS18 - 1. DISPLAY XLS18.
+           MOVE LS18 TO Q. DISPLAY Q.
+           MOVE 156239832637886578 TO LS18. DISPLAY XLS18.
+           COMPUTE LS18 = LS18 - 1. DISPLAY XLS18.
+           MOVE LS18 TO Q. DISPLAY Q.
+           MOVE -266852959271365752 TO LS18. DISPLAY XLS18.
+           COMPUTE LS18 = LS18 - 1. DISPLAY XLS18.
+           MOVE LS18 TO Q. DISPLAY Q.
+           MOVE 117071330960606018 TO LS18. DISPLAY XLS18.
+           COMPUTE LS18 = LS18 - 1. DISPLAY XLS18.
+           MOVE LS18 TO Q. DISPLAY Q.
+           MOVE 0 TO TS18. DISPLAY XTS18.
+           COMPUTE TS18 = TS18 - 1. DISPLAY XTS18.
+           MOVE TS18 TO Q. DISPLAY Q.
+           MOVE 1 TO TS18. DISPLAY XTS18.
+           COMPUTE TS18 = TS18 - 1. DISPLAY XTS18.
+           MOVE TS18 TO Q. DISPLAY Q.
+           MOVE -1 TO TS18. DISPLAY XTS18.
+           COMPUTE TS18 = TS18 - 1. DISPLAY XTS18.
+           MOVE TS18 TO Q. DISPLAY Q.
+           MOVE 999999999999999999 TO TS18. DISPLAY XTS18.
+           COMPUTE TS18 = TS18 - 1. DISPLAY XTS18.
+           MOVE TS18 TO Q. DISPLAY Q.
+           MOVE -999999999999999999 TO TS18. DISPLAY XTS18.
+           COMPUTE TS18 = TS18 - 1. DISPLAY XTS18.
+           MOVE TS18 TO Q. DISPLAY Q.
+           MOVE 156239832637886578 TO TS18. DISPLAY XTS18.
+           COMPUTE TS18 = TS18 - 1. DISPLAY XTS18.
+           MOVE TS18 TO Q. DISPLAY Q.
+           MOVE -266852959271365752 TO TS18. DISPLAY XTS18.
+           COMPUTE TS18 = TS18 - 1. DISPLAY XTS18.
+           MOVE TS18 TO Q. DISPLAY Q.
+           MOVE 117071330960606018 TO TS18. DISPLAY XTS18.
+           COMPUTE TS18 = TS18 - 1. DISPLAY XTS18.
+           MOVE TS18 TO Q. DISPLAY Q.
+           MOVE "                  " TO XT18. MOVE T18 TO Q. DISPLAY Q.
+           MOVE "                  " TO XL18. MOVE L18 TO Q. DISPLAY Q.
+           MOVE "                  " TO XU18. MOVE U18 TO Q. DISPLAY Q.
+           MOVE "A11111111111111111" TO XT18. MOVE T18 TO Q. DISPLAY Q.
+           MOVE "A11111111111111111" TO XL18. MOVE L18 TO Q. DISPLAY Q.
+           MOVE "A11111111111111111" TO XU18. MOVE U18 TO Q. DISPLAY Q.
+           MOVE "11111111111111111p" TO XT18. MOVE T18 TO Q. DISPLAY Q.
+           MOVE "11111111111111111p" TO XL18. MOVE L18 TO Q. DISPLAY Q.
+           MOVE "11111111111111111p" TO XU18. MOVE U18 TO Q. DISPLAY Q.
+           MOVE "11111111111111111 " TO XT18. MOVE T18 TO Q. DISPLAY Q.
+           MOVE "11111111111111111 " TO XL18. MOVE L18 TO Q. DISPLAY Q.
+           MOVE "11111111111111111 " TO XU18. MOVE U18 TO Q. DISPLAY Q.
+           MOVE "}22222222222222222" TO XT18. MOVE T18 TO Q. DISPLAY Q.
+           MOVE "}22222222222222222" TO XL18. MOVE L18 TO Q. DISPLAY Q.
+           MOVE "}22222222222222222" TO XU18. MOVE U18 TO Q. DISPLAY Q.
+           STOP RUN.

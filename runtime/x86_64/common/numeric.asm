@@ -93,6 +93,231 @@ bin8_to_bcd:
     or eax, edx
     ret
 
+; DISPLAY conversions, 8 digits at a time (SWAR). Internal routines.
+;
+; ascii_to_bin: rdi = digits, rsi = count (0 to 18). Returns rax = value and
+; rdx = 0, or rdx = 1 when a byte is not a digit '0' to '9'.
+; Changes rax, rcx, rdx, rsi, rdi, r8, r10.
+ascii_to_bin:
+    xor eax, eax
+.ab_chunk:
+    cmp rsi, 8
+    jb .ab_tail
+    mov r8, [rdi]
+    mov r10, 0x3030303030303030
+    mov rcx, 0xF0F0F0F0F0F0F0F0
+    mov rdx, r8
+    and rdx, rcx
+    cmp rdx, r10
+    jne .ab_bad                         ; a byte outside 0x30..0x3F
+    mov rdx, 0x0606060606060606
+    add rdx, r8
+    and rdx, rcx
+    cmp rdx, r10
+    jne .ab_bad                         ; a byte in 0x3A..0x3F
+    mov rcx, 0x0F0F0F0F0F0F0F0F
+    and r8, rcx                         ; digits, the first in the lowest byte
+    lea rdx, [r8 + r8*4]
+    add rdx, rdx
+    shr r8, 8
+    add r8, rdx
+    mov rcx, 0x00FF00FF00FF00FF
+    and r8, rcx                         ; 16-bit lanes: two digits
+    imul rdx, r8, 100
+    shr r8, 16
+    add r8, rdx
+    mov rcx, 0x0000FFFF0000FFFF
+    and r8, rcx                         ; 32-bit lanes: four digits
+    imul rdx, r8, 10000
+    shr r8, 32
+    add r8, rdx
+    mov r8d, r8d                        ; eight digits
+    imul rax, rax, 100000000
+    add rax, r8
+    add rdi, 8
+    sub rsi, 8
+    jmp .ab_chunk
+.ab_tail:
+    test rsi, rsi
+    jz .ab_ok
+    movzx ecx, byte [rdi]
+    sub ecx, '0'
+    cmp ecx, 9
+    ja .ab_bad
+    imul rax, rax, 10
+    add rax, rcx
+    inc rdi
+    dec rsi
+    jmp .ab_tail
+.ab_ok:
+    xor edx, edx
+    ret
+.ab_bad:
+    mov edx, 1
+    ret
+
+; bin8_to_ascii: rax = the 8 ASCII digits of eax (below 10^8), the first
+; in the lowest byte. Changes rcx, rdx.
+bin8_to_ascii:
+    mov edx, eax
+    mov ecx, 0xD1B71759
+    imul rdx, rcx
+    shr rdx, 45                         ; q = n / 10000
+    imul ecx, edx, 10000
+    sub eax, ecx                        ; r = n - q * 10000
+    shl rax, 32
+    or rax, rdx                         ; 32-bit lanes: q, then r
+    imul rdx, rax, 10486
+    shr rdx, 20
+    mov rcx, 0x0000007F0000007F
+    and rdx, rcx                        ; each lane / 100
+    imul rcx, rdx, 100
+    sub rax, rcx
+    shl rax, 16
+    or rax, rdx                         ; 16-bit lanes: two digits each
+    imul rdx, rax, 103
+    shr rdx, 10
+    mov rcx, 0x000F000F000F000F
+    and rdx, rcx                        ; each lane / 10
+    imul rcx, rdx, 10
+    sub rax, rcx
+    shl rax, 8
+    or rax, rdx                         ; a digit per byte
+    mov rcx, 0x3030303030303030
+    or rax, rcx
+    ret
+
+; write_tail: write the last rcx (1 to 7) of the 8 digits in rax at rdi,
+; with exact stores. Changes rax, rcx, rdx.
+write_tail:
+    mov rdx, rcx
+    neg rcx
+    add rcx, 8
+    shl rcx, 3
+    shr rax, cl                         ; the digits wanted from byte 0
+    cmp rdx, 4
+    jb .wt_short
+    mov [rdi], eax
+    lea rcx, [rdx*8 - 32]
+    shr rax, cl
+    mov [rdi + rdx - 4], eax
+    ret
+.wt_short:
+    cmp rdx, 2
+    jb .wt_one
+    mov [rdi], ax
+    lea rcx, [rdx*8 - 16]
+    shr eax, cl
+    mov [rdi + rdx - 2], ax
+    ret
+.wt_one:
+    mov [rdi], al
+    ret
+
+; ascii_store: write the value rax (below 10^count) as rsi (1 to 18) ASCII
+; digits at rdi. Changes rax, rcx, rdx, r8, r10.
+ascii_store:
+    mov r10, rax
+    xor r8d, r8d                        ; digits above the low 16
+    cmp rsi, 16
+    jbe .as_split8
+    mov rax, 0x734aca5f6226f0b          ; / 10^16 for values below 2^60
+    mul r10
+    shr rdx, 48
+    mov r8, rdx
+    mov rcx, 10000000000000000
+    imul rdx, rcx
+    sub r10, rdx
+.as_split8:
+    mov rax, 0xabcc77118461d            ; / 10^8 for values below 2^54
+    mul r10
+    shr rdx, 14
+    imul rcx, rdx, 100000000
+    sub r10, rcx                        ; r10 = low 8 digits, rdx = next 8
+    push rdx
+    mov eax, r10d
+    call bin8_to_ascii
+    cmp rsi, 8
+    jb .as_low_part
+    mov [rdi + rsi - 8], rax
+    pop rdx
+    cmp rsi, 8
+    je .as_ret
+    mov eax, edx
+    call bin8_to_ascii
+    lea rcx, [rsi - 8]
+    cmp rcx, 8
+    jb write_tail                       ; 9 to 15 digits
+    mov [rdi + rsi - 16], rax
+    cmp rsi, 16
+    je .as_ret
+    imul ecx, r8d, 103
+    shr ecx, 10                         ; tens of the top digits
+    imul edx, ecx, 10
+    sub r8d, edx
+    add ecx, '0'
+    add r8d, '0'
+    cmp rsi, 17
+    je .as_17
+    mov [rdi], cl
+    mov [rdi + 1], r8b
+    ret
+.as_17:
+    mov [rdi], r8b
+.as_ret:
+    ret
+.as_low_part:
+    add rsp, 8
+    mov rcx, rsi
+    jmp write_tail
+
+; decode_overpunch: dl = a digit that may carry the sign. Returns edx = its
+; digit (anything else counts as 0) and sets ebx = 1 when it is negative:
+; 'p'..'y' = -0..-9; '{' 'A'..'I' = +0..+9; '}' 'J'..'R' = -0..-9.
+decode_overpunch:
+    cmp dl, 'p'
+    jb .do_ebcdic
+    cmp dl, 'y'
+    ja .do_ebcdic
+    sub dl, 'p'
+    mov ebx, 1
+    jmp .do_ret
+.do_ebcdic:
+    cmp dl, '{'
+    jne .do_not_pos0
+    xor edx, edx
+    ret
+.do_not_pos0:
+    cmp dl, '}'
+    jne .do_not_neg0
+    xor edx, edx
+    mov ebx, 1
+    ret
+.do_not_neg0:
+    cmp dl, 'A'
+    jb .do_plain
+    cmp dl, 'I'
+    ja .do_neg_letter
+    sub dl, 'A' - 1
+    jmp .do_ret
+.do_neg_letter:
+    cmp dl, 'J'
+    jb .do_plain
+    cmp dl, 'R'
+    ja .do_plain
+    sub dl, 'J' - 1
+    mov ebx, 1
+    jmp .do_ret
+.do_plain:
+    sub dl, '0'
+    cmp dl, 9
+    jbe .do_ret
+    xor edx, edx
+    ret
+.do_ret:
+    movzx edx, dl
+    ret
+
 ; ARG0 = COMP-3 item, ARG1 = its size (1 to 10 bytes)
 ; Returns RET0 = its value: the bytes as one big-endian number, converted 16
 ; nibbles at a time, with exact reads (overlapping loads, never past the
@@ -303,6 +528,48 @@ runtime_num_load:
     jz .d_start
     xor r9d, r9d
 .d_start:
+    ; 1 to 18 digits: 8 at a time, the sign digit on its own; any byte that
+    ; is not a digit takes the digit loop
+    lea rdx, [r13 - 1]
+    cmp rdx, 18
+    jae .d_slow
+    test r9, r9
+    js .d_fast_plain
+    jz .d_fast_lead
+    mov rdi, r12                        ; trailing sign digit
+    lea rsi, [r13 - 1]
+    call ascii_to_bin
+    test edx, edx
+    jnz .d_slow
+    imul rax, rax, 10
+    mov r10, rax
+    movzx edx, byte [r12 + r13 - 1]
+    call decode_overpunch
+    lea rax, [r10 + rdx]
+    jmp .d_done
+.d_fast_lead:
+    lea rdi, [r12 + 1]
+    lea rsi, [r13 - 1]
+    call ascii_to_bin
+    test edx, edx
+    jnz .d_slow
+    mov r10, rax
+    movzx edx, byte [r12]
+    call decode_overpunch
+    lea rcx, [rel pow10]
+    lea r8, [r13 - 1]
+    mov rax, [rcx + r8*8]
+    imul rax, rdx
+    add rax, r10
+    jmp .d_done
+.d_fast_plain:
+    mov rdi, r12
+    mov rsi, r13
+    call ascii_to_bin
+    test edx, edx
+    jz .d_done
+.d_slow:
+    xor eax, eax
     xor ecx, ecx                        ; index
 .d_loop:
     cmp rcx, r13
@@ -517,6 +784,14 @@ runtime_num_store:
     jz .sd_digits
     inc rbx
 .sd_digits:
+    lea rdx, [rcx - 1]
+    cmp rdx, 18
+    jae .sd_slow                        ; 1 to 18 digits: 8 at a time
+    mov rdi, rbx
+    mov rsi, rcx
+    call ascii_store
+    jmp .sd_sign
+.sd_slow:
     mov r8, RECIP10
 .sd_loop:
     test rcx, rcx
