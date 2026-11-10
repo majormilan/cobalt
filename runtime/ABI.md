@@ -245,6 +245,14 @@ it that item's attributes.
 
 ### Numeric DISPLAY (`PIC 9`, `S`, `V`)
 
+A nonnumeric literal that is not all digits moved to an integer DISPLAY
+item without SIGN SEPARATE keeps its characters, right-justified,
+zero-filled and truncated on the left; a digit in the sign position gets
+the dialect's positive sign (as IBM and GnuCOBOL do; the standard leaves
+the result undefined). Other such moves convert the literal as an unsigned
+integer, counting non-digits as zero.
+
+
 - One ASCII digit `'0'` to `'9'` per byte, most significant first. Size =
   number of digit positions. [implemented]
 - The implied decimal point (`V`) is not stored. The scale (digits after `V`)
@@ -325,7 +333,17 @@ PERFORM counts go through a single representation:
   that does not takes the normal path to memory (truncation, size error) and
   loads the register again. Decimal fields have a dirty byte, so only a
   field that was stored is written back; this leaves invalid data that the
-  loop never replaced untouched.
+  loop never replaced untouched. Fields beyond the four registers live in
+  8-byte binary slots in `.bss`.
+- **Final values**: a counting loop whose stores all add an invariant
+  amount to their field (`ADD A TO C` in `PERFORM VARYING`) is replaced at
+  run time by its final values when the first and last values of every
+  intermediate result fit (then all do); otherwise it runs.
+- Division and multiplication are inline: by constants as multiplications
+  by reciprocals, by fields with `idiv`, or with a 128-bit `mul` / `div`
+  when 64 bits may not suffice. `runtime_num_mul`, `runtime_num_div` and
+  `runtime_num_rescale` remain for other targets and generated code that
+  calls them, with the same results.
 - **Scale alignment is done by the compiler**: operands of `+`, `-` and
   comparisons are brought to the larger scale before the operation.
 - **Working scale W** = largest scale among the operands and the receiver,

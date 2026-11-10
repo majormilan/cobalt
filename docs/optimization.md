@@ -62,15 +62,38 @@ microseconds, best of five runs, process start included):
 | COMP-5 | 0 | 0.97 | 1.07 | 27.5 | 13.0 | 11.5 |
 | COMP-5 | 2 | 34.6 | 31.9 | 17.0 | 13.9 | 12.6 |
 
-Integer COMP-5 ADD and SUBTRACT are a tie (1.7 to 2.1 ms on both sides,
-within the noise of the machine): gcc removes GnuCOBOL's loop altogether,
-so its time is its process start (about 1.9 ms); COBALT's process start is
-about 0.85 ms and its loop of 2,000,000 iterations, all fields in
-registers, about 0.9 ms. Beating it clearly needs the loop to go too
-(Phase 4: final value of an accumulation).
+Integer COMP-5 ADD and SUBTRACT were a tie (gcc removes GnuCOBOL's loop
+altogether, so its time is its process start, about 1.9 ms).
 
-The loops are now so cheap that DIVIDE and COMPUTE, which still call
-`runtime_num_div` (a 128-bit `idiv`), are the slowest cases.
+After inline division and products, final values of accumulating loops,
+counter ranges, binary slots for promoted fields beyond the registers and
+the ON SIZE ERROR short cut (2026-11-10):
+
+| Usage | Scale | ADD | SUBTRACT | MULTIPLY | DIVIDE | COMPUTE |
+|---|---|---|---|---|---|---|
+| DISPLAY | 0 | 136.6 | 122.7 | 54.7 | 41.6 | 15.7 |
+| DISPLAY | 2 | 148.5 | 91.5 | 47.8 | 48.7 | 15.9 |
+| COMP | 0 | 48.1 | 65.6 | 19.1 | 28.4 | 10.9 |
+| COMP | 2 | 76.3 | 54.8 | 33.2 | 32.2 | 12.5 |
+| COMP-3 | 0 | 22.4 | 22.7 | 34.1 | 32.0 | 13.4 |
+| COMP-3 | 2 | 66.7 | 60.5 | 31.3 | 35.2 | 13.2 |
+| COMP-5 | 0 | 1.64 | 2.32 | 25.0 | 28.5 | 10.5 |
+| COMP-5 | 2 | 70.1 | 53.4 | 32.9 | 29.9 | 12.2 |
+
+Every case is faster than GnuCOBOL. ADD and SUBTRACT loops take about
+1 ms, which is the process start: their final values are computed
+without running the loop. COMPUTE (`C = (A * B + C) / 3`) is bound by the
+latency of its multiply-and-divide chain through C, about 9 ns per
+iteration.
+
+The "more" cases of `tools/bench/arith.sh` (GIVING into several receivers,
+ON SIZE ERROR that fires on most iterations, 18-digit items, products and
+quotients in one COMPUTE, mixed usages; results moved to an edited item
+after the loop) are 14 to 102 times faster than GnuCOBOL.
+
+Moving a value into a numeric edited item costs about 100 ns in both
+compilers (`runtime_edit_numeric`); a loop that edits on every iteration
+is dominated by it.
 
 ## Why COBALT was slow on simple statements
 
@@ -97,8 +120,9 @@ suite and the NIST results unchanged.
 
 - [done] Linker: `.text` symbols get a type (function) and a size, so
   profilers (callgrind, perf) name the runtime routines and COBOL procedures.
-- `tools/bench/arith.sh`: more cases (MULTIPLY / DIVIDE with GIVING into
-  several receivers, ON SIZE ERROR, large `S9(18)` items, mixed usages).
+- [done] `tools/bench/arith.sh`: more cases (GIVING into several
+  receivers, ON SIZE ERROR, `S9(18)` items, products and quotients, mixed
+  usages), timed in microseconds.
 
 ### Phase 1: native binary inline (COMP-5, index-names, COMP)
 
@@ -126,9 +150,13 @@ Expected: COMP and COMP-5 ADD / SUBTRACT / MULTIPLY several times faster.
   addition's overflow jumps straight to its store's size error block;
   `cobrt_stmt_err` is not cleared when no ON SIZE ERROR reads it.
 - [done] Error paths (stores that do not fit, overflow) out of line.
-- Fold constants and scale factors at compile time; multiply by a constant
-  power of ten with `lea` / `imul`, divide by constants with
-  multiply-by-reciprocal.
+- [done] Fold constants and scale factors at compile time; divide by
+  constants (powers of ten for rescaling and ROUNDED, literal divisors)
+  with a multiplication by the reciprocal, found at compile time for the
+  values' range (65-bit multipliers included); divisions by fields with
+  one `idiv`, or `mul` / `div` on a 128-bit dividend when 64 bits may not
+  suffice; products cut back to their scale likewise. No arithmetic calls
+  the runtime any more except exponentiation.
 
 ### Phase 3: decimal storage without the generic runtime
 
@@ -153,12 +181,17 @@ Expected: COMP and COMP-5 ADD / SUBTRACT / MULTIPLY several times faster.
   (REDEFINES, subscripts into their record), written back at every exit
   (`src/ir/promote.c`); loops whose head test is on promoted fields and
   constants are rotated (the test repeated at the bottom).
-- Final value of an accumulation: a loop that only adds an invariant to a
-  field and counts can be replaced by one multiplication, when the last
-  value fits (all intermediate ones then fit too). This is what gcc does
+- [done] Final values of accumulating loops: a counting loop whose stores
+  all have the form F := F + (invariant) runs T times and leaves
+  F + T * invariant; the compiler checks at run time that the first and
+  last values fit (every intermediate value is affine in the iteration
+  number, so all fit) and otherwise runs the loop. This is what gcc does
   for GnuCOBOL's COMP-5 loop.
-- Range of loop counters: `I` from 1 by 1 until `I > 2000000` never
-  overflows its 4 bytes, so its store needs no check.
+- [done] Range of loop counters: `I` from 1 by 1 until `I > 2000000`
+  never overflows its 4 bytes, so its store needs no check.
+- [done] Fields beyond the four registers live in 8-byte binary slots.
+- [done] A store with ON SIZE ERROR whose value is too large only records
+  the size error (no call, no store).
 - Loop-invariant code motion and strength reduction of subscript
   arithmetic.
 

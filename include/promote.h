@@ -9,7 +9,7 @@
 #include "ir.h"
 #include <stdbool.h>
 
-#define PROMOTE_MAX_FIELDS 8
+#define PROMOTE_MAX_FIELDS 12
 
 // One promoted field: a numeric item that only the loop's own numeric loads
 // and stores touch, so its value can stay in a register for the whole loop
@@ -20,6 +20,29 @@ typedef struct {
     int uses;                   // loads and stores in the loop
 } PromotedField;
 
+// An affine form over the loop's promoted fields (their values when the
+// loop is entered): c + sum of coef[k] * field k
+typedef struct {
+    long long c;
+    long long coef[PROMOTE_MAX_FIELDS];
+} PromoteAffine;
+
+#define PROMOTE_MAX_CHECKS 16
+
+// Final values of a counting loop that only accumulates (see promote.c):
+// with T iterations, every stored field k ends as field k + T * delta[k]
+typedef struct {
+    bool valid;
+    int counter;                // field index of the counter
+    long long step;             // its increment (> 0)
+    long long limit;            // the loop runs while counter <= limit (or < limit)
+    bool strict;                // <
+    bool stored[PROMOTE_MAX_FIELDS];
+    PromoteAffine delta[PROMOTE_MAX_FIELDS];  // over fields the loop does not store
+    PromoteAffine checks[PROMOTE_MAX_CHECKS]; // invariant parts of intermediate values
+    int nchecks;
+} PromoteClosedForm;
+
 // A loop: LABEL head ... JUMP head, entered only by falling into the head,
 // left only by jumps to labels outside it. The body has no calls other than
 // numeric runtime routines, so nothing else can observe the fields.
@@ -28,6 +51,7 @@ typedef struct {
     const IrInstr *back;        // the IR_JUMP back to it
     PromotedField fields[PROMOTE_MAX_FIELDS];
     int nfields;                // ordered by uses, most used first
+    PromoteClosedForm closed;   // closed.valid: the loop can be replaced
 } PromoteLoop;
 
 typedef struct {

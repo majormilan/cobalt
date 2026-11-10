@@ -2012,6 +2012,31 @@ static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const ch
     }
 
     if (src->kind == AST_STRING_LITERAL || (src->kind == AST_LITERAL_NUMBER && !dest_takes_value)) {
+        const char *t = src->name;
+        bool all_digits = true;
+        for (const char *c = t; *c; c++) all_digits = all_digits && isdigit((unsigned char)*c);
+        if (dest_numeric && !all_digits && dv->usage_type == USAGE_DISPLAY && dv->decimal_places == 0 &&
+            !(dv->sign_mode & SIGN_SEPARATE) && dv->size > 0 && dv->size < 256) {
+            // A literal that is not all digits into an integer DISPLAY item:
+            // its characters as an unsigned integer, right-justified,
+            // zero-filled, truncated on the left (as IBM and GnuCOBOL do;
+            // the standard leaves the result undefined). A digit carrying
+            // the sign gets the positive sign of the dialect.
+            char image[256];
+            int n = dv->size, len = (int)strlen(t);
+            for (int k = 0; k < n; k++) {
+                int j = len - n + k;
+                image[k] = j >= 0 ? t[j] : '0';
+            }
+            image[n] = '\0';
+            int sp = (dv->sign_mode & SIGN_LEADING) ? 0 : n - 1;
+            if (dv->is_signed && (ir->runtime_flags & IR_RT_SIGN_EBCDIC) && isdigit((unsigned char)image[sp]))
+                image[sp] = image[sp] == '0' ? '{' : (char)('A' + image[sp] - '1');
+            char lit[32];
+            emit_data_lit(ir, "movlit", image, lit, sizeof(lit));
+            if (resolve_receiver(ir, dest_node, &dest)) emit_move_alpha(ir, &dest, lit, n);
+            return;
+        }
         if (dest_takes_value) {
             // as an unsigned integer, edited for a numeric edited receiver
             FieldRef sf;

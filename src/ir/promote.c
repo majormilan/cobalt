@@ -176,6 +176,199 @@ out:
     free(acc);
 }
 
+// ── Final values of accumulating loops ───────────────────────────────────────
+// A loop
+//     head: LOAD counter, CONST limit, CMP_JUMP_IF_FALSE (<= or <) to the exit
+//     body: straight-line numeric code, each field stored at most once
+//     JUMP head
+// whose stores all have the form F := F + D, with D an affine form of
+// fields the loop does not store (and the counter's D a positive constant),
+// runs T = (limit - counter) / step + 1 times (when it runs at all) and
+// leaves F + T * D in each F. Every intermediate value of an iteration is
+// then affine in the iteration number t, so it takes its extremes at the
+// first and the last iteration; the backend checks those at run time (the
+// values fit their items, magnitudes leave room in 64 bits) and otherwise
+// runs the loop. The analysis records, for each intermediate value, its
+// invariant part (to be checked) and requires at most one stored field in
+// it, with coefficient 1 or -1.
+
+typedef struct {
+    PromoteAffine a;
+} Sym;
+
+static int field_index(const PromoteLoop *loop, const char *var_name) {
+    if (!var_name) return -1;
+    for (int k = 0; k < loop->nfields; k++)
+        if (strcmp(loop->fields[k].var_name, var_name) == 0) return k;
+    return -1;
+}
+
+static bool aff_add(PromoteAffine *r, const PromoteAffine *a, const PromoteAffine *b, int n, int sign) {
+    long long t;
+    if (sign > 0 ? __builtin_add_overflow(a->c, b->c, &r->c) : __builtin_sub_overflow(a->c, b->c, &r->c)) return false;
+    for (int k = 0; k < n; k++) {
+        if (sign > 0 ? __builtin_add_overflow(a->coef[k], b->coef[k], &t) : __builtin_sub_overflow(a->coef[k], b->coef[k], &t)) return false;
+        r->coef[k] = t;
+    }
+    return true;
+}
+
+static bool aff_scale(PromoteAffine *r, long long m, int n) {
+    if (__builtin_mul_overflow(r->c, m, &r->c)) return false;
+    for (int k = 0; k < n; k++)
+        if (__builtin_mul_overflow(r->coef[k], m, &r->coef[k])) return false;
+    return true;
+}
+
+static bool aff_is_const(const PromoteAffine *a, int n) {
+    for (int k = 0; k < n; k++)
+        if (a->coef[k]) return false;
+    return true;
+}
+
+// An intermediate value: at most one stored field, coefficient +-1; its
+// invariant part is recorded for the run-time check
+static bool record_check(PromoteClosedForm *cf, const PromoteAffine *a, int n) {
+    PromoteAffine inv = *a;
+    int stored = 0;
+    for (int k = 0; k < n; k++) {
+        if (!cf->stored[k] || !a->coef[k]) continue;
+        if (a->coef[k] != 1 && a->coef[k] != -1) return false;
+        stored++;
+        inv.coef[k] = 0;
+    }
+    if (stored > 1) return false;
+    for (int j = 0; j < cf->nchecks; j++)
+        if (memcmp(&cf->checks[j], &inv, sizeof(inv)) == 0) return true;
+    if (cf->nchecks == PROMOTE_MAX_CHECKS) return false;
+    cf->checks[cf->nchecks++] = inv;
+    return true;
+}
+
+static void closed_form(IrInstr **code, int h, int j, PromoteLoop *loop) {
+    PromoteClosedForm *cf = &loop->closed;
+    memset(cf, 0, sizeof(*cf));
+    int n = loop->nfields;
+    // head test
+    if (h + 3 >= j) return;
+    const IrInstr *ld = code[h + 1], *lim = code[h + 2], *cmp = code[h + 3];
+    if (ld->op != IR_NUM_LOAD || lim->op != IR_NUM_CONST || cmp->op != IR_NUM_CMP_JUMP_IF_FALSE) return;
+    if (!cmp->cmp_op || (strcmp(cmp->cmp_op, "<=") != 0 && strcmp(cmp->cmp_op, "<") != 0)) return;
+    int counter = field_index(loop, ld->var_name);
+    if (counter < 0) return;
+    // which fields are stored, each once
+    for (int k = h + 4; k < j; k++) {
+        const IrInstr *i = code[k];
+        if (i->op != IR_NUM_STORE) continue;
+        int f = i->lit_name ? -1 : field_index(loop, i->var_name);
+        if (f < 0 || cf->stored[f]) return;
+        cf->stored[f] = true;
+    }
+    if (!cf->stored[counter]) return;
+    // symbolic execution of the body
+    Sym stack[32];
+    int sp = 0;
+    PromoteAffine cur[PROMOTE_MAX_FIELDS];
+    for (int k = 0; k < n; k++) {
+        memset(&cur[k], 0, sizeof(cur[k]));
+        cur[k].coef[k] = 1;
+    }
+    for (int k = h + 4; k < j; k++) {
+        const IrInstr *i = code[k];
+        PromoteAffine r;
+        switch (i->op) {
+            case IR_SIZE_ERR_CLEAR: case IR_ERR_SAVE: case IR_ERR_RESTORE:
+                break;
+            case IR_NUM_LOAD: {
+                int f = field_index(loop, i->var_name);
+                if (f < 0 || sp == 32) return;
+                stack[sp++].a = cur[f];
+                break;
+            }
+            case IR_NUM_CONST:
+                if (sp == 32) return;
+                memset(&stack[sp].a, 0, sizeof(PromoteAffine));
+                stack[sp++].a.c = i->imm;
+                break;
+            case IR_NUM_ADD: case IR_NUM_SUB:
+                if (sp < 2) return;
+                if (!aff_add(&r, &stack[sp - 2].a, &stack[sp - 1].a, n, i->op == IR_NUM_ADD ? 1 : -1)) return;
+                sp -= 2;
+                if (!record_check(cf, &r, n)) return;
+                stack[sp++].a = r;
+                break;
+            case IR_NUM_NEG:
+                if (sp < 1) return;
+                r = stack[sp - 1].a;
+                if (!aff_scale(&r, -1, n) || !record_check(cf, &r, n)) return;
+                stack[sp - 1].a = r;
+                break;
+            case IR_NUM_RESCALE: {
+                if (sp < 1 || i->imm < 0 || i->imm > 18) return;
+                long long p = 1;
+                for (long long e = 0; e < i->imm; e++) p *= 10;
+                r = stack[sp - 1].a;
+                if (!aff_scale(&r, p, n) || !record_check(cf, &r, n)) return;
+                stack[sp - 1].a = r;
+                break;
+            }
+            case IR_NUM_MUL: {
+                // by a constant only
+                if (sp < 2 || i->imm != 0) return;
+                PromoteAffine b = stack[--sp].a, a = stack[--sp].a;
+                long long m;
+                if (aff_is_const(&b, n)) { r = a; m = b.c; }
+                else if (aff_is_const(&a, n)) { r = b; m = a.c; }
+                else return;
+                if (!aff_scale(&r, m, n) || !record_check(cf, &r, n)) return;
+                stack[sp++].a = r;
+                break;
+            }
+            case IR_NUM_DUP:
+                if (sp < 1 || sp == 32) return;
+                stack[sp] = stack[sp - 1];
+                sp++;
+                break;
+            case IR_NUM_DROP:
+                if (sp < 1) return;
+                sp--;
+                break;
+            case IR_NUM_SWAP: {
+                if (sp < 2) return;
+                Sym t = stack[sp - 1];
+                stack[sp - 1] = stack[sp - 2];
+                stack[sp - 2] = t;
+                break;
+            }
+            case IR_NUM_STORE: {
+                int f = field_index(loop, i->var_name);
+                if (sp < 1) return;
+                cur[f] = stack[--sp].a;
+                break;
+            }
+            default:
+                return;     // labels, jumps, divisions, anything else
+        }
+    }
+    if (sp != 0) return;
+    // every stored field: itself plus an invariant part
+    for (int f = 0; f < n; f++) {
+        if (!cf->stored[f]) continue;
+        PromoteAffine d = cur[f];
+        if (d.coef[f] != 1) return;
+        d.coef[f] = 0;
+        for (int k = 0; k < n; k++)
+            if (d.coef[k] && cf->stored[k]) return;
+        cf->delta[f] = d;
+    }
+    if (!aff_is_const(&cf->delta[counter], n) || cf->delta[counter].c <= 0) return;
+    cf->counter = counter;
+    cf->step = cf->delta[counter].c;
+    cf->limit = lim->imm;
+    cf->strict = strcmp(cmp->cmp_op, "<") == 0;
+    cf->valid = true;
+}
+
 PromotePlan promote_plan(const IrProgram *ir,
                          bool (*accept)(const IrInstr *load, const IrInstr *store)) {
     PromotePlan plan = { NULL, 0 };
@@ -224,9 +417,13 @@ PromotePlan promote_plan(const IrProgram *ir,
         for (k = 0; k < n && ok; k++)
             if ((k < h || k > j) && ref[k] >= h && ref[k] <= j) ok = false;
         if (!ok) continue;
-        PromoteLoop loop = { code[h], code[j], {{0}}, 0 };
+        PromoteLoop loop;
+        memset(&loop, 0, sizeof(loop));
+        loop.head = code[h];
+        loop.back = code[j];
         analyze(code, h, j, &loop, accept);
         if (loop.nfields == 0) continue;
+        closed_form(code, h, j, &loop);
         if (plan.nloops == cap) plan.loops = realloc(plan.loops, sizeof(PromoteLoop) * (size_t)(cap = cap ? cap * 2 : 4));
         plan.loops[plan.nloops++] = loop;
     }

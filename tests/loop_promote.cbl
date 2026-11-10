@@ -28,6 +28,15 @@
            05 SPD PIC 9(3).
        01  SPX REDEFINES SP PIC X(3).
        77  U    PIC 9(3) VALUE 0.
+       77  F1   PIC S9(5)V99 VALUE 1.5.
+       77  F2   PIC S9(7) COMP-3 VALUE 0.
+       77  F3   PIC S9(4) COMP VALUE 0.
+       77  F4   PIC S9(3)V9 VALUE 0.
+       77  F5   PIC 9(3) COMP-3 VALUE 0.
+       77  F6   PIC S9(9) COMP-5 VALUE 0.
+       77  F7   PIC S9(2) VALUE 0.
+       77  SE   PIC 9(5) VALUE 0.
+       77  LIM  PIC S9(4) COMP-3 VALUE 300.
        PROCEDURE DIVISION.
       * accumulation and truncation without ON SIZE ERROR: 999 wraps
            PERFORM VARYING I FROM 1 BY 1 UNTIL I > 1500
@@ -111,4 +120,26 @@
                ADD 1 TO K
            END-PERFORM.
            DISPLAY "K " K.
+      * more fields than registers: the rest in binary slots
+           PERFORM VARYING I FROM 1 BY 1 UNTIL I > LIM
+               ADD F1 TO F2
+               ADD 1 TO F3
+               ADD 4.5 TO F4 ON SIZE ERROR MOVE I TO SE
+               END-ADD
+               SUBTRACT 1 FROM F5
+               ADD F3 TO F6
+               ADD 1 TO F7
+               IF F7 > 40
+                   MOVE 0 TO F7
+               END-IF
+           END-PERFORM.
+           DISPLAY "F " F1 " " F2 " " F3 " " F4 " " F5 " " F6 " " F7.
+           DISPLAY "SE " SE " I " I.
+      * a slot field in the loop test
+           MOVE 0 TO F5 F6.
+           PERFORM UNTIL F5 > 50 OR F6 > 1000
+               ADD 1 TO F5 F1 F4 F7
+               ADD 7 TO F6 F2 F3
+           END-PERFORM.
+           DISPLAY "F " F1 " " F2 " " F3 " " F4 " " F5 " " F6 " " F7.
            STOP RUN.

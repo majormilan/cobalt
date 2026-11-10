@@ -301,6 +301,7 @@ static const RegName vs_regs[VS_NREGS + 5] = {
 static FILE *cold;              // out-of-line code, emitted after the program
 static int ovf_store = -1;      // store whose overflow block an addition jumps to
 static bool skip_neg;           // the next IR_NUM_NEG was folded into a subtraction
+static bool skip_restore;       // the next IR_ERR_RESTORE follows its IR_ERR_SAVE
 
 typedef struct {
     bool is_const;
@@ -308,6 +309,8 @@ typedef struct {
     long long imm;              // the constant
     unsigned long long bound;   // |value| <= bound (BOUND_UNKNOWN: anything)
     bool nonneg;                // value >= 0 known
+    bool ctr;                   // value = the loop counter (as tested at the head) + ctr_off
+    long long ctr_off;
 } VEntry;
 
 #define VS_MAX 64
@@ -421,6 +424,241 @@ static bool fits_imm32(long long v) {
     return v >= -2147483648LL && v <= 2147483647LL;
 }
 
+// ── Division by constants ───────────────────────────────────────────────────
+// x / d for unsigned x < 2^bits as a multiplication: x >> pre, times m, high
+// 64 bits >> post (pre: the factors of two of d). Found by search: the
+// smallest post with m = ceil(2^(64+post) / d') below 2^64 whose error
+// stays below one for every x.
+typedef struct {
+    int pre, post;
+    unsigned long long m;       // 0: d' is 1, only the shift
+    bool add;                   // the multiplier is 2^64 + m (65 bits)
+} UDivPlan;
+
+static int bits_of(unsigned long long x) {
+    int n = 0;
+    while (x) { n++; x >>= 1; }
+    return n;
+}
+
+static bool udiv_plan(unsigned long long d, unsigned long long xmax, UDivPlan *p) {
+    if (d == 0) return false;
+    p->pre = 0;
+    while (!(d & 1)) { d >>= 1; p->pre++; }
+    int bits = bits_of(xmax) - p->pre;
+    if (bits <= 0) bits = 1;
+    p->m = 0;
+    p->post = 0;
+    p->add = false;
+    if (d == 1) return true;
+    for (int k = 64; k < 128; k++) {
+        unsigned __int128 two_k = (unsigned __int128)1 << k;
+        unsigned __int128 m = (two_k + d - 1) / d;
+        if (m >> 65) return false;
+        if (m >> 64) {
+            // 65-bit multiplier: fine for the add form, needs k >= 65
+            unsigned __int128 e = m * d - two_k;
+            if (k >= 65 && (e << bits) <= two_k) {
+                p->m = (unsigned long long)m;   // low 64 bits
+                p->post = k - 64;
+                p->add = true;
+                return true;
+            }
+            continue;
+        }
+        unsigned __int128 e = m * d - two_k;
+        // floor(x * m / 2^k) = floor(x / d) for x < 2^bits when
+        // e * 2^bits <= 2^k (e < 2^64 and bits <= 64: no overflow)
+        if ((e << bits) <= two_k) {
+            p->m = (unsigned long long)m;
+            p->post = k - 64;
+            return true;
+        }
+    }
+    return false;
+}
+
+// rdx = rax / d (unsigned), clobbers rax (and rsi in the add form)
+static void emit_udiv(FILE *f, const UDivPlan *p) {
+    if (p->pre) fprintf(f, "    shr rax, %d\n", p->pre);
+    if (!p->m) {
+        fprintf(f, "    mov rdx, rax\n");
+        return;
+    }
+    if (p->add) {
+        // t = x * m >> 64; q = (t + ((x - t) >> 1)) >> (post - 1)
+        fprintf(f, "    mov rsi, rax\n");
+        fprintf(f, "    mov rdx, 0x%llx\n", p->m);
+        fprintf(f, "    mul rdx\n");
+        fprintf(f, "    sub rsi, rdx\n");
+        fprintf(f, "    shr rsi, 1\n");
+        fprintf(f, "    add rdx, rsi\n");
+        if (p->post > 1) fprintf(f, "    shr rdx, %d\n", p->post - 1);
+        return;
+    }
+    fprintf(f, "    mov rdx, 0x%llx\n", p->m);
+    fprintf(f, "    mul rdx\n");
+    if (p->post) fprintf(f, "    shr rdx, %d\n", p->post);
+}
+
+// dst = src / d truncated toward zero, or rounded half away from zero; the
+// quotient is negated when neg (a negative divisor). |src| <= bound.
+// Returns false (and emits nothing) when no plan exists.
+static bool emit_sdiv_const(FILE *f, const char *src, const char *dst, unsigned long long d,
+                            bool neg, bool round, unsigned long long bound) {
+    unsigned long long half = round ? d / 2 : 0;
+    unsigned long long xmax = (bound >= BOUND_UNKNOWN ? BOUND_UNKNOWN : bound) + half;
+    UDivPlan p;
+    if (!udiv_plan(d, xmax, &p)) return false;
+    fprintf(f, "    mov rax, %s\n", src);
+    fprintf(f, "    mov rcx, rax\n");
+    fprintf(f, "    sar rcx, 63\n");            // sign mask
+    fprintf(f, "    xor rax, rcx\n");
+    fprintf(f, "    sub rax, rcx\n");           // magnitude
+    if (neg) fprintf(f, "    not rcx\n");
+    if (half) {
+        if (fits_imm32((long long)half)) fprintf(f, "    add rax, %lld\n", (long long)half);
+        else fprintf(f, "    mov rdx, %lld\n    add rax, rdx\n", (long long)half);
+    }
+    emit_udiv(f, &p);
+    fprintf(f, "    xor rdx, rcx\n");
+    fprintf(f, "    sub rdx, rcx\n");
+    fprintf(f, "    mov %s, rdx\n", dst);
+    return true;
+}
+
+static int err_counter;         // labels of out-of-line error blocks
+
+// A jump (jcc) to an out-of-line block that records an error and makes the
+// value in reg 0, as the runtime routines do; returns to the current point
+static void emit_err_jump(FILE *f, FILE *cold_f, const char *jcc, const char *reg) {
+    int n = err_counter++;
+    fprintf(f, "    %s L_err_%d\n", jcc, n);
+    fprintf(f, "L_err_back_%d:\n", n);
+    fprintf(cold_f, "L_err_%d:\n", n);
+    fprintf(cold_f, "    or byte [rel cobrt_tgt_err], 1\n");
+    fprintf(cold_f, "    xor %s, %s\n", reg, reg);
+    fprintf(cold_f, "    jmp L_err_back_%d\n", n);
+}
+
+// dst = (src * 10^k) / d truncated toward zero, for any src (128-bit
+// exact): q1 = |src| / d, r = |src| mod d, result q1 * 10^k + r * 10^k / d,
+// both divisions multiplications. Needs d * 10^k < 2^63. A quotient of 2^63
+// or more is an error (out of line, value 0). neg: negative divisor.
+static bool emit_wide_div_const(FILE *f, const char *src, const char *dst, unsigned long long d,
+                                bool neg, int k) {
+    unsigned long long p = pow10_ull(k);
+    if (d == 0 || bound_mul(d, p) >= BOUND_UNKNOWN) return false;
+    UDivPlan p1, p2;
+    if (!udiv_plan(d, BOUND_UNKNOWN, &p1) || !udiv_plan(d, d * p, &p2)) return false;
+    fprintf(f, "    mov rax, %s\n", src);
+    fprintf(f, "    mov rcx, rax\n");
+    fprintf(f, "    sar rcx, 63\n");
+    fprintf(f, "    xor rax, rcx\n");
+    fprintf(f, "    sub rax, rcx\n");
+    if (neg) fprintf(f, "    not rcx\n");
+    fprintf(f, "    mov r8, rax\n");                    // |src|
+    emit_udiv(f, &p1);
+    fprintf(f, "    mov r10, rdx\n");                   // q1
+    if (fits_imm32((long long)d)) fprintf(f, "    imul r11, rdx, %lld\n", (long long)d);
+    else fprintf(f, "    mov r11, %lld\n    imul r11, rdx\n", (long long)d);
+    fprintf(f, "    mov rax, r8\n");
+    fprintf(f, "    sub rax, r11\n");                   // r < d
+    if (fits_imm32((long long)p)) fprintf(f, "    imul rax, rax, %lld\n", (long long)p);
+    else fprintf(f, "    mov r11, %lld\n    imul rax, r11\n", (long long)p);
+    emit_udiv(f, &p2);                                  // rdx = r * 10^k / d
+    if (fits_imm32((long long)p)) fprintf(f, "    imul r10, r10, %lld\n", (long long)p);
+    else fprintf(f, "    mov r11, %lld\n    imul r10, r11\n", (long long)p);
+    int n = err_counter++;
+    fprintf(f, "    jo L_err_%d\n", n);
+    fprintf(f, "    add r10, rdx\n");
+    fprintf(f, "    jo L_err_%d\n", n);
+    fprintf(f, "    xor r10, rcx\n");
+    fprintf(f, "    sub r10, rcx\n");
+    fprintf(f, "    mov %s, r10\n", dst);
+    fprintf(f, "L_err_back_%d:\n", n);
+    fprintf(cold, "L_err_%d:\n", n);
+    fprintf(cold, "    or byte [rel cobrt_tgt_err], 1\n");
+    fprintf(cold, "    xor %s, %s\n", dst, dst);
+    fprintf(cold, "    jmp L_err_back_%d\n", n);
+    return true;
+}
+
+// dst = (src * 10^k) / div truncated toward zero, 128-bit exact, for a
+// divisor in a register: an error (out of line, value 0) on division by
+// zero or a quotient of 2^63 or more
+static void emit_wide_div_reg(FILE *f, const char *src, const char *div, const char *dst, int k) {
+    unsigned long long p = pow10_ull(k);
+    int n = err_counter++;
+    fprintf(f, "    mov r8, %s\n", div);
+    fprintf(f, "    mov rcx, %s\n", src);
+    fprintf(f, "    xor rcx, r8\n");
+    fprintf(f, "    sar rcx, 63\n");                    // sign of the quotient
+    fprintf(f, "    mov rax, r8\n");
+    fprintf(f, "    neg rax\n");
+    fprintf(f, "    cmovns r8, rax\n");                 // |divisor|
+    fprintf(f, "    mov rax, %s\n", src);
+    fprintf(f, "    mov rdx, rax\n");
+    fprintf(f, "    neg rdx\n");
+    fprintf(f, "    cmovns rax, rdx\n");                // |src|
+    if (p > 1) {
+        fprintf(f, "    mov rdx, %lld\n", (long long)p);
+        fprintf(f, "    mul rdx\n");                    // rdx:rax = |src| * 10^k
+    } else {
+        fprintf(f, "    xor edx, edx\n");
+    }
+    fprintf(f, "    cmp rdx, r8\n");
+    fprintf(f, "    jae L_err_%d\n", n);                // zero divisor, or too large
+    fprintf(f, "    div r8\n");
+    fprintf(f, "    test rax, rax\n");
+    fprintf(f, "    js L_err_%d\n", n);
+    fprintf(f, "    xor rax, rcx\n");
+    fprintf(f, "    sub rax, rcx\n");
+    fprintf(f, "    mov %s, rax\n", dst);
+    fprintf(f, "L_err_back_%d:\n", n);
+    fprintf(cold, "L_err_%d:\n", n);
+    fprintf(cold, "    or byte [rel cobrt_tgt_err], 1\n");
+    fprintf(cold, "    xor %s, %s\n", dst, dst);
+    fprintf(cold, "    jmp L_err_back_%d\n", n);
+}
+
+// dst = (src * r8) / 10^k truncated toward zero, 128-bit exact; a result
+// of magnitude 2^63 or more is an error (out of line, value 0), as in
+// runtime_num_mul
+static void emit_wide_mul(FILE *f, const char *src, const char *dst, int k) {
+    int n = err_counter++;
+    fprintf(f, "    mov rcx, %s\n", src);
+    fprintf(f, "    xor rcx, r8\n");
+    fprintf(f, "    sar rcx, 63\n");                    // sign of the product
+    fprintf(f, "    mov rax, r8\n");
+    fprintf(f, "    neg rax\n");
+    fprintf(f, "    cmovns r8, rax\n");                 // |b|
+    fprintf(f, "    mov rax, %s\n", src);
+    fprintf(f, "    mov rdx, rax\n");
+    fprintf(f, "    neg rdx\n");
+    fprintf(f, "    cmovns rax, rdx\n");                // |a|
+    fprintf(f, "    mul r8\n");                         // rdx:rax = |a| * |b|
+    if (k == 0) {
+        fprintf(f, "    test rdx, rdx\n");
+        fprintf(f, "    jnz L_err_%d\n", n);
+    } else {
+        fprintf(f, "    mov r8, %lld\n", (long long)pow10_ull(k));
+        fprintf(f, "    cmp rdx, r8\n");
+        fprintf(f, "    jae L_err_%d\n", n);
+        fprintf(f, "    div r8\n");
+    }
+    fprintf(f, "    test rax, rax\n");
+    fprintf(f, "    js L_err_%d\n", n);
+    fprintf(f, "    xor rax, rcx\n");
+    fprintf(f, "    sub rax, rcx\n");
+    fprintf(f, "    mov %s, rax\n", dst);
+    fprintf(f, "L_err_back_%d:\n", n);
+    fprintf(cold, "L_err_%d:\n", n);
+    fprintf(cold, "    or byte [rel cobrt_tgt_err], 1\n");
+    fprintf(cold, "    xor %s, %s\n", dst, dst);
+    fprintf(cold, "    jmp L_err_back_%d\n", n);
+}
+
 // Operand text for the second operand of an ALU instruction: a register or
 // a 32-bit immediate; larger constants go through rcx
 static const char *vs_operand(FILE *f, const VEntry *e, char *buf, size_t n) {
@@ -449,6 +687,12 @@ static const RegName promo_regs[PROMO_NREGS] = {
     {"rbp", "ebp", "bp"}, {"rbx", "ebx", "bx"}, {"r15", "r15d", "r15w"}, {"r14", "r14d", "r14w"},
 };
 static const int promo_pool[PROMO_NREGS] = { -1, -1, 3, 2 };   // virtual stack register taken
+
+// Fields beyond the registers live in 8-byte slots as binary values:
+// still no conversion from and to their storage inside the loop
+static bool promo_in_slot(int k) {
+    return k >= PROMO_NREGS;
+}
 
 static bool promo_accept(const IrInstr *load, const IrInstr *store) {
     bool digits_ok = !store || (store->digits >= 1 && store->digits <= 18);
@@ -540,6 +784,31 @@ static void field_fits_check(FILE *f, const IrInstr *st, RegName v, const char *
     }
 }
 
+// Range of the values a store into field st can take, [lo, hi]
+static void store_limits(const IrInstr *st, long long *lo, long long *hi) {
+    bool sign = st->flags & IR_NUM_SIGNED;
+    bool by_bytes = inline_binary(st) &&
+        (st->usage_type == USAGE_COMP5 || (st->flags & IR_NUM_NOTRUNC) || st->digits < 1 || st->digits > 18);
+    if (by_bytes) {
+        int bits = st->size * 8;
+        if (sign) {
+            *hi = bits >= 64 ? INT64_MAX : (long long)((1ULL << (bits - 1)) - 1);
+            *lo = bits >= 64 ? INT64_MIN : -(long long)(1ULL << (bits - 1));
+        } else {
+            *hi = bits >= 63 ? INT64_MAX : (long long)((1ULL << bits) - 1);
+            *lo = 0;
+        }
+        return;
+    }
+    long long lim = (long long)pow10_ull(st->digits) - 1;
+    *hi = lim;
+    *lo = sign ? -lim : 0;
+}
+
+// The counter's increment: the counter loaded at the head was at most
+// ctr_hi and at least the smallest value a load can give
+static bool counter_store_fits(const IrInstr *st, const VEntry *v);
+
 // Overflow while computing the value of store L: a size error, and the
 // receiver keeps its value
 static void emit_ovf_block(int L) {
@@ -568,20 +837,75 @@ typedef struct {
     const char **exits;         // jump targets outside the loop
     int nexits;
     bool head_tgt, head_val;    // error bytes known zero at the head
+    // Counter range: the head tests "field ctr <= ctr_hi" (a constant), so
+    // until the body stores ctr, its value is at most ctr_hi
+    int ctr;                    // field index, or -1
+    long long ctr_hi;
+    const IrInstr *ctr_test;    // the head's test
+    bool ctr_live;              // the body has not stored it yet
     // Loop rotation: a head test "a cmp b" on promoted fields and
     // constants is repeated at the bottom instead of jumping back to it
     const IrInstr *test;        // the head's IR_NUM_CMP_JUMP_IF_FALSE, or NULL
-    char test_a[32], test_b[32];
+    char test_a[48], test_b[48];
     const char *test_op;
 } Promo;
 
 static Promo promo;
+
+static void promo_slot(int k, char *buf, size_t n);
+static const char *promo_target(const char *target, char *buf, size_t n);
+static void promo_closed_form(FILE *f);
 
 static int promo_field(const char *var_name) {
     if (!promo.loop || !var_name) return -1;
     for (int k = 0; k < promo.nf; k++)
         if (strcmp(promo.loop->fields[k].var_name, var_name) == 0) return k;
     return -1;
+}
+
+static bool counter_store_fits(const IrInstr *st, const VEntry *v) {
+    if (v->ctr_off <= 0) return false;
+    long long lo, hi;
+    store_limits(st, &lo, &hi);
+    const IrInstr *ld = promo.loop->fields[promo.ctr].load;
+    // the smallest value a load of the counter can give (a packed item's
+    // sign nibble counts even when the PICTURE has no S)
+    long long lmin = 0;
+    if ((ld->flags & IR_NUM_SIGNED) || ld->usage_type == USAGE_COMP3) {
+        unsigned long long b = field_bound(ld);
+        lmin = b >= BOUND_UNKNOWN ? INT64_MIN : -(long long)b;
+    }
+    long long vmin, vmax;
+    if (__builtin_add_overflow(lmin, v->ctr_off, &vmin) ||
+        __builtin_add_overflow(promo.ctr_hi, v->ctr_off, &vmax)) return false;
+    return vmin >= lo && vmax <= hi;
+}
+
+static void promo_slot(int k, char *buf, size_t n) {
+    snprintf(buf, n, "qword [rel L_pslot_%d_%d]", promo.id, k);
+}
+
+static const RegName r9_name = {"r9", "r9d", "r9w"};
+
+// The register holding field k's value: its own, or r9 loaded from its slot
+static RegName promo_value(FILE *f, int k) {
+    if (!promo_in_slot(k)) return promo_regs[k];
+    char slot[48];
+    promo_slot(k, slot, sizeof(slot));
+    fprintf(f, "    mov r9, %s\n", slot);
+    return r9_name;
+}
+
+// Field k = its value in memory
+static void promo_reload(FILE *f, int k, const IrInstr *i) {
+    if (!promo_in_slot(k)) {
+        field_load_to(f, i, promo_regs[k]);
+        return;
+    }
+    char slot[48];
+    promo_slot(k, slot, sizeof(slot));
+    field_load_to(f, i, r9_name);
+    fprintf(f, "    mov %s, r9\n", slot);
 }
 
 // A binary field written back from its register gets the same bytes as
@@ -615,7 +939,8 @@ static bool rotation_operand(const IrInstr *i, char *out, size_t n, bool *is_con
     }
     int k = i->op == IR_NUM_LOAD ? promo_field(i->var_name) : -1;
     if (k < 0) return false;
-    snprintf(out, n, "%s", promo_regs[k].q);
+    if (promo_in_slot(k)) promo_slot(k, out, n);
+    else snprintf(out, n, "%s", promo_regs[k].q);
     *is_const = false;
     return true;
 }
@@ -633,10 +958,11 @@ static void promo_rotation_plan(void) {
     bool ca, cb;
     if (!rotation_operand(a, promo.test_a, sizeof(promo.test_a), &ca) ||
         !rotation_operand(b, promo.test_b, sizeof(promo.test_b), &cb) || (ca && cb)) return;
+    if (strchr(promo.test_a, '[') && strchr(promo.test_b, '[')) return;   // no memory-memory compare
     const char *op = c->cmp_op;
     if (ca) {
         // compare the other way round
-        char t[32];
+        char t[48];
         memcpy(t, promo.test_a, sizeof(t));
         memcpy(promo.test_a, promo.test_b, sizeof(t));
         memcpy(promo.test_b, t, sizeof(t));
@@ -658,8 +984,7 @@ static void promo_begin(FILE *f, const PromoteLoop *loop, int id) {
     if (!tgt_zero) fprintf(f, "    mov byte [rel cobrt_tgt_err], 0\n");
     if (!val_zero) fprintf(f, "    mov byte [rel cobrt_val_err], 0\n");
     tgt_zero = val_zero = true;
-    promo = (Promo){ .loop = loop, .id = id, .nf = loop->nfields < PROMO_NREGS ? loop->nfields : PROMO_NREGS,
-                     .head_tgt = true, .head_val = true };
+    promo = (Promo){ .loop = loop, .id = id, .nf = loop->nfields, .head_tgt = true, .head_val = true };
     for (const IrInstr *i = loop->head; i; i = i->next) {
         if (i->op == IR_LABEL) {
             promo.inside = realloc(promo.inside, sizeof(char *) * (size_t)(promo.ninside + 1));
@@ -668,16 +993,126 @@ static void promo_begin(FILE *f, const PromoteLoop *loop, int id) {
         if (i == loop->back) break;
     }
     promo_rotation_plan();
+    promo.ctr = -1;
+    {
+        const IrInstr *a = loop->head->next, *b = a ? a->next : NULL, *c = b ? b->next : NULL;
+        if (a && b && c && a->op == IR_NUM_LOAD && b->op == IR_NUM_CONST && c->op == IR_NUM_CMP_JUMP_IF_FALSE &&
+            c->cmp_op && (!strcmp(c->cmp_op, "<=") || (!strcmp(c->cmp_op, "<") && b->imm > INT64_MIN))) {
+            promo.ctr = promo_field(a->var_name);
+            promo.ctr_hi = !strcmp(c->cmp_op, "<") ? b->imm - 1 : b->imm;
+            promo.ctr_test = c;
+        }
+    }
     fprintf(f, "    ; loop with %d field(s) in registers\n", promo.nf);
     if (promo_uses_rbx()) {
         fprintf(f, "    sub rsp, 16\n");
         fprintf(f, "    mov [rsp], rbx\n");
     }
     for (int k = 0; k < promo.nf; k++) {
-        if (promo_pool[k] >= 0) vs_reserved[promo_pool[k]] = true;
-        field_load_to(f, loop->fields[k].load, promo_regs[k]);
+        if (!promo_in_slot(k) && promo_pool[k] >= 0) vs_reserved[promo_pool[k]] = true;
+        promo_reload(f, k, loop->fields[k].load);
         if (promo_dirty(k)) fprintf(f, "    mov byte [rel L_dirty_%d_%d], 0\n", id, k);
     }
+    promo_closed_form(f);
+}
+
+// ── Closed form of accumulating loops (src/ir/promote.c) ────────────────────
+
+static const RegName r10_name = {"r10", "r10d", "r10w"};
+
+// rax = the affine form's value from the fields' registers; any overflow
+// jumps to skip. Clobbers rcx, rdx, r9.
+static void emit_affine(FILE *f, const PromoteAffine *a, const char *skip) {
+    fprintf(f, "    mov rax, %lld\n", a->c);
+    for (int k = 0; k < promo.nf; k++) {
+        if (!a->coef[k]) continue;
+        RegName v = promo_value(f, k);
+        fprintf(f, "    mov rdx, %s\n", v.q);
+        if (a->coef[k] != 1) {
+            if (fits_imm32(a->coef[k])) fprintf(f, "    imul rdx, rdx, %lld\n", a->coef[k]);
+            else fprintf(f, "    mov rcx, %lld\n    imul rdx, rcx\n", a->coef[k]);
+            fprintf(f, "    jo %s\n", skip);
+        }
+        fprintf(f, "    add rax, rdx\n");
+        fprintf(f, "    jo %s\n", skip);
+    }
+}
+
+// Jump to skip unless |reg| <= max. Clobbers rcx, rdx.
+static void emit_mag_check(FILE *f, const char *reg, unsigned long long max, const char *skip) {
+    fprintf(f, "    mov rdx, %s\n", reg);
+    fprintf(f, "    neg rdx\n");
+    fprintf(f, "    cmovs rdx, %s\n", reg);             // |v|; the most negative stays above max
+    fprintf(f, "    mov rcx, %llu\n", max);
+    fprintf(f, "    cmp rdx, rcx\n");
+    fprintf(f, "    ja %s\n", skip);
+}
+
+// Before the loop: when its final values can be computed, compute them and
+// leave the loop through its exit; else (or when a check fails) run it
+static void promo_closed_form(FILE *f) {
+    const PromoteClosedForm *cf = &promo.loop->closed;
+    if (!cf->valid) return;
+    const IrInstr *test = promo.loop->head->next->next->next;
+    char exit_buf[64];
+    const char *exit_label = promo_target(test->jump_target, exit_buf, sizeof(exit_buf));
+    if (!exit_label) return;
+    char skip[48];
+    snprintf(skip, sizeof(skip), "L_cf_skip_%d", promo.id);
+    fprintf(f, "    ; closed form: a counting loop that only accumulates\n");
+    RegName c = promo_value(f, cf->counter);
+    fprintf(f, "    mov r10, %s\n", c.q);
+    fprintf(f, "    mov rax, %lld\n", cf->limit);
+    fprintf(f, "    cmp r10, rax\n");
+    fprintf(f, "    %s %s\n", cf->strict ? "jge" : "jg", skip);   // runs 0 times: the loop does it
+    fprintf(f, "    sub rax, r10\n");
+    fprintf(f, "    jo %s\n", skip);
+    if (cf->strict) fprintf(f, "    dec rax\n");
+    if (cf->step > 1) {
+        fprintf(f, "    xor edx, edx\n");
+        fprintf(f, "    mov rcx, %lld\n", cf->step);
+        fprintf(f, "    div rcx\n");
+    }
+    fprintf(f, "    inc rax\n");
+    fprintf(f, "    mov r11, rax\n");                   // T, the number of iterations
+    // invariant parts of the intermediate values leave room in 64 bits
+    for (int j = 0; j < cf->nchecks; j++) {
+        emit_affine(f, &cf->checks[j], skip);
+        emit_mag_check(f, "rax", 1ULL << 61, skip);
+    }
+    for (int k = 0; k < promo.nf; k++) {
+        if (!cf->stored[k]) continue;
+        const IrInstr *st = promo.loop->fields[k].store;
+        RegName v = promo_value(f, k);
+        fprintf(f, "    mov r10, %s\n", v.q);
+        emit_mag_check(f, "r10", 1ULL << 62, skip);
+        field_fits_check(f, st, r10_name, skip, BOUND_UNKNOWN, false);
+        emit_affine(f, &cf->delta[k], skip);
+        fprintf(f, "    imul rax, r11\n");
+        fprintf(f, "    jo %s\n", skip);
+        fprintf(f, "    mov r10, %s\n", promo_value(f, k).q);
+        fprintf(f, "    add rax, r10\n");
+        fprintf(f, "    jo %s\n", skip);
+        fprintf(f, "    mov r10, rax\n");
+        emit_mag_check(f, "r10", 1ULL << 62, skip);
+        field_fits_check(f, st, r10_name, skip, BOUND_UNKNOWN, false);
+        fprintf(f, "    mov [rel L_cf_%d_%d], r10\n", promo.id, k);
+    }
+    // all checks passed: the final values
+    for (int k = 0; k < promo.nf; k++) {
+        if (!cf->stored[k]) continue;
+        fprintf(f, "    mov r10, [rel L_cf_%d_%d]\n", promo.id, k);
+        if (promo_in_slot(k)) {
+            char slot[48];
+            promo_slot(k, slot, sizeof(slot));
+            fprintf(f, "    mov %s, r10\n", slot);
+        } else {
+            fprintf(f, "    mov %s, r10\n", promo_regs[k].q);
+        }
+        if (promo_dirty(k)) fprintf(f, "    mov byte [rel L_dirty_%d_%d], 1\n", promo.id, k);
+    }
+    fprintf(f, "    jmp %s\n", exit_label);
+    fprintf(f, "%s:\n", skip);
 }
 
 // The label a jump in the loop goes to: an exit block for targets outside
@@ -705,7 +1140,7 @@ static void promo_end(FILE *f) {
                 fprintf(f, "    cmp byte [rel L_dirty_%d_%d], 0\n", promo.id, k);
                 fprintf(f, "    je L_loop_clean_%d_%d_%d\n", promo.id, e, k);
             }
-            field_write_from(f, pf->store, promo_regs[k]);
+            field_write_from(f, pf->store, promo_value(f, k));
             if (promo_dirty(k)) fprintf(f, "L_loop_clean_%d_%d_%d:\n", promo.id, e, k);
         }
         if (promo_uses_rbx()) {
@@ -779,6 +1214,8 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     if (!cold) return 1;
     ovf_store = -1;
     skip_neg = false;
+    skip_restore = false;
+    err_counter = 0;
 
     for (size_t r = 0; r < sizeof(runtime_routines) / sizeof(runtime_routines[0]); r++) {
         fprintf(f, "extern %s\n", runtime_routines[r]);
@@ -813,8 +1250,12 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
         free(label);
     }
     for (int p = 0; p < plan.nloops; p++)
-        for (int k = 0; k < plan.loops[p].nfields && k < PROMO_NREGS; k++)
+        for (int k = 0; k < plan.loops[p].nfields; k++) {
             if (plan.loops[p].fields[k].store) fprintf(f, "L_dirty_%d_%d: resb 1\n", p, k);
+            if (k >= PROMO_NREGS) fprintf(f, "L_pslot_%d_%d: resq 1\n", p, k);
+            if (plan.loops[p].closed.valid && plan.loops[p].closed.stored[k])
+                fprintf(f, "L_cf_%d_%d: resq 1\n", p, k);
+        }
     fprintf(f, "cobrt_io_status: resq 1\n");
     fprintf(f, "L_numtext: resb 40\n");
     fprintf(f, "L_numtext2: resb 40\n");
@@ -1043,8 +1484,17 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 break;
             case IR_NUM_LOAD: {
                 int pk = promo_field(i->var_name);
+                if (pk >= 0 && promo_in_slot(pk)) {
+                    char slot[48];
+                    promo_slot(pk, slot, sizeof(slot));
+                    int r = vs_alloc(f);
+                    fprintf(f, "    mov %s, %s\n", vs_regs[r].q, slot);
+                    vs_push_reg(f, r, field_bound(i), !(i->flags & IR_NUM_SIGNED));
+                    break;
+                }
                 if (pk >= 0) {
                     vs_push_reg(f, VS_PROMO0 + pk, field_bound(i), !(i->flags & IR_NUM_SIGNED));
+                    if (pk == promo.ctr && promo.ctr_live) vs[vs_n - 1].ctr = true;
                     break;
                 }
                 if (inline_binary(i)) {
@@ -1100,6 +1550,44 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                         break;
                     }
                 }
+                if (i->imm < 0 && i->imm >= -18) {
+                    // division by 10^k: a multiplication, rounding included
+                    unsigned long long p = pow10_ull((int)-i->imm);
+                    bool round = i->flags != 0;
+                    if (e->is_const) {
+                        unsigned long long mag = e->imm < 0 ? 0ULL - (unsigned long long)e->imm : (unsigned long long)e->imm;
+                        unsigned long long q = (mag + (round ? p / 2 : 0)) / p;
+                        long long r = e->imm < 0 ? -(long long)q : (long long)q;
+                        VEntry c = vs_pop();
+                        (void)c;
+                        vs_push_const(f, r);
+                        break;
+                    }
+                    VEntry v = vs_pop();
+                    int r = vs_own(f, &v, -1);
+                    if (emit_sdiv_const(f, vs_regs[v.reg].q, vs_regs[r].q, p, false, round, v.bound)) {
+                        unsigned long long nb = v.bound >= BOUND_UNKNOWN ? BOUND_UNKNOWN / p + 1 : v.bound / p + 1;
+                        vs_push_reg(f, r, nb, v.nonneg);
+                        break;
+                    }
+                    vs_push_reg(f, r, v.bound, v.nonneg);
+                    e = &vs[vs_n - 1];
+                } else if (i->imm > 0 && i->imm <= 18 && !e->is_const) {
+                    // may overflow: the overflow goes out of line
+                    unsigned long long p = pow10_ull((int)i->imm);
+                    VEntry v = vs_pop();
+                    int r = vs_own(f, &v, -1);
+                    if (fits_imm32((long long)p)) {
+                        fprintf(f, "    imul %s, %s, %lld\n", vs_regs[r].q, vs_regs[r].q, (long long)p);
+                    } else {
+                        fprintf(f, "    mov rcx, %lld\n", (long long)p);
+                        fprintf(f, "    imul %s, rcx\n", vs_regs[r].q);
+                    }
+                    emit_err_jump(f, cold, "jo", vs_regs[r].q);
+                    tgt_zero = false;
+                    vs_push_reg(f, r, BOUND_UNKNOWN, v.nonneg);
+                    break;
+                }
                 VEntry v = vs_pop();
                 vs_to(f, &v, "rdi");
                 fprintf(f, "    mov rsi, %lld\n", i->imm);
@@ -1129,6 +1617,12 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                     break;
                 }
                 unsigned long long nb = bound_add(a.bound, b.bound);
+                // counter + constant stays a counter value
+                bool rc = false;
+                long long roff = 0;
+                if (a.ctr && b.is_const) rc = !(add ? __builtin_add_overflow(a.ctr_off, b.imm, &roff)
+                                                    : __builtin_sub_overflow(a.ctr_off, b.imm, &roff));
+                else if (add && b.ctr && a.is_const) rc = !__builtin_add_overflow(b.ctr_off, a.imm, &roff);
                 const IrInstr *n = i->next;
                 if (!add && n && n->op == IR_NUM_NEG) {
                     // SUBTRACT b FROM c is lowered as -(b - c): compute c - b
@@ -1156,6 +1650,10 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                     }
                 }
                 vs_push_reg(f, r, nb, add && a.nonneg && b.nonneg);
+                if (rc && !skip_neg) {
+                    vs[vs_n - 1].ctr = true;
+                    vs[vs_n - 1].ctr_off = roff;
+                }
                 break;
             }
             case IR_NUM_MUL:
@@ -1183,6 +1681,119 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                     fprintf(f, "    imul %s, %s\n", vs_regs[r].q, vs_operand(f, &b, buf, sizeof(buf)));
                     vs_push_reg(f, r, nb, a.nonneg && b.nonneg);
                     break;
+                }
+                if (i->op == IR_NUM_MUL && i->imm > 0 && i->imm <= 18 && nb < BOUND_UNKNOWN) {
+                    // (a * b) / 10^k: the product fits, the division is a
+                    // multiplication
+                    unsigned long long p = pow10_ull((int)i->imm);
+                    if (a.is_const && b.is_const) {
+                        long long prod = a.imm * b.imm;
+                        unsigned long long mag = prod < 0 ? 0ULL - (unsigned long long)prod : (unsigned long long)prod;
+                        long long q = (long long)(mag / p);
+                        vs_push_const(f, prod < 0 ? -q : q);
+                        break;
+                    }
+                    if (a.is_const) { VEntry t = a; a = b; b = t; }
+                    if (a.reg >= VS_NREGS && !b.is_const && b.reg < VS_NREGS) { VEntry t = a; a = b; b = t; }
+                    int r = vs_own(f, &a, b.is_const ? -1 : b.reg);
+                    char buf[32];
+                    if (b.is_const && fits_imm32(b.imm))
+                        fprintf(f, "    imul %s, %s, %lld\n", vs_regs[r].q, vs_regs[r].q, b.imm);
+                    else
+                        fprintf(f, "    imul %s, %s\n", vs_regs[r].q, vs_operand(f, &b, buf, sizeof(buf)));
+                    if (emit_sdiv_const(f, vs_regs[r].q, vs_regs[r].q, p, false, false, nb)) {
+                        vs_push_reg(f, r, nb / p, a.nonneg && b.nonneg);
+                        break;
+                    }
+                    // no plan (cannot happen for powers of ten): undo nothing,
+                    // divide with idiv
+                    fprintf(f, "    mov rax, %s\n    cqo\n    mov rcx, %lld\n    idiv rcx\n    mov %s, rax\n",
+                            vs_regs[r].q, (long long)p, vs_regs[r].q);
+                    vs_push_reg(f, r, nb / p, a.nonneg && b.nonneg);
+                    break;
+                }
+                if (i->op == IR_NUM_DIV && i->imm >= 0 && i->imm <= 18 &&
+                    bound_mul(a.bound, pow10_ull((int)i->imm)) < BOUND_UNKNOWN &&
+                    !(b.is_const && b.imm == 0)) {
+                    // (a * 10^k) / b where a * 10^k fits 64 bits
+                    unsigned long long p = pow10_ull((int)i->imm);
+                    unsigned long long na = bound_mul(a.bound, p);
+                    if (a.is_const && b.is_const) {
+                        long long n = a.imm * (long long)p;
+                        vs_push_const(f, n / b.imm);    // C truncates toward zero
+                        break;
+                    }
+                    if (b.is_const) {
+                        unsigned long long bm = b.imm < 0 ? 0ULL - (unsigned long long)b.imm : (unsigned long long)b.imm;
+                        UDivPlan plan_chk;
+                        if (udiv_plan(bm, na, &plan_chk)) {
+                            int r = vs_own(f, &a, -1);
+                            if (p > 1) {
+                                if (fits_imm32((long long)p))
+                                    fprintf(f, "    imul %s, %s, %lld\n", vs_regs[r].q, vs_regs[r].q, (long long)p);
+                                else
+                                    fprintf(f, "    mov rcx, %lld\n    imul %s, rcx\n", (long long)p, vs_regs[r].q);
+                            }
+                            emit_sdiv_const(f, vs_regs[r].q, vs_regs[r].q, bm, b.imm < 0, false, na);
+                            vs_push_reg(f, r, na / bm, a.nonneg && b.nonneg);
+                            break;
+                        }
+                    } else {
+                        // a divisor known only at run time: one 64-bit idiv
+                        // (no INT64_MIN / -1: the dividend is below 2^63)
+                        int r = vs_own(f, &a, b.reg);
+                        if (p > 1) {
+                            if (fits_imm32((long long)p))
+                                fprintf(f, "    imul %s, %s, %lld\n", vs_regs[r].q, vs_regs[r].q, (long long)p);
+                            else
+                                fprintf(f, "    mov rcx, %lld\n    imul %s, rcx\n", (long long)p, vs_regs[r].q);
+                        }
+                        int n = err_counter++;
+                        fprintf(f, "    test %s, %s\n", vs_regs[b.reg].q, vs_regs[b.reg].q);
+                        fprintf(f, "    jz L_err_%d\n", n);
+                        fprintf(f, "    mov rax, %s\n", vs_regs[r].q);
+                        fprintf(f, "    cqo\n");
+                        fprintf(f, "    idiv %s\n", vs_regs[b.reg].q);
+                        fprintf(f, "    mov %s, rax\n", vs_regs[r].q);
+                        fprintf(f, "L_err_back_%d:\n", n);
+                        fprintf(cold, "L_err_%d:\n", n);
+                        fprintf(cold, "    or byte [rel cobrt_tgt_err], 1\n");
+                        fprintf(cold, "    xor %s, %s\n", vs_regs[r].q, vs_regs[r].q);
+                        fprintf(cold, "    jmp L_err_back_%d\n", n);
+                        tgt_zero = false;
+                        vs_push_reg(f, r, na, a.nonneg && b.nonneg);
+                        break;
+                    }
+                }
+                if (i->op == IR_NUM_MUL && i->imm >= 0 && i->imm <= 18 && !(a.is_const && b.is_const)) {
+                    // the product may need 128 bits: inline
+                    if (a.is_const) { VEntry t = a; a = b; b = t; }
+                    int r = vs_own(f, &a, b.is_const ? -1 : b.reg);
+                    vs_to(f, &b, "r8");
+                    emit_wide_mul(f, vs_regs[r].q, vs_regs[r].q, (int)i->imm);
+                    tgt_zero = false;
+                    vs_push_reg(f, r, BOUND_UNKNOWN, a.nonneg && b.nonneg);
+                    break;
+                }
+                if (i->op == IR_NUM_DIV && i->imm >= 0 && i->imm <= 18 && !(a.is_const && b.is_const) &&
+                    !(b.is_const && b.imm == 0)) {
+                    // 128-bit dividend, inline
+                    if (b.is_const) {
+                        unsigned long long bm = b.imm < 0 ? 0ULL - (unsigned long long)b.imm : (unsigned long long)b.imm;
+                        int r = vs_own(f, &a, -1);
+                        if (emit_wide_div_const(f, vs_regs[r].q, vs_regs[r].q, bm, b.imm < 0, (int)i->imm)) {
+                            tgt_zero = false;
+                            vs_push_reg(f, r, BOUND_UNKNOWN, a.nonneg && b.nonneg);
+                            break;
+                        }
+                        a = (VEntry){ .is_const = false, .reg = r, .bound = a.bound, .nonneg = a.nonneg };
+                    } else {
+                        int r = vs_own(f, &a, b.reg);
+                        emit_wide_div_reg(f, vs_regs[r].q, vs_regs[b.reg].q, vs_regs[r].q, (int)i->imm);
+                        tgt_zero = false;
+                        vs_push_reg(f, r, BOUND_UNKNOWN, a.nonneg && b.nonneg);
+                        break;
+                    }
                 }
                 vs_to(f, &b, "rsi");
                 vs_to(f, &a, "rdi");
@@ -1249,6 +1860,8 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 if (e.reg >= VS_NREGS) {
                     // a promoted register: name it again
                     vs_push_reg(f, e.reg, e.bound, e.nonneg);
+                    vs[vs_n - 1].ctr = e.ctr;
+                    vs[vs_n - 1].ctr_off = e.ctr_off;
                     break;
                 }
                 int r = vs_alloc(f);
@@ -1269,6 +1882,8 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 break;
             }
             case IR_ERR_SAVE:
+                // SAVE then RESTORE: the target byte stays as it is
+                if (i->next && i->next->op == IR_ERR_RESTORE) skip_restore = true;
                 if (tgt_zero) {
                     if (!val_zero) fprintf(f, "    mov byte [rel cobrt_val_err], 0\n");
                     val_zero = true;
@@ -1279,6 +1894,10 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 val_zero = false;
                 break;
             case IR_ERR_RESTORE:
+                if (skip_restore) {
+                    skip_restore = false;
+                    break;
+                }
                 if (val_zero) {
                     if (!tgt_zero) fprintf(f, "    mov byte [rel cobrt_tgt_err], 0\n");
                     tgt_zero = true;
@@ -1308,7 +1927,7 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 vs_ensure(f, 1);
                 int pk = i->lit_name ? -1 : promo_field(i->var_name);
                 VEntry v = vs_pop();
-                if (pk >= 0) vs_unalias(f, VS_PROMO0 + pk);
+                if (pk >= 0 && !promo_in_slot(pk)) vs_unalias(f, VS_PROMO0 + pk);
                 int L = store_counter++;
                 bool known = tgt_zero;      // no error while computing the value
                 bool ovf = ovf_store == L;  // an addition jumps to L_store_ovf on overflow
@@ -1352,13 +1971,25 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 snprintf(slow, sizeof(slow), "L_store_slow_%d", L);
                 if (v.is_const) fprintf(f, "    mov r9, %lld\n", v.imm);
                 fprintf(cold, "%s:\n", slow);
+                // ON SIZE ERROR and a value that is too large (not one that is
+                // only negative for an unsigned item): a size error, the
+                // receiver unchanged, no store needed
+                bool keep_short = (i->flags & IR_NUM_KEEP) &&
+                                  ((i->flags & IR_NUM_SIGNED) || v.nonneg || (pk < 0 && !inline_binary(i)));
                 if (pk >= 0) {
-                    // Promoted field: only the register changes
-                    RegName pr = promo_regs[pk];
+                    // Promoted field: only the register (or slot) changes
+                    char slot[48];
+                    bool in_slot = promo_in_slot(pk);
+                    if (in_slot) promo_slot(pk, slot, sizeof(slot));
                     bool dirty = promo_dirty(pk);
-                    field_fits_check(f, i, vr, slow, v.bound, v.nonneg);
-                    fprintf(f, "    mov %s, %s\n", pr.q, vr.q);
+                    if (!(pk == promo.ctr && promo.ctr_live && v.ctr && counter_store_fits(i, &v)))
+                        field_fits_check(f, i, vr, slow, v.bound, v.nonneg);
+                    if (pk == promo.ctr) promo.ctr_live = false;
+                    fprintf(f, "    mov %s, %s\n", in_slot ? slot : promo_regs[pk].q, vr.q);
                     if (dirty) fprintf(f, "    mov byte [rel L_dirty_%d_%d], 1\n", promo.id, pk);
+                  if (keep_short) {
+                    fprintf(cold, "    or byte [rel %s], 1\n", err);
+                  } else {
                     // memory first gets the register's value (ON SIZE ERROR
                     // may keep it), then the normal store, then the register
                     // is loaded again
@@ -1366,12 +1997,13 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                         fprintf(cold, "    cmp byte [rel L_dirty_%d_%d], 0\n", promo.id, pk);
                         fprintf(cold, "    je L_store_clean_%d\n", L);
                     }
-                    field_write_from(cold, i, pr);
+                    field_write_from(cold, i, promo_value(cold, pk));
                     if (dirty) fprintf(cold, "L_store_clean_%d:\n", L);
                     emit_num_store_call(cold, i, &v);
                     fprintf(cold, "    or [rel %s], al\n", err);
-                    field_load_to(cold, i, pr);
+                    promo_reload(cold, pk, i);
                     if (dirty) fprintf(cold, "    mov byte [rel L_dirty_%d_%d], 0\n", promo.id, pk);
+                  }
                 } else {
                     if (inline_binary(i)) {
                         char mem[96];
@@ -1394,8 +2026,12 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                         fprintf(f, "    mov ecx, %d\n", i->flags);
                         fprintf(f, "    call runtime_packed_store\n");
                     }
-                    emit_num_store_call(cold, i, &v);
-                    fprintf(cold, "    or [rel %s], al\n", err);
+                    if (keep_short) {
+                        fprintf(cold, "    or byte [rel %s], 1\n", err);
+                    } else {
+                        emit_num_store_call(cold, i, &v);
+                        fprintf(cold, "    or [rel %s], al\n", err);
+                    }
                 }
                 if (known) {
                     fprintf(cold, "    jmp L_store_done_%d\n", L);
@@ -1631,6 +2267,7 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
         }
         if (!vs_handles(i->op) && !keeps_err_state(i->op)) tgt_zero = val_zero = false;
         if (promo.loop && i == promo.test) fprintf(f, "L_loop_body_%d:\n", promo.id);
+        if (promo.loop && promo.ctr >= 0 && i == promo.ctr_test) promo.ctr_live = true;
         if (promo.loop && i == promo.loop->head) {
             tgt_zero = promo.head_tgt;
             val_zero = promo.head_val;
