@@ -2189,6 +2189,103 @@ static AstNode *parse_statement(void) {
         if (!stmt->children) { ast_free(stmt); arith_error(is_open ? "Expected OPEN mode and file" : "Expected file name"); return NULL; }
         return stmt;
     }
+    // ─── SORT file {ON {ASCENDING|DESCENDING} KEY data-name...}...
+    //       [WITH DUPLICATES IN ORDER] [COLLATING SEQUENCE IS alphabet]
+    //       {INPUT PROCEDURE IS p [THRU p] | USING file...}
+    //       {OUTPUT PROCEDURE IS p [THRU p] | GIVING file...}
+    //     MERGE file {ON ... KEY ...}... [COLLATING SEQUENCE IS alphabet]
+    //       USING file file... {OUTPUT PROCEDURE ... | GIVING file...}
+    else if (tok.kind == TOK_SORT || tok.kind == TOK_MERGE) {
+        bool merge = tok.kind == TOK_MERGE;
+        next();
+        AstNode *st = ast_new(AST_STATEMENT_SORT, merge ? "MERGE" : "SORT", loc);
+        if (tok.kind != TOK_IDENT) { ast_free(st); arith_error("Expected the sort file"); return NULL; }
+        st->extra = parse_procedure_name();
+        AstNode *key_tail = NULL, *loop_tail = NULL;
+        for (;;) {
+            if (tok.kind == TOK_ON) next();
+            if (tok.kind != TOK_ASCENDING && tok.kind != TOK_DESCENDING) break;
+            bool desc = tok.kind == TOK_DESCENDING;
+            next();
+            if (tok.kind == TOK_KEY) next();
+            if (tok.kind == TOK_IS) next();
+            while (tok.kind == TOK_IDENT && !tok_is_word("COLLATING") && !tok_is_word("DUPLICATES") &&
+                   !tok_is_word("SEQUENCE")) {
+                AstNode *k = parse_forward_identifier();
+                k->is_signed = desc;
+                list_append(&st->children, &key_tail, k);
+            }
+        }
+        if (!st->children) { ast_free(st); arith_error("Expected ASCENDING or DESCENDING KEY"); return NULL; }
+        if (tok.kind == TOK_WITH) next();
+        if (tok_is_word("DUPLICATES")) {
+            next();
+            if (tok.kind == TOK_IN) next();
+            if (tok_is_word("ORDER")) next();
+        }
+        if (tok_is_word("COLLATING") || tok_is_word("SEQUENCE")) {
+            if (tok_is_word("COLLATING")) next();
+            if (tok_is_word("SEQUENCE")) next();
+            if (tok.kind == TOK_IS) next();
+            if (tok.kind == TOK_IDENT) { st->text = tok_to_str(); next(); }
+        }
+        for (int part = 0; part < 2; part++) {
+            bool input = part == 0;
+            if ((input && tok.kind == TOK_INPUT) || (!input && tok.kind == TOK_OUTPUT)) {
+                next();
+                if (tok.kind == TOK_PROCEDURE) next();
+                if (tok.kind == TOK_IS) next();
+                if (!is_procedure_name_token()) { ast_free(st); arith_error("Expected a procedure name"); return NULL; }
+                AstNode *proc = parse_procedure_name();
+                if (tok.kind == TOK_THROUGH) {
+                    next();
+                    proc->loop = parse_procedure_name();
+                }
+                if (input) st->on_error = proc;
+                else st->not_on_error = proc;
+            } else if ((input && tok.kind == TOK_USING) || (!input && tok.kind == TOK_GIVING)) {
+                AstNode *files = ast_new(AST_SPECIAL, input ? "USING" : "GIVING", loc);
+                AstNode *ftail = NULL;
+                next();
+                while (tok.kind == TOK_IDENT) list_append(&files->children, &ftail, parse_procedure_name());
+                list_append(&st->loop, &loop_tail, files);
+            } else {
+                ast_free(st);
+                arith_error(input ? "Expected INPUT PROCEDURE or USING" : "Expected OUTPUT PROCEDURE or GIVING");
+                return NULL;
+            }
+        }
+        return st;
+    }
+    // ─── RELEASE record [FROM identifier]
+    else if (tok.kind == TOK_RELEASE) {
+        next();
+        AstNode *rel = ast_new(AST_STATEMENT_RELEASE, NULL, loc);
+        if (tok.kind != TOK_IDENT) { ast_free(rel); arith_error("Expected a sort record"); return NULL; }
+        rel->extra = parse_identifier();
+        if (tok.kind == TOK_FROM) {
+            next();
+            rel->loop = parse_value_operand();
+            if (!rel->loop) { ast_free(rel); arith_error("Expected identifier after FROM"); return NULL; }
+        }
+        return rel;
+    }
+    // ─── RETURN file [RECORD] [INTO identifier] [AT] END s [NOT [AT] END s] [END-RETURN]
+    else if (tok.kind == TOK_RETURN) {
+        next();
+        AstNode *ret = ast_new(AST_STATEMENT_RETURN, NULL, loc);
+        if (tok.kind != TOK_IDENT) { ast_free(ret); arith_error("Expected a sort file"); return NULL; }
+        ret->extra = parse_procedure_name();
+        if (tok.kind == TOK_RECORD) next();
+        if (tok.kind == TOK_INTO) {
+            next();
+            if (tok.kind != TOK_IDENT) { ast_free(ret); arith_error("Expected identifier after INTO"); return NULL; }
+            ret->loop = parse_identifier();
+        }
+        if (!parse_io_phrases(ret)) { ast_free(ret); return NULL; }
+        if (tok.kind == TOK_END_RETURN) next();
+        return ret;
+    }
     // ─── DELETE file [RECORD] [INVALID [KEY] s] [NOT INVALID [KEY] s] [END-DELETE]
     else if (tok.kind == TOK_DELETE) {
         next();
@@ -2881,10 +2978,8 @@ static AstNode *parse_file_section(void) {
         next();
         if (tok.kind != TOK_IDENT) { arith_error("Expected file name after FD"); break; }
         char *name = tok_to_str();
-        if (sort_file)
-            cobalt_error_loc(current_lexer->original_source, fd_loc.line, fd_loc.column,
-                             "SD (sort files) is not supported yet");
         AstNode *fd = ast_new(AST_FILE_DECL, name, fd_loc);
+        fd->is_numeric = sort_file;         // SD: a sort-merge file
         free(name);
         next();
         // RECORD CONTAINS / VARYING: digits = shortest record, decimal_places =

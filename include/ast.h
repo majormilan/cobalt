@@ -126,6 +126,12 @@ typedef enum {
                             //   [NOT] INVALID KEY (WRITE: is_signed for INVALID KEY, else
                             //   the phrases are [NOT] AT END-OF-PAGE)
     AST_STATEMENT_DELETE,   // extra: file; on_error / not_on_error: [NOT] INVALID KEY
+    AST_STATEMENT_SORT,     // name: SORT or MERGE; extra: the sort file; children: keys
+                            //   (is_signed: DESCENDING); text: COLLATING SEQUENCE alphabet;
+                            //   on_error / not_on_error: INPUT / OUTPUT PROCEDURE (loop:
+                            //   THRU); loop: AST_SPECIAL "USING" / "GIVING" (children: files)
+    AST_STATEMENT_RELEASE,  // extra: sort record; loop: FROM
+    AST_STATEMENT_RETURN,   // extra: sort file; loop: INTO; on_error / not_on_error: [NOT] AT END
     AST_STATEMENT_START,    // extra: file; text: =, > or >=; children: KEY data-name;
                             //   on_error / not_on_error: [NOT] INVALID KEY
     AST_STATEMENT_SEARCH,   // name: "ALL" for SEARCH ALL; extra: table identifier;

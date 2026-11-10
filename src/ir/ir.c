@@ -106,6 +106,7 @@ typedef struct {
     int min_size, max_size; // record lengths
     bool variable;          // records of different lengths
     int same_group;         // SAME RECORD AREA group, or -1
+    bool is_sort;           // SD: a sort-merge file
     int nkeys;              // indexed: prime and alternate keys
     int key_item[16];       // their data items
 } FileInfo;
@@ -118,6 +119,7 @@ typedef struct {
 #define FILE_LINAGE    16
 #define ORG_RELATIVE   0x100
 #define ORG_INDEXED    0x200
+#define ORG_SORT       0x400
 #define ACC_RANDOM     0x1000
 #define ACC_DYNAMIC    0x2000
 
@@ -660,7 +662,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
                     if (f < 0)
                         cobalt_error_loc(NULL, entry->loc.line, entry->loc.column,
                                          "FD '%s' has no SELECT", entry->name);
-                    else files[f].fd = entry;
+                    else { files[f].fd = entry; files[f].is_sort = entry->is_numeric; }
                     for (AstNode *d = entry->children; d && ndecls < MAX_VARS; d = d->next) {
                         decls[ndecls] = d;
                         decl_file[ndecls++] = f;
@@ -885,6 +887,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
                    (fi->linage_record >= 0 ? FILE_LINAGE : 0) |
                    (sel->org == FILE_ORG_RELATIVE ? ORG_RELATIVE : 0) |
                    (sel->org == FILE_ORG_INDEXED ? ORG_INDEXED : 0) |
+                   (fi->is_sort ? ORG_SORT : 0) |
                    (sel->access == FILE_ACCESS_RANDOM ? ACC_RANDOM : 0) |
                    (sel->access == FILE_ACCESS_DYNAMIC ? ACC_DYNAMIC : 0);
         d->digits = fi->min_size;
@@ -2913,6 +2916,234 @@ static int key_of_item(int f, AstNode *item, int *len) {
     return -1;
 }
 
+// ── SORT and MERGE ───────────────────────────────────────────────────────────
+
+static int sort_counter = 0;
+
+// Collating weights of ALPHABET name as a data label, or "0" for the native
+// order ("$collate": the program collating sequence)
+static void sort_weights(IrProgram *ir, AstNode *program_env, const char *alphabet, char *label, size_t n) {
+    if (!alphabet) {
+        snprintf(label, n, "%s", has_collation ? "$collate" : "0");
+        return;
+    }
+    for (AstNode *e = program_env ? program_env->children : NULL; e; e = e->next) {
+        if (e->kind != AST_SPECIAL || strcmp(e->name, "ALPHABET") != 0 || strcasecmp(e->text, alphabet) != 0)
+            continue;
+        if (!e->children) break;        // NATIVE, STANDARD-1: the native order
+        snprintf(label, n, "$sortcoll_%d", sort_counter);
+        IrInstr *t = emit(ir, IR_DATA_BYTES);
+        t->var_name = strdup(label);
+        t->size = 256;
+        unsigned char *w = malloc(256);
+        alphabet_weights(e, w);
+        t->content = (char *)w;
+        return;
+    }
+    snprintf(label, n, "0");
+}
+
+static AstNode *environment_division = NULL;
+
+// The sort file of a SORT, MERGE, RELEASE or RETURN, or -1
+static int sort_file(AstNode *ref, bool report) {
+    for (int f = 0; f < num_files; f++)
+        if (strcasecmp(files[f].name, ref->name) == 0) {
+            if (files[f].is_sort) return f;
+            break;
+        }
+    if (report) cobalt_error_loc(NULL, ref->loc.line, ref->loc.column, "'%s' is not a sort file (SD)", ref->name);
+    return -1;
+}
+
+static void emit_sort_op(IrProgram *ir, IrOpcode op, int f, const char *area) {
+    IrInstr *i = emit_file_op(ir, op, f);
+    if (area) i->lit_name = strdup(area);
+}
+
+static void lower_sort(IrProgram *ir, AstNode *node) {
+    int sd = sort_file(node->extra, true);
+    if (sd < 0) return;
+    FileInfo *fi = &files[sd];
+    int area_rec = vars[fi->first_record].record;
+    char area[48];
+    snprintf(area, sizeof(area), "%%r%d+0", area_rec);
+
+    // Key table: count, weights, then offset, length, usage, flags,
+    // descending and numeric of each key
+    char weights[48];
+    sort_weights(ir, environment_division, node->text, weights, sizeof(weights));
+    char table[4096], body[4000] = "";
+    int nkeys = 0, bn = 0;
+    for (AstNode *k = node->children; k; k = k->next) {
+        VarInfo *kv = find_item(k, true);
+        if (!kv) return;
+        int top = (int)(kv - vars);
+        while (vars[top].parent >= 0) top = vars[top].parent;
+        if (vars[top].file != sd || item_dims(kv, (int[16]){0}, (int[16]){0}) > 0) {
+            cobalt_error_loc(NULL, k->loc.line, k->loc.column,
+                             "Sort key '%s' must be an item of a record of '%s' (without OCCURS)", kv->name, fi->name);
+            return;
+        }
+        bool numeric = kv->is_numeric && !kv->mask;
+        bn += snprintf(body + bn, sizeof(body) - bn, " %d %d %d %d %d %d", kv->offset, kv->size,
+                       numeric ? (int)kv->usage_type : 0, numeric ? var_flags(kv) : 0,
+                       k->is_signed ? 1 : 0, numeric ? 1 : 0);
+        nkeys++;
+    }
+    snprintf(table, sizeof(table), "%d %s%s", nkeys, weights, body);
+    char label[32];
+    snprintf(label, sizeof(label), "$sortkeys_%d", sort_counter++);
+    IrInstr *q = new_instr(IR_DATA_QWORDS, label, NULL, table, 0, 0, 0, 0, USAGE_DISPLAY);
+    append_instr(ir, q);
+    emit_sort_op(ir, IR_SORT_INIT, sd, label);
+
+    AstNode *using = NULL, *giving = NULL;
+    for (AstNode *l = node->loop; l; l = l->next) {
+        if (strcmp(l->name, "USING") == 0) using = l;
+        else giving = l;
+    }
+    // Input: the USING files' records, or the INPUT PROCEDURE's RELEASEs
+    if (using) {
+        for (AstNode *fn = using->children; fn; fn = fn->next) {
+            int u = find_file(fn);
+            if (u < 0) continue;
+            if (files[u].is_sort) {
+                cobalt_error_loc(NULL, fn->loc.line, fn->loc.column, "USING file '%s' is a sort file", fn->name);
+                continue;
+            }
+            char loop[32], done[32], uarea[48];
+            new_label(loop, sizeof(loop), "sort_in");
+            new_label(done, sizeof(done), "sort_in_end");
+            snprintf(uarea, sizeof(uarea), "%%r%d+0", vars[files[u].first_record].record);
+            emit_file_op(ir, IR_FILE_OPEN, u)->imm = 1;
+            emit_label(ir, loop);
+            IrInstr *r = emit_file_op(ir, IR_FILE_READ, u);
+            r->lit_name = strdup(uarea);
+            emit_io_jump(ir, 10, 99, done);
+            AstNode *from = item_ref(files[u].largest_record, fn->loc);
+            AstNode *to = item_ref(fi->largest_record, fn->loc);
+            emit(ir, IR_SIZE_ERR_CLEAR);
+            lower_move(ir, from, to, "");
+            ast_free(from);
+            ast_free(to);
+            IrInstr *rel = emit_file_op(ir, IR_SORT_RELEASE, sd);
+            rel->lit_name = strdup(area);
+            rel->size = fi->max_size;
+            rel->content = strdup(files[u].fcb_label);   // the length of the record read
+            emit_jump(ir, IR_JUMP, loop);
+            emit_label(ir, done);
+            emit_file_op(ir, IR_FILE_CLOSE, u)->imm = 0;
+        }
+    } else if (node->on_error) {
+        int first = resolve_proc(node->on_error);
+        int last = node->on_error->loop ? resolve_proc(node->on_error->loop) : first;
+        if (first < 0 || last < 0) return;
+        IrInstr *p = emit(ir, IR_PERFORM);
+        p->imm = first;
+        p->proc_end = last;
+    }
+    emit_sort_op(ir, IR_SORT_SORT, sd, NULL);
+    // Output: to the GIVING files, or the OUTPUT PROCEDURE's RETURNs
+    if (giving) {
+        int outs[16], nout = 0;
+        for (AstNode *fn = giving->children; fn && nout < 16; fn = fn->next) {
+            int g = find_file(fn);
+            if (g < 0) continue;
+            outs[nout++] = g;
+            emit_file_op(ir, IR_FILE_OPEN, g)->imm = 2;
+        }
+        char loop[32], done[32];
+        new_label(loop, sizeof(loop), "sort_out");
+        new_label(done, sizeof(done), "sort_out_end");
+        emit_label(ir, loop);
+        emit_sort_op(ir, IR_SORT_RETURN, sd, area);
+        emit_io_jump(ir, 10, 99, done);
+        for (int k = 0; k < nout; k++) {
+            int g = outs[k];
+            AstNode *from = item_ref(fi->largest_record, giving->loc);
+            AstNode *to = item_ref(files[g].largest_record, giving->loc);
+            emit(ir, IR_SIZE_ERR_CLEAR);
+            lower_move(ir, from, to, "");
+            ast_free(from);
+            ast_free(to);
+            AstNode *len = item_ref(files[g].reclen_var, giving->loc);
+            move_from_item(ir, fi->reclen_var, len);
+            ast_free(len);
+            char garea[48];
+            snprintf(garea, sizeof(garea), "%%r%d+0", vars[files[g].first_record].record);
+            IrInstr *w = emit_file_op(ir, IR_FILE_WRITE, g);
+            w->lit_name = strdup(garea);
+            w->size = files[g].max_size;
+            w->flags = files[g].variable ? 2 : 0;
+        }
+        emit_jump(ir, IR_JUMP, loop);
+        emit_label(ir, done);
+        for (int k = 0; k < nout; k++) emit_file_op(ir, IR_FILE_CLOSE, outs[k])->imm = 0;
+    } else if (node->not_on_error) {
+        int first = resolve_proc(node->not_on_error);
+        int last = node->not_on_error->loop ? resolve_proc(node->not_on_error->loop) : first;
+        if (first < 0 || last < 0) return;
+        IrInstr *p = emit(ir, IR_PERFORM);
+        p->imm = first;
+        p->proc_end = last;
+    }
+    emit_sort_op(ir, IR_SORT_END, sd, NULL);
+}
+
+static void lower_release_return(IrProgram *ir, AstNode *node) {
+    if (node->kind == AST_STATEMENT_RELEASE) {
+        if (node->loop) {
+            char lit[32] = {0};
+            if (node->loop->kind == AST_STRING_LITERAL || node->loop->kind == AST_LITERAL_NUMBER)
+                emit_data_lit(ir, "lit", node->loop->name, lit, sizeof(lit));
+            emit(ir, IR_SIZE_ERR_CLEAR);
+            lower_move(ir, node->loop, node->extra, lit);
+        }
+        VarInfo *v = find_item(node->extra, true);
+        if (!v) return;
+        int top = (int)(v - vars);
+        if (v->parent >= 0 || v->file < 0 || !files[v->file].is_sort) {
+            cobalt_error_loc(NULL, node->extra->loc.line, node->extra->loc.column,
+                             "'%s' is not a record of a sort file", v->name);
+            return;
+        }
+        FieldRef rf;
+        if (!resolve_ref(ir, node->extra, &rf)) return;
+        int sd = vars[top].file;
+        IrInstr *rel = emit_file_op(ir, IR_SORT_RELEASE, sd);
+        rel->lit_name = strdup(rf.label);
+        rel->size = files[sd].variable ? rf.size : files[sd].max_size;
+        AstNode *dep = files[sd].fd ? files[sd].fd->extra : NULL;
+        if (dep) {
+            // RECORD VARYING DEPENDING ON: the length from the item
+            move_to_item(ir, dep, files[sd].reclen_var);
+            rel->content = strdup(files[sd].fcb_label);
+        }
+        return;
+    }
+    int sd = sort_file(node->extra, true);
+    if (sd < 0) return;
+    char area[48];
+    snprintf(area, sizeof(area), "%%r%d+0", vars[files[sd].first_record].record);
+    emit_sort_op(ir, IR_SORT_RETURN, sd, area);
+    AstNode *dep = files[sd].fd ? files[sd].fd->extra : NULL;
+    if (dep || node->loop) {
+        char skip[32];
+        new_label(skip, sizeof(skip), "return_skip");
+        emit_io_jump(ir, 10, 99, skip);
+        if (dep) move_from_item(ir, files[sd].reclen_var, dep);
+        if (node->loop) {
+            AstNode *rec = item_ref(files[sd].largest_record, node->loc);
+            emit(ir, IR_SIZE_ERR_CLEAR);
+            lower_move(ir, rec, node->loop, "");
+            ast_free(rec);
+        }
+        emit_label(ir, skip);
+    }
+    lower_io_phrases(ir, node, 10, 19, -1, 0);
+}
+
 static bool random_or_dynamic(int f) {
     return files[f].select->access != FILE_ACCESS_SEQUENTIAL;
 }
@@ -3748,6 +3979,13 @@ static void lower_node(IrProgram *ir, AstNode *node) {
         case AST_STATEMENT_REWRITE:
             lower_file_statement(ir, node);
             break;
+        case AST_STATEMENT_SORT:
+            lower_sort(ir, node);
+            break;
+        case AST_STATEMENT_RELEASE:
+        case AST_STATEMENT_RETURN:
+            lower_release_return(ir, node);
+            break;
         case AST_STATEMENT_EXIT:        // marks the end of a procedure; does nothing
         case AST_STATEMENT_CONTINUE:
             break;
@@ -3894,6 +4132,10 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect) {
 
     build_special_names(program);
     collect_uses(program);
+    sort_counter = 0;
+    environment_division = NULL;
+    for (AstNode *div = program->children; div; div = div->next)
+        if (div->kind == AST_DIVISION && strcasecmp(div->name, "ENVIRONMENT") == 0) environment_division = div;
     build_data(ir, program);
 
     // Emit initializations

@@ -28,6 +28,11 @@ X_CARDS = {
     "084": "STANDARD",          # LABEL RECORDS ARE ...
     "073": "C01",               # implementor-name of channel 1 (WRITE ADVANCING)
     "086": "PIC X(8)",          # PICTURE of a file label data item (VALUE OF)
+    # The 51 characters of the COBOL set in native (ASCII) order, without the
+    # quote ($ twice, as in the suite's sample), ascending and descending
+    "063": '" $$()*+,-./0123456789;<=>ABCDEFGHIJKLMNOPQRSTUVWXYZ"',
+    "064": '"ZYXWVUTSRQPONMLKJIHGFEDCBA>=<;9876543210/.-,+*)($$ "',
+    "065": "510",               # records of the sort test files (a multiple of 51)
     "047": "ALTLIB1",           # library-names of COPY ... OF/IN (SM207A)
     "048": "ALTLIB2",
 }

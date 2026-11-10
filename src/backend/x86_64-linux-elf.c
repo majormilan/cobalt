@@ -2187,6 +2187,35 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 fprintf(f, "    call runtime_file_start\n");
                 fprintf(f, "    mov [rel cobrt_io_status], rax\n\n");
                 break;
+            case IR_SORT_INIT:
+                emit_addr(f, "rdi", i->var_name);
+                emit_addr(f, "rsi", i->lit_name);
+                fprintf(f, "    call runtime_sort_init\n");
+                fprintf(f, "    mov [rel cobrt_io_status], rax\n\n");
+                break;
+            case IR_SORT_RELEASE:
+                emit_addr(f, "rdi", i->var_name);
+                emit_addr(f, "rsi", i->lit_name);
+                if (i->content) {
+                    emit_addr(f, "rdx", i->content);
+                    fprintf(f, "    mov rdx, [rdx + 72]\n");
+                } else {
+                    emit_size(f, "rdx", i->size);
+                }
+                fprintf(f, "    call runtime_sort_release\n");
+                fprintf(f, "    mov [rel cobrt_io_status], rax\n\n");
+                break;
+            case IR_SORT_SORT:
+            case IR_SORT_END:
+                emit_addr(f, "rdi", i->var_name);
+                fprintf(f, "    call runtime_sort_%s\n", i->op == IR_SORT_SORT ? "sort" : "end");
+                break;
+            case IR_SORT_RETURN:
+                emit_addr(f, "rdi", i->var_name);
+                emit_addr(f, "rsi", i->lit_name);
+                fprintf(f, "    call runtime_sort_return\n");
+                fprintf(f, "    mov [rel cobrt_io_status], rax\n\n");
+                break;
             case IR_FILE_EOP_JUMP:
                 emit_addr(f, "rax", i->var_name);
                 fprintf(f, "    test qword [rax + 48], 32\n");

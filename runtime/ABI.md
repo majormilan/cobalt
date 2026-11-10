@@ -472,7 +472,21 @@ to the first line of the next page (newlines for the rest of the body, the
 bottom and top margins). The end-of-page condition (state bit 32) is raised
 when LINAGE-COUNTER reaches FOOTING, or a new page starts.
 
-Not yet supported: SD and SORT/MERGE, ASSIGN to a data item, CODE-SET.
+**SORT and MERGE.** A sort file (SD) has an FCB too (flag 0x400). Generated
+code calls `runtime_sort_init(fcb, key table)`, then `runtime_sort_release
+(fcb, record, length)` for each record (RELEASE, or the records of the USING
+files), `runtime_sort_sort(fcb)`, `runtime_sort_return(fcb, area)` for each
+record in order (RETURN, or the records for the GIVING files; status 10 at
+the end, the record length in the FCB) and `runtime_sort_end(fcb)`. The key
+table: the number of keys, the collating weights of alphanumeric keys (256
+bytes: the COLLATING SEQUENCE alphabet or the program collating sequence; 0
+for the native order), then offset, length, usage, numeric flags, 1 for
+DESCENDING and 1 for numeric of each key. Records are kept in memory and
+sorted by a stable merge sort, so records with equal keys come out in the
+order they went in; MERGE is a sort of its USING files' records in the order
+of the files, which gives equal keys in that order.
+
+Not yet supported: ASSIGN to a data item, CODE-SET.
 
 ## 8. Editing [implemented]
 

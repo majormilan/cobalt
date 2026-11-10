@@ -111,6 +111,13 @@ typedef enum {
     IR_FILE_START,          // imm = condition (0 =, 1 >, 2 >=), digits = key number,
                             //   size = key bytes compared
     IR_FILE_EOP_JUMP,       // jump to jump_target if the last WRITE raised end-of-page
+    // SORT and MERGE: var_name is the sort file's control block
+    IR_SORT_INIT,           // key table lit_name
+    IR_SORT_RELEASE,        // record lit_name, size bytes; content: the control block
+                            //   whose record length is the length instead (or NULL)
+    IR_SORT_SORT,
+    IR_SORT_RETURN,         // into the record area lit_name (status 10 at the end)
+    IR_SORT_END,
     IR_FILE_WRITE,          // record lit_name, size bytes; imm = advancing mode;
                             //   lines = digits, or popped from the numeric stack if
                             //   flags & 1; flags & 2: the length is in the FCB
