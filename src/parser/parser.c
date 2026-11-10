@@ -1229,7 +1229,9 @@ static bool is_scope_terminator(TokenKind kind) {
     return kind == TOK_END_IF || kind == TOK_END_ADD || kind == TOK_END_SUBTRACT ||
            kind == TOK_END_MULTIPLY || kind == TOK_END_DIVIDE || kind == TOK_END_COMPUTE ||
            kind == TOK_END_PERFORM || kind == TOK_END_EVALUATE || kind == TOK_END_SEARCH ||
-           kind == TOK_END_READ || kind == TOK_END_WRITE || kind == TOK_END_REWRITE;
+           kind == TOK_END_READ || kind == TOK_END_WRITE || kind == TOK_END_REWRITE ||
+           kind == TOK_END_START || kind == TOK_END_DELETE || kind == TOK_END_CALL ||
+           kind == TOK_END_RETURN || kind == TOK_END_RECEIVE;
 }
 
 // True where a statement sequence ends: end of sentence, a phrase keyword of
@@ -1238,6 +1240,8 @@ static bool is_scope_terminator(TokenKind kind) {
 static bool at_block_end(void) {
     return tok.kind == TOK_PERIOD || tok.kind == TOK_EOF || tok.kind == TOK_ELSE ||
            tok.kind == TOK_NOT || tok.kind == TOK_WHEN || tok.kind == TOK_IDENT ||
+           tok.kind == TOK_INVALID || tok.kind == TOK_AT || tok.kind == TOK_END_OF_PAGE ||
+           tok.kind == TOK_EXCEPTION || tok.kind == TOK_OVERFLOW ||
            tok.kind == TOK_NUMBER ||
            is_scope_terminator(tok.kind) ||
            is_division_start(tok.kind);
@@ -1320,6 +1324,37 @@ static bool parse_inspect_phrases(AstNode *item) {
         if (!delim) { arith_error("Expected BEFORE/AFTER operand"); return false; }
         if (before) { ast_free(item->not_on_error); item->not_on_error = delim; }
         else { ast_free(item->children); item->children = delim; }
+    }
+    return true;
+}
+
+// [AT] END s / INVALID [KEY] s, then NOT [AT] END s / NOT INVALID [KEY] s:
+// on_error and not_on_error; is_signed set for the INVALID KEY form
+static bool parse_io_phrases(AstNode *stmt) {
+    if (tok.kind == TOK_AT || tok.kind == TOK_END) {
+        if (tok.kind == TOK_AT) next();
+        if (tok.kind != TOK_END) { arith_error("Expected END"); return false; }
+        next();
+        stmt->on_error = parse_imperative_block();
+    } else if (tok.kind == TOK_INVALID) {
+        next();
+        if (tok.kind == TOK_KEY) next();
+        stmt->is_signed = true;
+        stmt->on_error = parse_imperative_block();
+    }
+    if (tok.kind == TOK_NOT && (peek_token().kind == TOK_AT || peek_token().kind == TOK_END ||
+                                peek_token().kind == TOK_INVALID)) {
+        next();
+        if (tok.kind == TOK_INVALID) {
+            next();
+            if (tok.kind == TOK_KEY) next();
+            stmt->is_signed = true;
+        } else {
+            if (tok.kind == TOK_AT) next();
+            if (tok.kind != TOK_END) { arith_error("Expected END"); return false; }
+            next();
+        }
+        stmt->not_on_error = parse_imperative_block();
     }
     return true;
 }
@@ -2130,14 +2165,23 @@ static AstNode *parse_statement(void) {
                             tok.kind == TOK_I_O || tok.kind == TOK_EXTEND)) {
                 mode = tok.kind == TOK_INPUT ? 1 : tok.kind == TOK_OUTPUT ? 2 : tok.kind == TOK_I_O ? 3 : 4;
                 next();
-            } else if (tok.kind == TOK_IDENT && (!is_open || mode)) {
+            } else if (tok.kind == TOK_IDENT && (!is_open || mode) && !tok_is_word("REVERSED") &&
+                       !tok_is_word("REEL") && !tok_is_word("UNIT") && !tok_is_word("NO") &&
+                       !tok_is_word("LOCK")) {
                 AstNode *file = parse_procedure_name();
                 file->decimal_places = mode;
                 list_append(&stmt->children, &tail, file);
-                // CLOSE options: REEL/UNIT, WITH NO REWIND, WITH LOCK
-                while (!is_open && (tok_is_word("REEL") || tok_is_word("UNIT") || tok.kind == TOK_WITH ||
-                                    tok_is_word("NO") || tok_is_word("REWIND") || tok_is_word("LOCK") ||
-                                    tok.kind == TOK_FOR || tok_is_word("REMOVAL"))) next();
+                // OPEN options (digits): 1 REVERSED, 2 WITH NO REWIND; CLOSE
+                // options: 1 REEL / UNIT [FOR REMOVAL], 2 WITH NO REWIND, 4 WITH LOCK
+                while (tok_is_word("REEL") || tok_is_word("UNIT") || tok.kind == TOK_WITH ||
+                       tok_is_word("NO") || tok_is_word("REWIND") || tok_is_word("LOCK") ||
+                       tok_is_word("REVERSED") || tok.kind == TOK_FOR || tok_is_word("REMOVAL")) {
+                    if (tok_is_word("REEL") || tok_is_word("UNIT")) file->digits |= 1;
+                    else if (tok_is_word("REVERSED")) file->digits |= 1;
+                    else if (tok_is_word("REWIND")) file->digits |= 2;
+                    else if (tok_is_word("LOCK")) file->digits |= 4;
+                    next();
+                }
             } else {
                 break;
             }
@@ -2145,32 +2189,71 @@ static AstNode *parse_statement(void) {
         if (!stmt->children) { ast_free(stmt); arith_error(is_open ? "Expected OPEN mode and file" : "Expected file name"); return NULL; }
         return stmt;
     }
-    // ─── READ file [NEXT] [RECORD] [INTO id] [AT END s] [NOT AT END s] ───────
+    // ─── DELETE file [RECORD] [INVALID [KEY] s] [NOT INVALID [KEY] s] [END-DELETE]
+    else if (tok.kind == TOK_DELETE) {
+        next();
+        AstNode *del = ast_new(AST_STATEMENT_DELETE, NULL, loc);
+        if (tok.kind != TOK_IDENT) { ast_free(del); arith_error("Expected file name after DELETE"); return NULL; }
+        del->extra = parse_procedure_name();
+        if (tok.kind == TOK_RECORD) next();
+        if (!parse_io_phrases(del)) { ast_free(del); return NULL; }
+        if (tok.kind == TOK_END_DELETE) next();
+        return del;
+    }
+    // ─── START file [KEY {IS = | EQUAL TO | > | GREATER THAN | NOT < | NOT LESS
+    //     THAN | >= ...} data-name] [INVALID [KEY] s] [NOT INVALID [KEY] s] [END-START]
+    //     text: the relation (=, > or >=); children: the data-name
+    else if (tok.kind == TOK_START) {
+        next();
+        AstNode *st = ast_new(AST_STATEMENT_START, NULL, loc);
+        if (tok.kind != TOK_IDENT) { ast_free(st); arith_error("Expected file name after START"); return NULL; }
+        st->extra = parse_procedure_name();
+        st->text = strdup("=");
+        if (tok.kind == TOK_KEY) {
+            next();
+            if (tok.kind == TOK_IS) next();
+            bool negated = tok.kind == TOK_NOT;
+            if (negated) next();
+            const char *op = parse_relop();
+            if (!op) { ast_free(st); arith_error("Expected a relation after KEY"); return NULL; }
+            if (negated) op = negate_relop(op);
+            free(st->text);
+            if (strcmp(op, "<") == 0 || strcmp(op, "<=") == 0 || strcmp(op, "<>") == 0) {
+                // NOT < is >=; NOT > and NOT = are not START relations
+                if (strcmp(op, ">=") != 0)
+                    cobalt_error_loc(current_lexer->original_source, loc.line, loc.column,
+                                     "START KEY allows =, >, NOT < and >= only");
+            }
+            st->text = strdup(op);
+            if (tok.kind != TOK_IDENT) { ast_free(st); arith_error("Expected the key data item"); return NULL; }
+            st->children = parse_identifier();
+        }
+        if (!parse_io_phrases(st)) { ast_free(st); return NULL; }
+        if (tok.kind == TOK_END_START) next();
+        return st;
+    }
+    // ─── READ file [NEXT] [RECORD] [INTO id] [KEY IS data-name]
+    //     {[AT] END s | INVALID [KEY] s} {NOT [AT] END s | NOT INVALID [KEY] s} [END-READ]
+    //     is_numeric: NEXT; children: the KEY IS data-name; is_signed: INVALID KEY
     else if (tok.kind == TOK_READ) {
         next();
         AstNode *read = ast_new(AST_STATEMENT_READ, NULL, loc);
         if (tok.kind != TOK_IDENT) { ast_free(read); arith_error("Expected file name after READ"); return NULL; }
         read->extra = parse_procedure_name();
-        if (tok.kind == TOK_NEXT) next();
+        if (tok.kind == TOK_NEXT) { read->is_numeric = true; next(); }
         if (tok.kind == TOK_RECORD) next();
         if (tok.kind == TOK_INTO) {
             next();
             if (tok.kind != TOK_IDENT) { ast_free(read); arith_error("Expected identifier after INTO"); return NULL; }
             read->loop = parse_identifier();
         }
-        if (tok.kind == TOK_AT || tok.kind == TOK_END) {
-            if (tok.kind == TOK_AT) next();
-            if (tok.kind != TOK_END) { ast_free(read); arith_error("Expected END"); return NULL; }
+        if (tok.kind == TOK_KEY) {
             next();
-            read->on_error = parse_imperative_block();
+            if (tok.kind == TOK_IS) next();
+            if (tok.kind != TOK_IDENT) { ast_free(read); arith_error("Expected the key data item"); return NULL; }
+            read->children = parse_identifier();
         }
-        if (tok.kind == TOK_NOT) {
-            next();
-            if (tok.kind == TOK_AT) next();
-            if (tok.kind != TOK_END) { ast_free(read); arith_error("Expected END"); return NULL; }
-            next();
-            read->not_on_error = parse_imperative_block();
-        }
+        if (!parse_io_phrases(read)) { ast_free(read); return NULL; }
         if (tok.kind == TOK_END_READ) next();
         return read;
     }
@@ -2207,14 +2290,15 @@ static AstNode *parse_statement(void) {
         if (is_write && (tok.kind == TOK_AT || tok.kind == TOK_END_OF_PAGE)) {
             if (tok.kind == TOK_AT) next();
             next();
-            w->on_error = parse_imperative_block();     // never raised without LINAGE
+            w->on_error = parse_imperative_block();     // the end-of-page condition (LINAGE)
         }
-        if (is_write && tok.kind == TOK_NOT && peek_token().kind != TOK_EOF) {
+        if (is_write && tok.kind == TOK_NOT && peek_token().kind != TOK_INVALID) {
             next();
             if (tok.kind == TOK_AT) next();
             next();
             w->not_on_error = parse_imperative_block();
         }
+        if (!w->on_error && !w->not_on_error && !parse_io_phrases(w)) { ast_free(w); return NULL; }
         if (tok.kind == TOK_END_WRITE || tok.kind == TOK_END_REWRITE) next();
         return w;
     }
@@ -2343,7 +2427,7 @@ static AstNode *parse_use(void) {
         u->name = strdup("ERROR");
         next();
         if (tok_is_word("STANDARD")) next();
-        if (tok_is_word("EXCEPTION") || tok.kind == TOK_ERROR) next();
+        if (tok.kind == TOK_EXCEPTION || tok.kind == TOK_ERROR) next();
         else arith_error("Expected EXCEPTION or ERROR");
         if (tok.kind == TOK_PROCEDURE) next();
         if (tok.kind == TOK_ON) next();
@@ -2428,7 +2512,7 @@ static void parse_procedure_body(AstNode *div) {
                 parser_panic_mode = false;
                 sec_tail = NULL;
                 sec->is_signed = in_declaratives;
-                if (in_declaratives && tok_is_word("USE")) sec->extra = parse_use();
+                if (in_declaratives && tok.kind == TOK_USE) sec->extra = parse_use();
                 else if (in_declaratives)
                     cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
                                      "A declarative section must start with a USE statement");
@@ -2775,6 +2859,12 @@ static AstNode *parse_select(void) {
     return sel;
 }
 
+// LINAGE operand: an integer, or a data item declared later
+static AstNode *parse_linage_operand(void) {
+    if (tok.kind == TOK_IDENT) return parse_forward_identifier();
+    return parse_value_operand();
+}
+
 // FILE SECTION. {FD file-name [clauses]. record-description-entries}...
 static AstNode *parse_file_section(void) {
     SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
@@ -2797,12 +2887,79 @@ static AstNode *parse_file_section(void) {
         AstNode *fd = ast_new(AST_FILE_DECL, name, fd_loc);
         free(name);
         next();
-        // BLOCK, RECORD, LABEL, VALUE OF, DATA RECORDS, CODE-SET: no effect here
+        // RECORD CONTAINS / VARYING: digits = shortest record, decimal_places =
+        // longest (0: from the record descriptions), is_signed = variable,
+        // extra = DEPENDING ON item; LINAGE: loop = AST_SPECIAL "LINAGE" with
+        // on_error = lines, not_on_error = FOOTING, extra = TOP, loop = BOTTOM.
+        // BLOCK, LABEL, VALUE OF, DATA RECORDS, CODE-SET: no effect here
         while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF &&
                !(is_division_start(tok.kind) && peek_token().kind == TOK_DIVISION)) {
-            if (tok.kind == TOK_LINAGE)
-                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                                 "LINAGE is not supported yet");
+            if (tok.kind == TOK_RECORD) {
+                next();
+                if (tok_is_word("CONTAINS")) next();
+                if (tok.kind == TOK_IS) next();
+                if (tok.kind == TOK_VARYING) {
+                    fd->is_signed = true;
+                    next();
+                    if (tok.kind == TOK_IN) next();
+                    if (tok.kind == TOK_SIZE) next();
+                    if (tok.kind == TOK_FROM) next();
+                    if (tok.kind == TOK_NUMBER) { fd->digits = atoi(tok_value_tmp()); next(); }
+                    if (tok.kind == TOK_TO) {
+                        next();
+                        if (tok.kind == TOK_NUMBER) { fd->decimal_places = atoi(tok_value_tmp()); next(); }
+                    }
+                    if (tok.kind == TOK_CHARACTERS) next();
+                    if (tok.kind == TOK_DEPENDING) {
+                        next();
+                        if (tok.kind == TOK_ON) next();
+                        if (tok.kind == TOK_IDENT) fd->extra = parse_forward_identifier();
+                    }
+                } else if (tok.kind == TOK_NUMBER) {
+                    int first = atoi(tok_value_tmp());
+                    next();
+                    if (tok.kind == TOK_TO) {
+                        next();
+                        fd->digits = first;
+                        if (tok.kind == TOK_NUMBER) { fd->decimal_places = atoi(tok_value_tmp()); next(); }
+                        fd->is_signed = fd->digits != fd->decimal_places;
+                    } else {
+                        fd->digits = fd->decimal_places = first;
+                    }
+                    if (tok.kind == TOK_CHARACTERS) next();
+                }
+                continue;
+            }
+            if (tok.kind == TOK_LINAGE) {
+                SourceLocation lloc = {current_lexer->filename, tok.line, tok.column};
+                next();
+                if (tok.kind == TOK_IS) next();
+                AstNode *lin = ast_new(AST_SPECIAL, "LINAGE", lloc);
+                lin->on_error = parse_linage_operand();
+                if (tok.kind == TOK_LINES) next();
+                for (;;) {
+                    if (tok.kind == TOK_WITH) next();
+                    if (tok_is_word("FOOTING")) {
+                        next();
+                        if (tok.kind == TOK_AT) next();
+                        lin->not_on_error = parse_linage_operand();
+                    } else if (tok.kind == TOK_LINES || tok.kind == TOK_AT || tok_is_word("TOP") ||
+                               tok_is_word("BOTTOM")) {
+                        if (tok.kind == TOK_LINES) next();
+                        if (tok.kind == TOK_AT) next();
+                        bool top = tok_is_word("TOP");
+                        if (!top && !tok_is_word("BOTTOM")) break;
+                        next();
+                        if (top) lin->extra = parse_linage_operand();
+                        else lin->loop = parse_linage_operand();
+                    } else {
+                        break;
+                    }
+                }
+                fd->loop = lin;
+                declare_special_name("LINAGE-COUNTER", 1, lloc);
+                continue;
+            }
             next();
         }
         if (tok.kind == TOK_PERIOD) next();
@@ -2876,6 +3033,24 @@ static AstNode *parse_division(void) {
             if (in_file_control && tok.kind == TOK_SELECT) {
                 AstNode *sel = parse_select();
                 if (sel) list_append(&div->children, &sel_tail, sel);
+                continue;
+            }
+            if (tok_is_word("SAME")) {
+                // SAME RECORD AREA FOR file...: the files share their record area;
+                // SAME [SORT | SORT-MERGE] AREA: storage sharing, no effect
+                SourceLocation sloc = {current_lexer->filename, tok.line, tok.column};
+                next();
+                bool record = tok.kind == TOK_RECORD;
+                while (tok.kind == TOK_RECORD || tok.kind == TOK_SORT || tok_is_word("SORT-MERGE") ||
+                       tok_is_word("AREA") || tok.kind == TOK_FOR) next();
+                AstNode *same = record ? ast_new(AST_SPECIAL, "SAME RECORD", sloc) : NULL;
+                AstNode *same_tail = NULL;
+                while (tok.kind == TOK_IDENT && !tok_is_word("SAME") && !tok_is_word("MULTIPLE") &&
+                       !tok_is_word("RERUN") && !tok_is_word("APPLY")) {
+                    if (same) list_append(&same->children, &same_tail, parse_procedure_name());
+                    else next();
+                }
+                if (same) list_append(&div->children, &sel_tail, same);
                 continue;
             }
             if (tok_is_word("SPECIAL-NAMES")) {

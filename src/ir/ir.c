@@ -51,6 +51,7 @@ typedef struct {
     int sign_mode;          // SIGN clause (own or inherited from a group): SIGN_* bits
     int switch_value;       // condition-name of a switch: 1 for ON STATUS, 0 for OFF; else -1
     int switch_number;      // its switch (SWITCH-n)
+    int qual_file;          // LINAGE-COUNTER: the file that qualifies it, else -1
 } VarInfo;
 
 static bool is_num_edited(const VarInfo *v) { return v->mask && v->num_edited; }
@@ -94,7 +95,31 @@ typedef struct {
     AstNode *select;
     int first_record;       // first 01 record description (its record is the area)
     int largest_record;     // the longest 01 record description
+    AstNode *fd;            // its FD entry
+    int fcb_record;         // the record that is its file control block, or -1
+    char fcb_label[16];     // "%r<fcb_record>"
+    int reclen_var;         // FCB_RECLEN, FCB_KEY and FCB_KEYREF as data items
+    int key_var;
+    int keyref_var;
+    int linage_record;      // its LINAGE block, or -1
+    int lin_var[4];         // LINAGE values: lines, FOOTING, TOP, BOTTOM
+    int min_size, max_size; // record lengths
+    bool variable;          // records of different lengths
+    int same_group;         // SAME RECORD AREA group, or -1
+    int nkeys;              // indexed: prime and alternate keys
+    int key_item[16];       // their data items
 } FileInfo;
+
+#define FCB_BYTES      192  // runtime/ABI.md section 7
+#define FCB_OFF_RECLEN 72
+#define FCB_OFF_KEY    80
+#define FCB_OFF_KEYREF 168
+#define FILE_VARIABLE  8    // runtime FCB flags
+#define FILE_LINAGE    16
+#define ORG_RELATIVE   0x100
+#define ORG_INDEXED    0x200
+#define ACC_RANDOM     0x1000
+#define ACC_DYNAMIC    0x2000
 
 #define FILE_LINE     1     // runtime FCB flags (runtime/ABI.md section 7)
 #define FILE_OPTIONAL 2
@@ -114,6 +139,13 @@ typedef struct {
 static UseDecl uses[64];
 static int num_uses = 0;
 static bool has_declaratives = false;
+
+// The data-name of the RELATIVE / RECORD key clause of file f, or NULL
+static AstNode *file_key(int f, const char *what) {
+    for (AstNode *k = files[f].select->children; k; k = k->next)
+        if (k->kind == AST_FILE_KEY && strcmp(k->name, what) == 0) return k->extra;
+    return NULL;
+}
 
 static void collect_uses(AstNode *program) {
     num_uses = 0;
@@ -262,6 +294,7 @@ static VarInfo *new_var(const char *name) {
     v->name = strdup(name);
     v->parent = v->first_child = v->next_sibling = v->redefines = v->first_index = v->file = -1;
     v->switch_value = -1;
+    v->qual_file = -1;
     return v;
 }
 
@@ -509,6 +542,76 @@ static void build_renames(AstNode *decl, int record_item) {
     v->occurs = 0;
 }
 
+// A qword of record r at offset off as an unsigned binary data item
+// without a name (FCB fields, LINAGE values)
+static int hidden_qword(int r, int off, AstNode *decl) {
+    VarInfo *v = new_var("$file");
+    if (!v) return 0;
+    v->is_filler = true;
+    v->record = r;
+    v->offset = off;
+    v->size = 8;
+    v->usage_type = USAGE_COMP5;
+    v->is_numeric = true;
+    v->digits = 18;
+    v->decl = decl;
+    return (int)(v - vars);
+}
+
+static bool is_fcb_record(int r) {
+    for (int f = 0; f < num_files; f++)
+        if (files[f].fcb_record == r) return true;
+    return false;
+}
+
+// For each file: its record lengths (RECORD clause or record descriptions),
+// its file control block as a record of its own (so that its record length
+// and key fields are data items), its LINAGE block and LINAGE-COUNTER
+static void build_file_records(void) {
+    for (int f = 0; f < num_files; f++) {
+        FileInfo *fi = &files[f];
+        if (fi->first_record < 0) continue;
+        int area = vars[fi->first_record].record;
+        int lo = 0, hi = 0;
+        for (int i = 0; i < num_vars; i++) {
+            if (vars[i].file != f || vars[i].parent >= 0 || vars[i].is_cond) continue;
+            if (!lo || vars[i].size < lo) lo = vars[i].size;
+            if (vars[i].size > hi) hi = vars[i].size;
+        }
+        AstNode *fd = fi->fd;
+        if (fd && fd->decimal_places > hi) hi = fd->decimal_places;
+        if (fd && fd->digits > 0) lo = fd->digits;
+        else if (fd && fd->is_signed) lo = 1;     // VARYING without FROM (OCCURS DEPENDING ON)
+        if (lo > hi) lo = hi;
+        if (hi > record_size[area]) record_size[area] = hi;
+        fi->min_size = lo;
+        fi->max_size = hi;          // the area may be longer (SAME RECORD AREA)
+        fi->variable = (fd && fd->is_signed) || lo != hi;
+        int r = num_records++;
+        record_size[r] = FCB_BYTES;
+        fi->fcb_record = r;
+        snprintf(fi->fcb_label, sizeof(fi->fcb_label), "%%r%d", r);
+        fi->reclen_var = hidden_qword(r, FCB_OFF_RECLEN, fi->select);
+        fi->key_var = hidden_qword(r, FCB_OFF_KEY, fi->select);
+        fi->keyref_var = hidden_qword(r, FCB_OFF_KEYREF, fi->select);
+        if (fd && fd->loop) {
+            int j = num_records++;
+            record_size[j] = 72;
+            fi->linage_record = j;
+            for (int k = 0; k < 4; k++) fi->lin_var[k] = hidden_qword(j, 8 * k, fd);
+            VarInfo *c = new_var("LINAGE-COUNTER");
+            if (c) {
+                int idx = hidden_qword(j, 32, fd);
+                *c = vars[idx];
+                c->name = strdup("LINAGE-COUNTER");
+                c->is_filler = false;
+                c->qual_file = f;
+                c->digits = 10;     // shown like GnuCOBOL's (an unsigned binary long)
+            }
+        }
+    }
+}
+
 static void build_data(IrProgram *ir, AstNode *program) {
     int stack[64];
     int depth = 0;
@@ -523,7 +626,20 @@ static void build_data(IrProgram *ir, AstNode *program) {
         if (div->kind != AST_DIVISION || strcasecmp(div->name, "ENVIRONMENT") != 0) continue;
         for (AstNode *sel = div->children; sel; sel = sel->next) {
             if (sel->kind != AST_SELECT || num_files >= 64) continue;
-            files[num_files++] = (FileInfo){ sel->name, sel, -1, -1 };
+            files[num_files++] = (FileInfo){ .name = sel->name, .select = sel, .first_record = -1,
+                                             .largest_record = -1, .fcb_record = -1,
+                                             .linage_record = -1, .same_group = -1 };
+        }
+        int group = 0;
+        for (AstNode *same = div->children; same; same = same->next, group++) {
+            if (same->kind != AST_SPECIAL || strcmp(same->name, "SAME RECORD") != 0) continue;
+            for (AstNode *fn = same->children; fn; fn = fn->next) {
+                int f = -1;
+                for (int k = 0; k < num_files; k++)
+                    if (strcasecmp(files[k].name, fn->name) == 0) f = k;
+                if (f < 0) cobalt_error_loc(NULL, fn->loc.line, fn->loc.column, "'%s' is not a file", fn->name);
+                else files[f].same_group = group;
+            }
         }
     }
 
@@ -544,6 +660,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
                     if (f < 0)
                         cobalt_error_loc(NULL, entry->loc.line, entry->loc.column,
                                          "FD '%s' has no SELECT", entry->name);
+                    else files[f].fd = entry;
                     for (AstNode *d = entry->children; d && ndecls < MAX_VARS; d = d->next) {
                         decls[ndecls] = d;
                         decl_file[ndecls++] = f;
@@ -630,8 +747,14 @@ static void build_data(IrProgram *ir, AstNode *program) {
                         if (level == 77)
                             cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
                                              "Level 77 is not allowed in an FD");
+                            // SAME RECORD AREA: the record area of the group's first file
+                        int area_file = file;
+                        for (int g = 0; g < num_files; g++)
+                            if (files[g].same_group == files[file].same_group && files[file].same_group >= 0 &&
+                                files[g].first_record >= 0) { area_file = g; break; }
+                        if (files[area_file].first_record < 0) files[area_file].first_record = idx;
+                        else v->redefines = files[area_file].first_record;
                         if (files[file].first_record < 0) files[file].first_record = idx;
-                        else v->redefines = files[file].first_record;
                     }
                 } else {
                     while (depth > 0 && vars[stack[depth - 1]].level >= level) depth--;
@@ -729,7 +852,9 @@ static void build_data(IrProgram *ir, AstNode *program) {
         record_size[r] = layout_item(i, r, 0);
     }
     for (int k = 0; k < num_renames; k++) build_renames(renames[k], renames_record[k]);
+    build_file_records();
     for (int r = 0; r < num_records; r++) {
+        if (is_fcb_record(r)) continue;     // emitted as IR_DATA_FILE
         char label[32];
         snprintf(label, sizeof(label), "%%r%d", r);
         append_instr(ir, new_instr(IR_DATA_VAR, label, NULL, NULL, 0,
@@ -748,13 +873,81 @@ static void build_data(IrProgram *ir, AstNode *program) {
         for (int i = 0; i < num_vars; i++)
             if (vars[i].file == f && vars[i].parent < 0 && vars[i].size > vars[fi->largest_record].size)
                 fi->largest_record = i;
-        char fcb[16], name_lit[32];
-        snprintf(fcb, sizeof(fcb), "%%f%d", f);
+        char name_lit[32];
         emit_data_lit(ir, "fname", fi->select->text, name_lit, sizeof(name_lit));
-        IrInstr *d = new_instr(IR_DATA_FILE, fcb, name_lit, NULL, 0,
-                               record_size[vars[fi->first_record].record], 0, 0, USAGE_DISPLAY);
-        d->flags = (fi->select->decimal_places == 1 ? FILE_LINE : 0) |
-                   (fi->select->is_signed ? FILE_OPTIONAL : 0);
+        int area = vars[fi->first_record].record;
+        IrInstr *d = new_instr(IR_DATA_FILE, fi->fcb_label, name_lit, NULL, 0,
+                               fi->max_size, 0, 0, USAGE_DISPLAY);
+        AstNode *sel = fi->select;
+        d->flags = (sel->decimal_places == 1 ? FILE_LINE : 0) |
+                   (sel->is_signed ? FILE_OPTIONAL : 0) |
+                   (fi->variable ? FILE_VARIABLE : 0) |
+                   (fi->linage_record >= 0 ? FILE_LINAGE : 0) |
+                   (sel->org == FILE_ORG_RELATIVE ? ORG_RELATIVE : 0) |
+                   (sel->org == FILE_ORG_INDEXED ? ORG_INDEXED : 0) |
+                   (sel->access == FILE_ACCESS_RANDOM ? ACC_RANDOM : 0) |
+                   (sel->access == FILE_ACCESS_DYNAMIC ? ACC_DYNAMIC : 0);
+        d->digits = fi->min_size;
+        if (fi->linage_record >= 0) {
+            char lin[16];
+            snprintf(lin, sizeof(lin), "%%r%d", fi->linage_record);
+            d->cmp_op = strdup(lin);
+        }
+        if (sel->org == FILE_ORG_INDEXED) {
+            // Key table: the record area, the number of keys, then offset,
+            // length and duplicates of the prime key and each alternate key
+            fi->nkeys = 0;
+            char table[2048];
+            int n = snprintf(table, sizeof(table), "%%r%d+0", area);
+            char body[2000] = "";
+            int bn = 0;
+            for (int pass = 0; pass < 2; pass++) {
+                for (AstNode *k = sel->children; k; k = k->next) {
+                    if (k->kind != AST_FILE_KEY) continue;
+                    bool prime = strcmp(k->name, "RECORD") == 0;
+                    if (prime != (pass == 0) || strcmp(k->name, "RELATIVE") == 0) continue;
+                    VarInfo *kv = find_item(k->extra, true);
+                    if (!kv) continue;
+                    int top = (int)(kv - vars);
+                    while (vars[top].parent >= 0) top = vars[top].parent;
+                    if (vars[top].file != f) {
+                        cobalt_error_loc(NULL, k->extra->loc.line, k->extra->loc.column,
+                                         "Key '%s' is not in a record of file '%s'", kv->name, fi->name);
+                        continue;
+                    }
+                    if (fi->nkeys >= 16) break;
+                    fi->key_item[fi->nkeys++] = (int)(kv - vars);
+                    bn += snprintf(body + bn, sizeof(body) - bn, " %d %d %d", kv->offset, kv->size,
+                                   k->is_signed ? 1 : 0);
+                }
+            }
+            if (!file_key(f, "RECORD"))
+                cobalt_error_loc(NULL, sel->loc.line, sel->loc.column,
+                                 "INDEXED file '%s' has no RECORD KEY", fi->name);
+            snprintf(table + n, sizeof(table) - n, " %d%s", fi->nkeys, body);
+            char label[32];
+            snprintf(label, sizeof(label), "$keys_%d", f);
+            IrInstr *q = new_instr(IR_DATA_QWORDS, label, NULL, table, 0, 0, 0, 0, USAGE_DISPLAY);
+            append_instr(ir, q);
+            d->jump_target = strdup(label);
+        }
+        if (sel->org == FILE_ORG_RELATIVE && file_key(f, "RELATIVE")) {
+            // The largest record number the RELATIVE KEY item holds (READ: 14)
+            VarInfo *kv = find_item(file_key(f, "RELATIVE"), true);
+            if (kv && kv->is_numeric && kv->decimal_places == 0 && kv->digits > 0 && kv->digits < 19) {
+                long long lim = 1;
+                for (int k = 0; k < kv->digits; k++) lim *= 10;
+                char num[32];
+                snprintf(num, sizeof(num), "%lld", lim - 1);
+                d->jump_target = strdup(num);
+            } else if (kv && !kv->is_numeric) {
+                cobalt_error_loc(NULL, sel->loc.line, sel->loc.column,
+                                 "RELATIVE KEY '%s' must be an unsigned integer item", kv->name);
+            }
+        }
+        if (sel->org == FILE_ORG_RELATIVE && sel->access != FILE_ACCESS_SEQUENTIAL && !file_key(f, "RELATIVE"))
+            cobalt_error_loc(NULL, sel->loc.line, sel->loc.column,
+                             "RELATIVE file '%s' with RANDOM or DYNAMIC access needs a RELATIVE KEY", fi->name);
         bool any_mode = false;
         for (int k = 1; k <= 4; k++) any_mode |= use_for_mode(k) >= 0;
         if (any_mode || use_for_file(fi->name) >= 0) d->flags |= FILE_USE;
@@ -799,7 +992,7 @@ static VarInfo *find_item(const AstNode *ref, bool report) {
             // The outermost qualifier may be the file of a record
             int top = i;
             while (vars[top].parent >= 0) top = vars[top].parent;
-            int f = vars[top].file;
+            int f = vars[top].file >= 0 ? vars[top].file : vars[top].qual_file;
             if (!file_used && !q->next && f >= 0 && strcasecmp(files[f].name, q->name) == 0) file_used = true;
             else ok = false;
         }
@@ -2589,9 +2782,7 @@ static int find_file(const AstNode *ref) {
 
 static IrInstr *emit_file_op(IrProgram *ir, IrOpcode op, int file) {
     IrInstr *i = emit(ir, op);
-    char fcb[16];
-    snprintf(fcb, sizeof(fcb), "%%f%d", file);
-    i->var_name = strdup(fcb);
+    i->var_name = strdup(files[file].fcb_label);
     return i;
 }
 
@@ -2665,6 +2856,67 @@ static int record_file(IrProgram *ir, AstNode *rec, FieldRef *f) {
     return resolve_ref(ir, rec, f) ? v->file : -1;
 }
 
+// MOVE src TO the data item dest (an operand of a file clause or statement)
+static void move_to_item(IrProgram *ir, AstNode *src, int dest) {
+    char lit[32] = "";
+    if (src->kind == AST_STRING_LITERAL || src->kind == AST_LITERAL_NUMBER)
+        emit_data_lit(ir, "lit", src->name, lit, sizeof(lit));
+    AstNode *d = item_ref(dest, src->loc);
+    emit(ir, IR_SIZE_ERR_CLEAR);
+    lower_move(ir, src, d, lit);
+    ast_free(d);
+}
+
+// MOVE the data item src TO dest
+static void move_from_item(IrProgram *ir, int src, AstNode *dest) {
+    AstNode *s = item_ref(src, dest->loc);
+    emit(ir, IR_SIZE_ERR_CLEAR);
+    lower_move(ir, s, dest, "");
+    ast_free(s);
+}
+
+static void move_int_to_item(IrProgram *ir, long long value, int dest, SourceLocation loc) {
+    char num[32];
+    snprintf(num, sizeof(num), "%lld", value);
+    AstNode *n = ast_new(AST_LITERAL_NUMBER, num, loc);
+    move_to_item(ir, n, dest);
+    ast_free(n);
+}
+
+// The LINAGE values of the file into its LINAGE block (before OPEN and WRITE)
+static void store_linage(IrProgram *ir, int f) {
+    FileInfo *fi = &files[f];
+    if (fi->linage_record < 0) return;
+    AstNode *lin = fi->fd->loop;
+    AstNode *ops[4] = { lin->on_error, lin->not_on_error, lin->extra, lin->loop };
+    for (int k = 0; k < 4; k++)
+        if (ops[k]) move_to_item(ir, ops[k], fi->lin_var[k]);
+}
+
+// Indexed file f: the key whose data item is item, or that starts where item
+// starts and is at least as long (START and READ KEY IS a leading part);
+// -1 if none
+static int key_of_item(int f, AstNode *item, int *len) {
+    VarInfo *v = find_item(item, true);
+    if (!v) return -1;
+    for (int k = 0; k < files[f].nkeys; k++)
+        if (&vars[files[f].key_item[k]] == v) { *len = v->size; return k; }
+    for (int k = 0; k < files[f].nkeys; k++) {
+        VarInfo *kv = &vars[files[f].key_item[k]];
+        if (kv->record == v->record && kv->offset == v->offset && v->size <= kv->size) {
+            *len = v->size;
+            return k;
+        }
+    }
+    cobalt_error_loc(NULL, item->loc.line, item->loc.column,
+                     "'%s' is not a record key of file '%s'", v->name, files[f].name);
+    return -1;
+}
+
+static bool random_or_dynamic(int f) {
+    return files[f].select->access != FILE_ACCESS_SEQUENTIAL;
+}
+
 static void lower_file_statement(IrProgram *ir, AstNode *node) {
     switch (node->kind) {
         case AST_STATEMENT_OPEN:
@@ -2672,31 +2924,54 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
             for (AstNode *fn = node->children; fn; fn = fn->next) {
                 int f = find_file(fn);
                 if (f < 0) continue;
-                IrInstr *i = emit_file_op(ir, node->kind == AST_STATEMENT_OPEN ? IR_FILE_OPEN : IR_FILE_CLOSE, f);
-                i->imm = fn->decimal_places;
-                lower_io_phrases(ir, &no_phrases, 1, 0, f,
-                                 node->kind == AST_STATEMENT_OPEN ? (fn->decimal_places & 7) : 0);
+                bool open = node->kind == AST_STATEMENT_OPEN;
+                if (open) store_linage(ir, f);
+                IrInstr *i = emit_file_op(ir, open ? IR_FILE_OPEN : IR_FILE_CLOSE, f);
+                i->imm = open ? fn->decimal_places | (fn->digits << 8) : fn->digits;
+                lower_io_phrases(ir, &no_phrases, 1, 0, f, open ? (fn->decimal_places & 7) : 0);
             }
             break;
         case AST_STATEMENT_READ: {
             int f = find_file(node->extra);
             if (f < 0) return;
+            FileInfo *fi = &files[f];
+            int org = fi->select->org;
+            bool keyed = (org == FILE_ORG_RELATIVE || org == FILE_ORG_INDEXED) &&
+                         (fi->select->access == FILE_ACCESS_RANDOM ||
+                          (fi->select->access == FILE_ACCESS_DYNAMIC && !node->is_numeric));
+            AstNode *relkey = org == FILE_ORG_RELATIVE ? file_key(f, "RELATIVE") : NULL;
+            if (keyed && relkey) move_to_item(ir, relkey, fi->key_var);
+            if (keyed && org == FILE_ORG_INDEXED) {
+                int len, k = 0;
+                if (node->children) k = key_of_item(f, node->children, &len);
+                if (k < 0) return;
+                move_int_to_item(ir, k, fi->keyref_var, node->loc);
+            }
             char area[48];
-            snprintf(area, sizeof(area), "%%r%d+0", vars[files[f].first_record].record);
+            snprintf(area, sizeof(area), "%%r%d+0", vars[fi->first_record].record);
             IrInstr *r = emit_file_op(ir, IR_FILE_READ, f);
             r->lit_name = strdup(area);
-            if (node->loop) {
-                // READ ... INTO: the record is moved after a successful read
+            r->imm = keyed ? 1 : 0;
+            // After a successful READ: the record number into the RELATIVE KEY
+            // (sequential reading), the record length into the DEPENDING ON
+            // item, the record into the INTO item
+            AstNode *dep = fi->fd ? fi->fd->extra : NULL;
+            if ((relkey && !keyed) || dep || node->loop) {
                 char skip[32];
-                new_label(skip, sizeof(skip), "read_into_skip");
+                new_label(skip, sizeof(skip), "read_skip");
                 emit_io_jump(ir, 10, 99, skip);
-                AstNode *rec = item_ref(files[f].largest_record, node->loc);
-                emit(ir, IR_SIZE_ERR_CLEAR);
-                lower_move(ir, rec, node->loop, "");
-                ast_free(rec);
+                if (relkey && !keyed) move_from_item(ir, fi->key_var, relkey);
+                if (dep) move_from_item(ir, fi->reclen_var, dep);
+                if (node->loop) {
+                    AstNode *rec = item_ref(fi->largest_record, node->loc);
+                    emit(ir, IR_SIZE_ERR_CLEAR);
+                    lower_move(ir, rec, node->loop, "");
+                    ast_free(rec);
+                }
                 emit_label(ir, skip);
             }
-            lower_io_phrases(ir, node, 10, 19, f, 0);
+            if (node->is_signed) lower_io_phrases(ir, node, 20, 29, f, 0);
+            else lower_io_phrases(ir, node, 10, 19, f, 0);
             break;
         }
         case AST_STATEMENT_WRITE:
@@ -2712,13 +2987,22 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
             FieldRef rf;
             int f = record_file(ir, node->extra, &rf);
             if (f < 0) return;
-            if (node->kind == AST_STATEMENT_REWRITE) {
+            FileInfo *fi = &files[f];
+            int org = fi->select->org;
+            AstNode *relkey = org == FILE_ORG_RELATIVE ? file_key(f, "RELATIVE") : NULL;
+            if (relkey && random_or_dynamic(f)) move_to_item(ir, relkey, fi->key_var);
+            AstNode *dep = fi->fd ? fi->fd->extra : NULL;
+            if (dep) move_to_item(ir, dep, fi->reclen_var);
+            bool is_write = node->kind == AST_STATEMENT_WRITE;
+            if (!is_write) {
                 IrInstr *w = emit_file_op(ir, IR_FILE_REWRITE, f);
                 w->lit_name = strdup(rf.label);
-                w->size = rf.size;
-                lower_io_phrases(ir, &no_phrases, 1, 0, f, 0);
+                w->size = fi->variable ? rf.size : fi->max_size;   // fixed: the whole area
+                w->flags = dep ? 2 : 0;
+                lower_io_phrases(ir, node, 20, 29, f, 0);
                 break;
             }
+            store_linage(ir, f);
             int mode = 0;                   // runtime ADV_* modes
             bool on_stack = false;
             long long lines = 0;
@@ -2738,11 +3022,76 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
             }
             IrInstr *w = emit_file_op(ir, IR_FILE_WRITE, f);
             w->lit_name = strdup(rf.label);
-            w->size = rf.size;
+            w->size = fi->variable || fi->select->decimal_places == 1 || mode ? rf.size : fi->max_size;
             w->imm = mode;
-            w->flags = on_stack ? 1 : 0;
+            w->flags = (on_stack ? 1 : 0) | (dep ? 2 : 0);
             w->digits = (int)lines;
+            if (relkey && !random_or_dynamic(f)) {
+                char skip[32];
+                new_label(skip, sizeof(skip), "write_skip");
+                emit_io_jump(ir, 10, 99, skip);
+                move_from_item(ir, fi->key_var, relkey);
+                emit_label(ir, skip);
+            }
+            if (node->is_signed || (!node->on_error && !node->not_on_error)) {
+                lower_io_phrases(ir, node->is_signed ? node : &no_phrases, 20, 29, f, 0);
+                break;
+            }
+            // [NOT] AT END-OF-PAGE: after a successful WRITE
             lower_io_phrases(ir, &no_phrases, 1, 0, f, 0);
+            char eop[32], end[32];
+            new_label(eop, sizeof(eop), "eop");
+            new_label(end, sizeof(end), "eop_end");
+            emit_io_jump(ir, 10, 99, end);
+            IrInstr *j = emit_file_op(ir, IR_FILE_EOP_JUMP, f);
+            j->jump_target = strdup(eop);
+            lower_block(ir, node->not_on_error);
+            emit_jump(ir, IR_JUMP, end);
+            emit_label(ir, eop);
+            lower_block(ir, node->on_error);
+            emit_label(ir, end);
+            break;
+        }
+        case AST_STATEMENT_DELETE:
+        case AST_STATEMENT_START: {
+            int f = find_file(node->extra);
+            if (f < 0) return;
+            FileInfo *fi = &files[f];
+            int org = fi->select->org;
+            if (org != FILE_ORG_RELATIVE && org != FILE_ORG_INDEXED) {
+                cobalt_error_loc(NULL, node->loc.line, node->loc.column, "%s needs a RELATIVE or INDEXED file",
+                                 node->kind == AST_STATEMENT_DELETE ? "DELETE" : "START");
+                return;
+            }
+            AstNode *relkey = org == FILE_ORG_RELATIVE ? file_key(f, "RELATIVE") : NULL;
+            bool start = node->kind == AST_STATEMENT_START;
+            if (relkey && (start || random_or_dynamic(f))) move_to_item(ir, relkey, fi->key_var);
+            if (start && org == FILE_ORG_RELATIVE && !relkey) {
+                cobalt_error_loc(NULL, node->loc.line, node->loc.column,
+                                 "START needs the RELATIVE KEY of file '%s'", fi->name);
+                return;
+            }
+            IrInstr *op = emit_file_op(ir, start ? IR_FILE_START : IR_FILE_DELETE, f);
+            if (start) {
+                op->imm = strcmp(node->text, ">") == 0 ? 1 : strcmp(node->text, "=") == 0 ? 0 : 2;
+                op->digits = 0;
+                op->size = org == FILE_ORG_INDEXED && fi->nkeys > 0 ? vars[fi->key_item[0]].size : 0;
+                if (org == FILE_ORG_INDEXED && node->children) {
+                    int len, k = key_of_item(f, node->children, &len);
+                    if (k < 0) return;
+                    op->digits = k;
+                    op->size = len;
+                }
+                if (relkey) {
+                    // The record number found becomes the RELATIVE KEY
+                    char skip[32];
+                    new_label(skip, sizeof(skip), "start_skip");
+                    emit_io_jump(ir, 10, 99, skip);
+                    move_from_item(ir, fi->key_var, relkey);
+                    emit_label(ir, skip);
+                }
+            }
+            lower_io_phrases(ir, node, 20, 29, f, 0);
             break;
         }
         default:
@@ -3393,6 +3742,8 @@ static void lower_node(IrProgram *ir, AstNode *node) {
         case AST_STATEMENT_OPEN:
         case AST_STATEMENT_CLOSE:
         case AST_STATEMENT_READ:
+        case AST_STATEMENT_DELETE:
+        case AST_STATEMENT_START:
         case AST_STATEMENT_WRITE:
         case AST_STATEMENT_REWRITE:
             lower_file_statement(ir, node);

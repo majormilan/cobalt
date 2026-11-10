@@ -27,6 +27,7 @@ X_CARDS = {
     "068": "8192",              # OBJECT-COMPUTER MEMORY SIZE (characters)
     "084": "STANDARD",          # LABEL RECORDS ARE ...
     "073": "C01",               # implementor-name of channel 1 (WRITE ADVANCING)
+    "086": "PIC X(8)",          # PICTURE of a file label data item (VALUE OF)
     "047": "ALTLIB1",           # library-names of COPY ... OF/IN (SM207A)
     "048": "ALTLIB2",
 }
@@ -42,7 +43,10 @@ SUFFIX = {"COBOL": ".CBL", "CLBRY": ".CPY"}
 # P/C: file-system specific clauses). Letters listed here are enabled (the
 # letter becomes a space); all others are commented out. D is the standard
 # debugging-line indicator and is left alone.
-OPTIONS = {"A"}                 # A: SPECIAL-NAMES switches
+OPTIONS = {"A", "E", "H", "T"}  # A: SPECIAL-NAMES switches; E, H: CLOSE UNIT
+                                # and CLOSE REEL on multi-reel files (the other
+                                # choices, F and I, delete the test); T: 29-
+                                # character indexed keys (IX; U would give 8)
 
 
 def substitute(line):

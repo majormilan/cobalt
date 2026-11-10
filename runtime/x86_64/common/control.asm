@@ -13,6 +13,7 @@ global cobrt_runtime_flags
 global runtime_exit
 global runtime_switch_status
 global runtime_switch_set
+extern cobrt_files_close_all
 
 ; ARG0 = stack pointer at program entry (for the environment),
 ; ARG1 = program-wide settings (RT_* bits)
@@ -64,8 +65,10 @@ runtime_switch_set:
     mov [r8 + ARG0], al
     ret
 
-; Terminates the program with status 0.
+; Terminates the program with status 0; open files are closed.
 runtime_exit:
+    sub rsp, 8
+    call cobrt_files_close_all
     xor ARG0, ARG0
     call cobrt_os_exit
 

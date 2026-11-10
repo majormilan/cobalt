@@ -214,6 +214,33 @@ Token lexer_cobol85_keyword_or_ident(Lexer *l, const char *start, size_t len) {
     KW("INITIAL",         TOK_INITIAL);
     KW("FOR",             TOK_FOR);
     KW("UPON",            TOK_UPON);
+    KW("START", TOK_START);
+    KW("DELETE", TOK_DELETE);
+    KW("INVALID", TOK_INVALID);
+    KW("END-START", TOK_END_START);
+    KW("END-DELETE", TOK_END_DELETE);
+    KW("CALL", TOK_CALL);
+    KW("CANCEL", TOK_CANCEL);
+    KW("END-CALL", TOK_END_CALL);
+    KW("USING", TOK_USING);
+    KW("SORT", TOK_SORT);
+    KW("MERGE", TOK_MERGE);
+    KW("RELEASE", TOK_RELEASE);
+    KW("RETURN", TOK_RETURN);
+    KW("END-RETURN", TOK_END_RETURN);
+    KW("EXCEPTION", TOK_EXCEPTION);
+    KW("GENERATE", TOK_GENERATE);
+    KW("INITIATE", TOK_INITIATE);
+    KW("TERMINATE", TOK_TERMINATE);
+    KW("ENTER", TOK_ENTER);
+    KW("USE", TOK_USE);
+    KW("SEND", TOK_SEND);
+    KW("RECEIVE", TOK_RECEIVE);
+    KW("ENABLE", TOK_ENABLE);
+    KW("DISABLE", TOK_DISABLE);
+    KW("PURGE", TOK_PURGE);
+    KW("SUPPRESS", TOK_SUPPRESS);
+    KW("END-RECEIVE", TOK_END_RECEIVE);
     #undef KW
 
     // User-defined words are case-insensitive: fold them to upper case in the

@@ -22,6 +22,14 @@
 ;                                                        and nanoseconds, as two qwords
 ;   cobrt_os_init (ARG0 = stack pointer at program entry) -> nothing
 ;   cobrt_os_getenv(ARG0 = NUL-terminated name)       -> RET0 = value (NUL-terminated) or 0
+;   cobrt_os_alloc(ARG0 = size)                       -> RET0 = zeroed memory, or 0
+;   cobrt_os_free (ARG0 = memory, ARG1 = its size)    -> nothing
+;   cobrt_os_pread / cobrt_os_pwrite (ARG0 = handle, ARG1 = buf, ARG2 = len,
+;                  ARG3 = file offset)                -> RET0 = bytes, 0 = EOF, <0 = error
+;   cobrt_os_size (ARG0 = handle)                     -> RET0 = file size or <0
+;   cobrt_os_truncate(ARG0 = handle, ARG1 = size)     -> RET0 = 0 or <0
+;   cobrt_os_unlink(ARG0 = path)                      -> RET0 = 0 or <0
+;   cobrt_os_rename(ARG0 = old path, ARG1 = new path) -> RET0 = 0 or <0
 ; They follow the normal ABI rules (caller-saved registers may be clobbered).
 ; Callers need not align the stack; an OS layer that calls into a system
 ; library must realign it itself.
@@ -36,6 +44,14 @@
     extern cobrt_os_time
     extern cobrt_os_init
     extern cobrt_os_getenv
+    extern cobrt_os_alloc
+    extern cobrt_os_free
+    extern cobrt_os_pread
+    extern cobrt_os_pwrite
+    extern cobrt_os_size
+    extern cobrt_os_truncate
+    extern cobrt_os_unlink
+    extern cobrt_os_rename
 %endif
 %ifndef COBRT_CONTROL
     extern cobrt_runtime_flags
@@ -52,8 +68,11 @@
 %define OS_OPEN_READWRITE   2           ; existing file, read and write
 %define OS_OPEN_APPEND      3           ; create if missing, write at the end
 %define OS_OPEN_RW_CREATE   4           ; create if missing, read and write
+%define OS_OPEN_APPEND_OLD  5           ; existing file, write at the end
+%define OS_OPEN_RW_TRUNC    6           ; create or truncate, read and write
 %define OS_ERR_NOT_FOUND   -1
 %define OS_ERR_OTHER       -2
+%define OS_ERR_PERMISSION  -3
 
 ; Field usage codes and numeric flags (runtime/ABI.md section 5)
 %define USAGE_DISPLAY 0

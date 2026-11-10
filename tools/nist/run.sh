@@ -57,9 +57,23 @@ for cbl in "$SRC"/$MODULE*.CBL; do
     # Programs of a module share their data files (one writes a file that a
     # later one reads), so they run in order in one directory; the report
     # moves to the program's own directory
+    # Programs that test OPEN of an absent file (status 05 or 35 expected)
+    # run with their files moved aside, restored afterwards: other programs
+    # read what earlier ones wrote
+    hidden=""
+    if grep -q "ABSENT\|EXP. *05\|05 EXP\|EXP: 05\|NOT EXIST\|NOT PRESENT" "$cbl"; then
+        # SQ203A tests its OPTIONAL files both present (XXXXX001) and absent
+        keep=""
+        [ "$name" = SQ203A ] && keep=XXXXX001
+        for h in $(awk 'substr($0,7,1) != "*" && /SELECT/ {f=1} f && substr($0,7,1) != "*" && match(substr($0,8,65), /XXXXX[0-9][0-9][0-9]/) {print substr(substr($0,8,65), RSTART, RLENGTH); f=0}' "$cbl"); do
+            [ "$h" = "$keep" ] && continue
+            [ -f "$FILES/$h" ] && mv "$FILES/$h" "$FILES/$h.hidden" && hidden="$hidden $h"
+        done
+    fi
     (cd "$FILES" && rm -f report.log &&
      COB_SWITCH_1=ON timeout 10 "$ROOT/$dir/$name" < "$input" > "$ROOT/$dir/run.log" 2>&1
      [ -f report.log ] && mv report.log "$ROOT/$dir/")
+    for h in $hidden; do mv -f "$FILES/$h.hidden" "$FILES/$h"; done
     if [ -f "$dir/report.log" ]; then
         ran=$((ran+1))
         # Summary lines: "093 OF 093  TESTS WERE EXECUTED SUCCESSFULLY",

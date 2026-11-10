@@ -370,49 +370,92 @@ PERFORM counts go through a single representation:
   REMAINDER r` stores `b / a` into `q` and then `b - q * a` into `r`.
 - Exponentiation (`**`) supports integer literal exponents from 0 to 18.
 
-## 7. Sequential files [implemented]
+## 7. Files [implemented]
 
-Every file named in a SELECT has a 64-byte file control block (FCB) in the
-program's `.data`, labelled `F_<n>`, that generated code passes to the file
-routines:
+Every file named in a SELECT has a 192-byte file control block (FCB) in the
+program's `.data` that generated code passes to the file routines
+(runtime/x86_64/common/file.inc has the layout). The compiler treats the FCB
+as a record of its own, so the fields the program exchanges with the runtime
+(record length, relative record number, key of reference) are ordinary
+unsigned binary data items to it.
 
 | Offset | Field | Contents |
 |---|---|---|
 | 0 | handle | OS handle while the file is open |
 | 8 | mode | 0 closed, 1 INPUT, 2 OUTPUT, 3 I-O, 4 EXTEND |
-| 16 | size | record area size (the longest record description) |
-| 24 | flags | 1 LINE SEQUENTIAL, 2 OPTIONAL |
+| 16 | size | longest record |
+| 24 | flags | 1 LINE SEQUENTIAL, 2 OPTIONAL, 4 a USE procedure applies, 8 variable-length records, 16 LINAGE; 0x100 RELATIVE, 0x200 INDEXED; 0x1000 ACCESS RANDOM, 0x2000 ACCESS DYNAMIC |
 | 32 | name | NUL-terminated file name (from ASSIGN) |
 | 40 | status | address of the 2-character FILE STATUS item, or 0 |
-| 48 | state | runtime state bits (AT END reached, last READ succeeded, text line open, OPTIONAL file absent) |
-| 56 | reserved | |
+| 48 | state | runtime state bits (AT END reached, last READ succeeded, text line open, OPTIONAL file absent, REVERSED, end-of-page, ...) |
+| 56 | last mode | mode of the last OPEN, for USE procedures on INPUT, OUTPUT, I-O, EXTEND |
+| 64 | min size | shortest record |
+| 72 | record length | of the record read; of the record to write when the WRITE passes -1 (RECORD VARYING DEPENDING ON) |
+| 80 | key | relative record number: the program stores the RELATIVE KEY here before, and takes it from here after, as the statement requires |
+| 88 | keys | indexed: the key table; relative: the largest record number the RELATIVE KEY item holds (0: no limit) |
+| 96-136 | buffer, positions | runtime state |
+| 144 | lock | closed WITH LOCK in this run |
+| 152 | LINAGE | address of the LINAGE block, or 0 |
+| 160 | private | organization state |
+| 168 | key of reference | indexed: the key READ NEXT follows (the program sets it for READ KEY IS; START sets it) |
+| 176-191 | | runtime state |
 
-All record descriptions of one FD share one record area. Each file routine
-returns the I-O status code and stores it as two digits in the FILE STATUS
-item, if there is one. A status of 30 or more on a file without a FILE STATUS
-item ends the run with a message on stderr and exit status 1.
+The routines: `runtime_file_open(fcb, mode | options << 8)` (options: 1
+REVERSED, 2 NO REWIND), `runtime_file_close(fcb, options)` (1 REEL/UNIT, 2 NO
+REWIND, 4 LOCK), `runtime_file_read(fcb, area, how)` (0 next, 1 by key),
+`runtime_file_write(fcb, record, length, advancing, lines)`,
+`runtime_file_rewrite(fcb, record, length)`, `runtime_file_delete(fcb)`,
+`runtime_file_start(fcb, condition, key, length)` (condition 0 `=`, 1 `>`, 2
+`>=`; indexed: key number and the leading bytes compared). Each returns the
+I-O status code and stores it as two digits in the FILE STATUS item, if there
+is one. A status of 30 or more on a file without a FILE STATUS item or an
+applicable USE procedure ends the run with a message on stderr and exit
+status 1. Open files are closed at STOP RUN.
 
 | Status | Meaning |
 |---|---|
 | 00 | success |
+| 02 | indexed: a duplicate alternate key that allows duplicates |
+| 04 | READ: the record length is outside the file's limits |
 | 05 | OPEN of an OPTIONAL file that does not exist |
+| 07 | CLOSE REEL/UNIT, NO REWIND on a disk file (no effect) |
 | 10 | AT END |
+| 14 | relative READ NEXT: the record number does not fit the RELATIVE KEY |
+| 21 | indexed: prime key out of sequence (sequential access), or changed before REWRITE |
+| 22 | duplicate key |
+| 23 | no record with that key (READ, REWRITE, DELETE, START) |
+| 24 | relative: record number 0 |
 | 30 | other I-O error |
-| 35 | OPEN INPUT / I-O of a file that does not exist |
+| 35 | OPEN INPUT / I-O / EXTEND of a file that does not exist |
+| 37 | OPEN not permitted (file permissions) |
+| 38 | OPEN after CLOSE WITH LOCK |
 | 41 | OPEN of an open file |
 | 42 | CLOSE of a file that is not open |
-| 43 | REWRITE without a successful READ |
-| 46 | READ after AT END |
-| 47 | READ of a file not open INPUT or I-O |
-| 48 | WRITE to a file not open OUTPUT or EXTEND |
-| 49 | REWRITE of a file not open I-O |
+| 43 | REWRITE / DELETE not after a successful READ (sequential access) |
+| 44 | record length outside the limits, or REWRITE with another length (sequential) |
+| 46 | READ NEXT with no next record (after AT END or a failed START) |
+| 47 | READ / START of a file not open INPUT or I-O |
+| 48 | WRITE to a file not open OUTPUT, EXTEND (or I-O, relative and indexed) |
+| 49 | REWRITE / DELETE of a file not open I-O |
 
-**File formats.** ORGANIZATION SEQUENTIAL (record sequential, the default)
-files hold fixed-length records of the record area size with no separators;
-a short last record reads space padded. LINE SEQUENTIAL files, and any file
-written with ADVANCING, are text: each record is written without trailing
-spaces and ends with a newline; READ fills the record area from one line and
-pads it with spaces.
+After an unsuccessful I-O statement (status 10 or more) not handled by its AT
+END or INVALID KEY phrase, generated code performs the USE procedure for the
+file, else the one for its open mode.
+
+**File formats.** Record sequential files with records of one length hold
+the records with no separators; a short last record reads space padded
+(status 04). With records of different lengths each record has a 4-byte
+header: its length, big-endian, in the first two bytes. LINE SEQUENTIAL
+files, and any file written with ADVANCING, are text: each record is written
+without trailing spaces and ends with a newline; READ fills the record area
+from one line and pads it with spaces. I-O goes through a 64 KiB buffer per
+file. RELATIVE files are an array of slots, record number k at slot k: an
+8-byte length (0: no record) and the record area. INDEXED files are an array
+of slots too: an 8-byte length (0: free slot), an 8-byte sequence number per
+key, and the record area; the indexes are built in memory at OPEN (sorted
+blocks of entries, about a page each) and kept up to date by every WRITE,
+REWRITE and DELETE. The sequence numbers order duplicate alternate keys:
+the order in which records got their key value.
 
 **ADVANCING** follows printer semantics on text: `AFTER n` moves down `n`
 lines and then prints (the line stays open), `BEFORE n` prints and then moves
@@ -421,9 +464,15 @@ down `n` lines, `PAGE` writes a form feed. WRITE without ADVANCING is
 same line; in a text file the record starts a new line instead. CLOSE ends an
 open line.
 
-Not yet supported: RELATIVE and INDEXED organization, ACCESS RANDOM and
-DYNAMIC, LINAGE, SD and SORT/MERGE, USE declaratives, and ASSIGN to a data
-item.
+**LINAGE.** The program stores the LINAGE values (lines, FOOTING, TOP,
+BOTTOM) in the file's 72-byte LINAGE block before OPEN and every WRITE; the
+runtime takes them at the start of each page. LINAGE-COUNTER (offset 32 of
+the block) starts at 1; AFTER/BEFORE n add n; moving past the page body goes
+to the first line of the next page (newlines for the rest of the body, the
+bottom and top margins). The end-of-page condition (state bit 32) is raised
+when LINAGE-COUNTER reaches FOOTING, or a new page starts.
+
+Not yet supported: SD and SORT/MERGE, ASSIGN to a data item, CODE-SET.
 
 ## 8. Editing [implemented]
 

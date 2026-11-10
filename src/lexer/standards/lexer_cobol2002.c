@@ -78,6 +78,7 @@ Token lexer_cobol2002_keyword_or_ident(Lexer *l, const char *start, size_t len) 
     KW("YYYYMMDD",        TOK_YYYYMMDD);
     KW("YYDDD",           TOK_YYDDD);
 
+    KW("GOBACK",          TOK_GOBACK);
     #undef KW
 
     // Everything else is shared with COBOL-85

@@ -122,7 +122,12 @@ typedef enum {
                             //   on_error: AT END; not_on_error: NOT AT END
     AST_STATEMENT_WRITE,    // extra: record; loop: FROM identifier; name: BEFORE or
                             //   AFTER; children: line count, or PAGE (bool literal)
-    AST_STATEMENT_REWRITE,  // extra: record; loop: FROM identifier
+    AST_STATEMENT_REWRITE,  // extra: record; loop: FROM identifier; on_error / not_on_error:
+                            //   [NOT] INVALID KEY (WRITE: is_signed for INVALID KEY, else
+                            //   the phrases are [NOT] AT END-OF-PAGE)
+    AST_STATEMENT_DELETE,   // extra: file; on_error / not_on_error: [NOT] INVALID KEY
+    AST_STATEMENT_START,    // extra: file; text: =, > or >=; children: KEY data-name;
+                            //   on_error / not_on_error: [NOT] INVALID KEY
     AST_STATEMENT_SEARCH,   // name: "ALL" for SEARCH ALL; extra: table identifier;
                             //   loop: VARYING identifier; on_error: AT END statements;
                             //   children: AST_WHEN nodes

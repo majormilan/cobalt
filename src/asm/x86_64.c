@@ -17,7 +17,7 @@ enum {
     M_INC, M_DEC, M_NOT, M_NEG, M_MUL, M_IMUL, M_DIV, M_IDIV,
     M_PUSH, M_POP, M_CALL, M_JMP, M_BT, M_XCHG, M_BSWAP,
     M_RET, M_LEAVE, M_CQO, M_CDQ, M_CDQE, M_SYSCALL, M_CLD, M_STD, M_NOP,
-    M_MOVSB, M_MOVSQ, M_STOSB, M_STOSQ, M_HLT,
+    M_MOVSB, M_MOVSQ, M_STOSB, M_STOSQ, M_HLT, M_CMPSB, M_SCASB,
     M_FIXED_COUNT
 };
 #define M_JCC    100                // + condition code
@@ -31,7 +31,7 @@ static const char *const fixed_names[M_FIXED_COUNT] = {
     "inc", "dec", "not", "neg", "mul", "imul", "div", "idiv",
     "push", "pop", "call", "jmp", "bt", "xchg", "bswap",
     "ret", "leave", "cqo", "cdq", "cdqe", "syscall", "cld", "std", "nop",
-    "movsb", "movsq", "stosb", "stosq", "hlt",
+    "movsb", "movsq", "stosb", "stosq", "hlt", "cmpsb", "scasb",
 };
 
 static const struct { const char *name; int cc; } conditions[] = {
@@ -516,6 +516,8 @@ int x86_encode(const Stmt *st, uint8_t *out, Fixup *fixups, int *nfixups, const 
         case M_STD:     NEED(0); put(&e, 0xFD); break;
         case M_NOP:     NEED(0); put(&e, 0x90); break;
         case M_HLT:     NEED(0); put(&e, 0xF4); break;
+        case M_CMPSB:   NEED(0); put(&e, 0xA6); break;
+        case M_SCASB:   NEED(0); put(&e, 0xAE); break;
         case M_MOVSB:   NEED(0); put(&e, 0xA4); break;
         case M_MOVSQ:   NEED(0); put(&e, 0x48); put(&e, 0xA5); break;
         case M_STOSB:   NEED(0); put(&e, 0xAA); break;

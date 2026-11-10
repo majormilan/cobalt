@@ -97,14 +97,24 @@ typedef enum {
     // control block "%f<n>"; every call leaves the status code where
     // IR_IO_JUMP can test it.
     IR_DATA_FILE,           // file control block var_name: lit_name = file name literal,
-                            //   size = record area size, flags = FILE_* flags,
-                            //   content = FILE STATUS item (or NULL)
-    IR_FILE_OPEN,           // imm = OPEN mode (1 INPUT, 2 OUTPUT, 3 I-O, 4 EXTEND)
-    IR_FILE_CLOSE,
-    IR_FILE_READ,           // into the record area lit_name
+                            //   size = record area size, flags = FILE_*, ORG_* and ACC_*
+                            //   bits, digits = shortest record, content = FILE STATUS
+                            //   item (or NULL), jump_target = key table (or NULL),
+                            //   cmp_op = LINAGE block (or NULL)
+    IR_DATA_QWORDS,         // initialized qwords var_name: content = numbers and data
+                            //   labels separated by spaces
+    IR_FILE_OPEN,           // imm = OPEN mode (1 INPUT, 2 OUTPUT, 3 I-O, 4 EXTEND) |
+                            //   options << 8 (1 REVERSED, 2 NO REWIND)
+    IR_FILE_CLOSE,          // imm = options (1 REEL/UNIT, 2 NO REWIND, 4 LOCK)
+    IR_FILE_READ,           // into the record area lit_name; imm = 0 next, 1 by key
+    IR_FILE_DELETE,
+    IR_FILE_START,          // imm = condition (0 =, 1 >, 2 >=), digits = key number,
+                            //   size = key bytes compared
+    IR_FILE_EOP_JUMP,       // jump to jump_target if the last WRITE raised end-of-page
     IR_FILE_WRITE,          // record lit_name, size bytes; imm = advancing mode;
-                            //   lines = digits, or popped from the numeric stack if flags
-    IR_FILE_REWRITE,        // record lit_name, size bytes
+                            //   lines = digits, or popped from the numeric stack if
+                            //   flags & 1; flags & 2: the length is in the FCB
+    IR_FILE_REWRITE,        // record lit_name, size bytes; flags & 2: the length is in the FCB
     IR_IO_JUMP,             // jump to jump_target if imm <= status <= size
     IR_FILE_MODE_JUMP,      // jump to jump_target unless file var_name was last opened in mode imm
     IR_DATA_BSS,            // zeroed storage var_name of size bytes

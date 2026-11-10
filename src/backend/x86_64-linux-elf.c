@@ -1166,7 +1166,7 @@ static bool vs_handles(IrOpcode op) {
         case IR_ERR_SAVE: case IR_ERR_RESTORE: case IR_NUM_STORE:
         case IR_NUM_CMP_JUMP_IF_FALSE: case IR_SIZE_ERR_CLEAR: case IR_NUM_DEEDIT:
         case IR_DATA_VAR: case IR_DATA_LIT: case IR_DATA_BSS: case IR_DATA_BYTES:
-        case IR_DATA_FILE:
+        case IR_DATA_FILE: case IR_DATA_QWORDS:
             return true;
         default:
             return false;
@@ -1182,7 +1182,7 @@ static bool keeps_err_state(IrOpcode op) {
         case IR_CALL_MOVE_FILL: case IR_ADDR_SET: case IR_ADDR_ADD: case IR_LEN_SET:
         case IR_NUM_TO_TEXT: case IR_NUM_TRUNC: case IR_JUMP_IF_NO_SIZE_ERR:
         case IR_DATA_VAR: case IR_DATA_LIT: case IR_DATA_BSS: case IR_DATA_BYTES:
-        case IR_DATA_FILE: case IR_CALL_REPLICATE: case IR_CALL_EDIT_ALNUM:
+        case IR_DATA_FILE: case IR_DATA_QWORDS: case IR_CALL_REPLICATE: case IR_CALL_EDIT_ALNUM:
             return true;
         default:
             return false;
@@ -1303,11 +1303,38 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
         char *fcb = sanitize_label_name(i->var_name);
         char *name = sanitize_label_name(i->lit_name);
         char *status = i->content ? sanitize_label_name(i->content) : NULL;
-        fprintf(f, "align 8\n%s: dq 0, 0, %d, %d, %s, %s, 0, 0\n",
-                fcb, i->size, i->flags, name, status ? status : "0");
+        // jump_target: an indexed file's key table, or a relative file's
+        // largest record number
+        char *keys = !i->jump_target ? NULL : isdigit((unsigned char)i->jump_target[0])
+                     ? strdup(i->jump_target) : sanitize_label_name(i->jump_target);
+        char *linage = i->cmp_op ? sanitize_label_name(i->cmp_op) : NULL;
+        // fd, mode, size, flags, name, status, state, last mode, min size,
+        // record length, key, key table, buffer (5), lock, LINAGE block,
+        // private, key of reference, next, sort
+        fprintf(f, "align 8\n%s: dq 0, 0, %d, %d, %s, %s, 0, 0, %d, 0, 0, %s, 0, 0, 0, 0, 0, 0, 0, %s, 0, 0, 0, 0\n",
+                fcb, i->size, i->flags, name, status ? status : "0", i->digits,
+                keys ? keys : "0", linage ? linage : "0");
         free(fcb);
         free(name);
         free(status);
+        free(keys);
+        free(linage);
+    }
+    for (i = ir->head; i; i = i->next) {
+        if (i->op != IR_DATA_QWORDS) continue;
+        char *label = sanitize_label_name(i->var_name);
+        fprintf(f, "align 8\n%s: dq ", label);
+        free(label);
+        char *copy = strdup(i->content);
+        bool first = true;
+        for (char *t = strtok(copy, " "); t; t = strtok(NULL, " ")) {
+            char *v = (t[0] == '%' || t[0] == '$') ? sanitize_label_name(t) : strdup(t);
+            fprintf(f, "%s%s", first ? "" : ", ", v);
+            free(v);
+            first = false;
+        }
+        fprintf(f, "\n");
+        free(copy);
     }
     fprintf(f, "\n");
 
@@ -2143,15 +2170,35 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
             case IR_FILE_READ:
                 emit_addr(f, "rdi", i->var_name);
                 emit_addr(f, "rsi", i->lit_name);
+                fprintf(f, "    mov rdx, %lld\n", i->imm);
                 fprintf(f, "    call runtime_file_read\n");
                 fprintf(f, "    mov [rel cobrt_io_status], rax\n\n");
                 break;
+            case IR_FILE_DELETE:
+                emit_addr(f, "rdi", i->var_name);
+                fprintf(f, "    call runtime_file_delete\n");
+                fprintf(f, "    mov [rel cobrt_io_status], rax\n\n");
+                break;
+            case IR_FILE_START:
+                emit_addr(f, "rdi", i->var_name);
+                fprintf(f, "    mov rsi, %lld\n", i->imm);
+                fprintf(f, "    mov rdx, %d\n", i->digits);
+                fprintf(f, "    mov rcx, %d\n", i->size);
+                fprintf(f, "    call runtime_file_start\n");
+                fprintf(f, "    mov [rel cobrt_io_status], rax\n\n");
+                break;
+            case IR_FILE_EOP_JUMP:
+                emit_addr(f, "rax", i->var_name);
+                fprintf(f, "    test qword [rax + 48], 32\n");
+                fprintf(f, "    jnz %s\n", sanitized_jump);
+                break;
             case IR_FILE_WRITE:
-                if (i->flags) emit_pop(f, "r8");
+                if (i->flags & 1) emit_pop(f, "r8");
                 else fprintf(f, "    mov r8, %d\n", i->digits);
                 emit_addr(f, "rdi", i->var_name);
                 emit_addr(f, "rsi", i->lit_name);
-                emit_size(f, "rdx", i->size);
+                if (i->flags & 2) fprintf(f, "    mov rdx, -1\n");
+                else emit_size(f, "rdx", i->size);
                 fprintf(f, "    mov rcx, %lld\n", i->imm);
                 fprintf(f, "    call runtime_file_write\n");
                 fprintf(f, "    mov [rel cobrt_io_status], rax\n\n");
@@ -2159,7 +2206,8 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
             case IR_FILE_REWRITE:
                 emit_addr(f, "rdi", i->var_name);
                 emit_addr(f, "rsi", i->lit_name);
-                emit_size(f, "rdx", i->size);
+                if (i->flags & 2) fprintf(f, "    mov rdx, -1\n");
+                else emit_size(f, "rdx", i->size);
                 fprintf(f, "    call runtime_file_rewrite\n");
                 fprintf(f, "    mov [rel cobrt_io_status], rax\n\n");
                 break;
