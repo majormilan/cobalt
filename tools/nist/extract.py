@@ -26,7 +26,14 @@ X_CARDS = {
     "091": "69",                # ordinal position of "D"
     "068": "8192",              # OBJECT-COMPUTER MEMORY SIZE (characters)
     "084": "STANDARD",          # LABEL RECORDS ARE ...
+    "073": "C01",               # implementor-name of channel 1 (WRITE ADVANCING)
+    "047": "ALTLIB1",           # library-names of COPY ... OF/IN (SM207A)
+    "048": "ALTLIB2",
 }
+
+# Library members that belong in a named library (a directory of the output
+# directory) rather than the default one: member -> (library, text-name)
+LIBRARIES = {"ALTLB": ("ALTLIB1", "ALTLB"), "ALTL1": ("ALTLIB2", "ALTLB")}
 
 SUFFIX = {"COBOL": ".CBL", "CLBRY": ".CPY"}
 
@@ -47,6 +54,8 @@ def substitute(line):
     # (columns 73-80) in place: a value of another length is padded with, or
     # takes the place of, trailing spaces of the area
     area, rest = line[:72], line[72:]
+    # XXXXDnnn and XXXXPnnn name the same file as XXXXXnnn
+    area = re.sub(r"XXXX[DP](\d{3})", r"XXXXX\1", area)
     new = re.sub(r"XXXXX(\d{3})", repl, area)
     if new != area and rest:
         new = new.rstrip().ljust(72) if len(new.rstrip()) <= 72 else new
@@ -57,30 +66,42 @@ def main():
     src, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
     current = None
-    is_data = False
-    count = 0
+    members = []                # [kind, name, lines] in suite order
     with open(src, encoding="latin-1") as f:
         for line in f:
             line = line.rstrip("\r\n")
             if line.startswith("*HEADER,"):
-                if current:
-                    current.close()
                 parts = line.split(",")
-                kind, name = parts[1].strip(), parts[2].strip()
-                path = os.path.join(out, name + SUFFIX.get(kind, ".DAT"))
-                current = open(path, "w", encoding="latin-1")
-                is_data = not kind in SUFFIX    # data members are copied unchanged
-                count += 1
+                members.append([parts[1].strip(), parts[2].strip(), []])
                 continue
             if line.startswith("*END-OF,"):
-                if current:
-                    current.close()
-                current = None
                 continue
-            if current:
-                current.write((line if is_data else substitute(line)) + "\n")
-    if current:
-        current.close()
+            if members:
+                members[-1][2].append(line)
+    count = 0
+    used = set()
+    for kind, name, lines in members:
+        is_data = kind not in SUFFIX    # data members are copied unchanged
+        text = [line if is_data else substitute(line) for line in lines]
+        # Some members hold a second program under the name of the first
+        # (SM101A, whose report file SM102A reads): name it by its PROGRAM-ID
+        if kind == "COBOL" and name in used:
+            for k, line in enumerate(text):
+                m = re.search(r"PROGRAM-ID\.\s*(\w+)?", line[6:72])
+                if m:
+                    pid = m.group(1) or (text[k + 1][6:72].strip().rstrip(".") if k + 1 < len(text) else "")
+                    if pid:
+                        name = pid
+                    break
+        used.add(name)
+        path = os.path.join(out, name + SUFFIX.get(kind, ".DAT"))
+        if kind == "CLBRY" and name in LIBRARIES:
+            lib, tname = LIBRARIES[name]
+            os.makedirs(os.path.join(out, lib), exist_ok=True)
+            path = os.path.join(out, lib, tname + ".CPY")
+        with open(path, "w", encoding="latin-1") as w:
+            w.write("".join(line + "\n" for line in text))
+        count += 1
     print(f"{count} members written to {out}")
 
 

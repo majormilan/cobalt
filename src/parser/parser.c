@@ -86,6 +86,15 @@ static char *tok_to_str(void) {
 
 // Text of the current token; for a nonnumeric literal the doubled delimiter
 // ("" or '') inside it stands for one delimiter character
+// The current token's text in a buffer valid until the next call
+static const char *tok_value_tmp(void) {
+    static char buf[256];
+    size_t n = tok.length < sizeof(buf) - 1 ? tok.length : sizeof(buf) - 1;
+    memcpy(buf, tok.lexeme, n);
+    buf[n] = '\0';
+    return buf;
+}
+
 static char *tok_value(void) {
     char *s = tok_to_str();
     if (s && tok.kind == TOK_STRING) {
@@ -224,6 +233,7 @@ static AstNode *parse_procedure_name(void);
 static AstNode *parse_imperative_block(void);
 static Token peek_token(void);
 static bool tok_is_word(const char *word);
+static bool tok_spelled(const char *word);
 static void arith_error(const char *msg);
 
 // Map a usage keyword to its usage type; returns false if tok is not one
@@ -2181,7 +2191,10 @@ static AstNode *parse_statement(void) {
             w->name = strdup(tok.kind == TOK_BEFORE ? "BEFORE" : "AFTER");
             next();
             if (tok.kind == TOK_ADVANCING) next();
-            if (tok.kind == TOK_PAGE) {
+            Symbol *mn = tok.kind == TOK_IDENT ? symtab_resolve_symbol(current_symtab, tok_value_tmp()) : NULL;
+            if (tok.kind == TOK_PAGE || (mn && mn->level == -1)) {
+                // PAGE, or a mnemonic-name of a channel (C01, TOP): to the next page
+                if (mn) symtab_mark_symbol_as_used(mn);
                 w->children = ast_new(AST_BOOL_LITERAL, "PAGE", loc);
                 next();
             } else {
@@ -2390,6 +2403,12 @@ static bool tok_is_word(const char *word) {
     return tok.kind == TOK_IDENT && tok.length == n && strncasecmp(tok.lexeme, word, n) == 0;
 }
 
+// The current token is this word, a keyword or not
+static bool tok_spelled(const char *word) {
+    size_t n = strlen(word);
+    return tok.kind != TOK_STRING && tok.length == n && strncasecmp(tok.lexeme, word, n) == 0;
+}
+
 // A word that starts another SPECIAL-NAMES clause
 static bool special_names_clause_start(void) {
     static const char *words[] = { "SYMBOLIC", "ALPHABET", "CLASS", "CURRENCY", "DECIMAL-POINT",
@@ -2535,10 +2554,32 @@ static void parse_special_names(AstNode *div, AstNode **tail) {
 // SELECT [OPTIONAL] file ASSIGN [TO] name [ORGANIZATION [IS] [LINE|RECORD]
 //   SEQUENTIAL] [ACCESS [MODE] [IS] SEQUENTIAL] [[FILE] STATUS [IS] item]
 //   [RESERVE n [AREA|AREAS]] ... .
+// A data-name [OF|IN data-name]... declared later in the DATA DIVISION
+// (FILE STATUS, keys): resolved during IR lowering
+static AstNode *parse_forward_identifier(void) {
+    AstNode *id = parse_procedure_name();
+    if (id->extra) {
+        id->extra->next = NULL;
+        AstNode *tail = id->extra;
+        while ((tok.kind == TOK_OF || tok.kind == TOK_IN) && peek_token().kind == TOK_IDENT) {
+            next();
+            char *q = tok_to_str();
+            list_append(&id->extra, &tail, ast_new(AST_IDENTIFIER, q, (SourceLocation){current_lexer->filename, tok.line, tok.column}));
+            free(q);
+            next();
+        }
+    }
+    return id;
+}
+
+// SELECT [OPTIONAL] file-name, then its clauses in any order: ASSIGN,
+// ORGANIZATION, ACCESS MODE, RELATIVE / RECORD / ALTERNATE RECORD KEY,
+// FILE STATUS, RESERVE, PADDING CHARACTER, RECORD DELIMITER
 static AstNode *parse_select(void) {
     SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
     next();
     AstNode *sel = ast_new(AST_SELECT, NULL, loc);
+    AstNode *key_tail = NULL;
     if (tok.kind == TOK_OPTIONAL) {
         sel->is_signed = true;
         next();
@@ -2551,49 +2592,62 @@ static AstNode *parse_select(void) {
         if (fs) symtab_mark_symbol_as_used(fs);
     }
     next();
-    if (tok.kind != TOK_ASSIGN) { ast_free(sel); arith_error("Expected ASSIGN"); return NULL; }
-    next();
-    if (tok.kind == TOK_TO) next();
-    if (tok.kind == TOK_STRING || tok.kind == TOK_IDENT) {
-        sel->is_numeric = tok.kind == TOK_STRING;
-        sel->text = tok_value();
-        next();
-    } else {
-        ast_free(sel);
-        arith_error("Expected file name or literal after ASSIGN");
-        return NULL;
-    }
-    while (tok.kind == TOK_IDENT || tok.kind == TOK_STRING) next();  // further ASSIGN names
+    bool assigned = false;
 
-    while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF && !is_division_start(tok.kind)) {
-        if (tok.kind == TOK_ORGANIZATION || tok.kind == TOK_LINE || tok.kind == TOK_SEQUENTIAL ||
-            tok.kind == TOK_INDEXED || tok.kind == TOK_RELATIVE ||
-            (tok.kind == TOK_RECORD && peek_token().kind == TOK_SEQUENTIAL)) {
+    while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF && !is_division_start(tok.kind) &&
+           tok.kind != TOK_SELECT) {
+        if (tok.kind == TOK_ASSIGN) {
+            next();
+            if (tok.kind == TOK_TO) next();
+            if (tok.kind != TOK_STRING && tok.kind != TOK_IDENT) {
+                ast_free(sel);
+                arith_error("Expected file name or literal after ASSIGN");
+                return NULL;
+            }
+            sel->is_numeric = tok.kind == TOK_STRING;
+            sel->text = tok_value();
+            next();
+            while (tok.kind == TOK_STRING ||
+                   (tok.kind == TOK_IDENT && !tok_is_word("RESERVE") && !tok_is_word("PADDING") &&
+                    !tok_is_word("ALTERNATE") && !tok_is_word("ORGANIZATION") && !tok_is_word("LOCK") &&
+                    !tok_is_word("SHARING")))
+                next();     // further ASSIGN names
+            assigned = true;
+        } else if (tok.kind == TOK_ORGANIZATION || tok.kind == TOK_LINE || tok.kind == TOK_SEQUENTIAL ||
+                   tok.kind == TOK_INDEXED ||
+                   (tok.kind == TOK_RELATIVE && peek_token().kind != TOK_KEY &&
+                    peek_token().kind != TOK_IS && peek_token().kind != TOK_IDENT) ||
+                   (tok.kind == TOK_RECORD && peek_token().kind == TOK_SEQUENTIAL)) {
             if (tok.kind == TOK_ORGANIZATION) next();
             if (tok.kind == TOK_IS) next();
-            if (tok.kind == TOK_LINE) { sel->decimal_places = 1; next(); }
+            if (tok.kind == TOK_LINE) { sel->org = FILE_ORG_LINE_SEQUENTIAL; sel->decimal_places = 1; next(); }
             else if (tok.kind == TOK_RECORD) next();
-            if (tok.kind == TOK_INDEXED || tok.kind == TOK_RELATIVE) {
-                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                                 "%s files are not supported yet", tok.kind == TOK_INDEXED ? "INDEXED" : "RELATIVE");
-                next();
-                continue;
-            }
-            if (tok.kind != TOK_SEQUENTIAL) { ast_free(sel); arith_error("Expected SEQUENTIAL"); return NULL; }
-            next();
+            if (tok.kind == TOK_INDEXED) { sel->org = FILE_ORG_INDEXED; next(); }
+            else if (tok.kind == TOK_RELATIVE) { sel->org = FILE_ORG_RELATIVE; next(); }
+            else if (tok.kind == TOK_SEQUENTIAL) next();
+            else { ast_free(sel); arith_error("Expected SEQUENTIAL, RELATIVE or INDEXED"); return NULL; }
         } else if (tok.kind == TOK_ACCESS) {
             next();
             if (tok.kind == TOK_MODE) next();
             if (tok.kind == TOK_IS) next();
-            if (tok.kind == TOK_RANDOM || tok.kind == TOK_DYNAMIC)
-                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                                 "Only ACCESS MODE SEQUENTIAL is supported yet");
+            if (tok.kind == TOK_RANDOM) sel->access = FILE_ACCESS_RANDOM;
+            else if (tok.kind == TOK_DYNAMIC) sel->access = FILE_ACCESS_DYNAMIC;
+            else if (tok.kind != TOK_SEQUENTIAL) { ast_free(sel); arith_error("Expected SEQUENTIAL, RANDOM or DYNAMIC"); return NULL; }
             next();
-            if (tok.kind == TOK_RECORD || tok.kind == TOK_RELATIVE) {
-                // RECORD KEY / RELATIVE KEY of indexed and relative files
-                while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF && tok.kind != TOK_ACCESS &&
-                       tok.kind != TOK_FILE && tok.kind != TOK_STATUS) next();
-            }
+        } else if (tok.kind == TOK_RELATIVE || (tok.kind == TOK_RECORD && peek_token().kind != TOK_DELIMITER) ||
+                   tok_is_word("ALTERNATE")) {
+            const char *what = tok.kind == TOK_RELATIVE ? "RELATIVE" : tok.kind == TOK_RECORD ? "RECORD" : "ALTERNATE";
+            SourceLocation kloc = {current_lexer->filename, tok.line, tok.column};
+            next();
+            if (what[0] == 'A' && tok.kind == TOK_RECORD) next();
+            if (tok.kind == TOK_KEY) next();
+            if (tok.kind == TOK_IS) next();
+            if (tok.kind != TOK_IDENT) { ast_free(sel); arith_error("Expected the key data item"); return NULL; }
+            AstNode *key = ast_new(AST_FILE_KEY, what, kloc);
+            key->extra = parse_forward_identifier();
+            if (tok.kind == TOK_WITH) next();
+            if (tok_is_word("DUPLICATES")) { key->is_signed = true; next(); }
+            list_append(&sel->children, &key_tail, key);
         } else if (tok.kind == TOK_FILE || tok.kind == TOK_STATUS) {
             if (tok.kind == TOK_FILE) next();
             if (tok.kind != TOK_STATUS) { ast_free(sel); arith_error("Expected STATUS"); return NULL; }
@@ -2601,10 +2655,31 @@ static AstNode *parse_select(void) {
             if (tok.kind == TOK_IS) next();
             if (tok.kind != TOK_IDENT) { ast_free(sel); arith_error("Expected FILE STATUS data item"); return NULL; }
             // Declared later in the DATA DIVISION: resolved during IR lowering
-            sel->extra = parse_procedure_name();
+            sel->extra = parse_forward_identifier();
+        } else if (tok_is_word("RESERVE")) {
+            next();
+            if (tok.kind == TOK_NUMBER || tok_is_word("NO")) next();
+            if (tok_is_word("ALTERNATE")) next();
+            if (tok_is_word("AREA") || tok_is_word("AREAS")) next();
+        } else if (tok_is_word("PADDING")) {
+            next();
+            if (tok_spelled("CHARACTER")) next();
+            if (tok.kind == TOK_IS) next();
+            next();
+        } else if (tok.kind == TOK_RECORD) {
+            next();                         // RECORD DELIMITER IS STANDARD-1 / name
+            if (tok.kind == TOK_DELIMITER) next();
+            if (tok.kind == TOK_IS) next();
+            next();
         } else {
-            next();     // RESERVE, PADDING, RECORD DELIMITER: no effect here
+            cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                             "Unexpected '%.*s' in the SELECT entry of '%s'", (int)tok.length, tok.lexeme, sel->name);
+            next();
         }
+    }
+    if (!assigned) {
+        cobalt_error_loc(current_lexer->original_source, loc.line, loc.column,
+                         "SELECT '%s' has no ASSIGN clause", sel->name);
     }
     if (tok.kind == TOK_PERIOD) next();
     return sel;

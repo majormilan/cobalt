@@ -47,7 +47,11 @@ typedef enum {
                             //   on_error / not_on_error = ON / OFF condition-names
     AST_SELECT,             // SELECT: name = file; text = ASSIGN name; is_numeric =
                             //   ASSIGN literal; is_signed = OPTIONAL; decimal_places =
-                            //   1 for LINE SEQUENTIAL; extra = FILE STATUS item
+                            //   1 for LINE SEQUENTIAL; extra = FILE STATUS item;
+                            //   org = FILE_ORG_*, access = FILE_ACCESS_*; children:
+                            //   AST_FILE_KEY entries
+    AST_FILE_KEY,           // name: RELATIVE, RECORD or ALTERNATE; extra: the key item;
+                            //   is_signed: WITH DUPLICATES
     AST_CONDITION,
     AST_PIC_CLAUSE,
     AST_USAGE_CLAUSE,
@@ -125,6 +129,10 @@ typedef struct {
     int column;
 } SourceLocation;
 
+// File organization and access mode (AST_SELECT)
+enum { FILE_ORG_SEQUENTIAL, FILE_ORG_LINE_SEQUENTIAL, FILE_ORG_RELATIVE, FILE_ORG_INDEXED };
+enum { FILE_ACCESS_SEQUENTIAL, FILE_ACCESS_RANDOM, FILE_ACCESS_DYNAMIC };
+
 // SIGN clause bits (AstNode.sign_mode)
 #define SIGN_GIVEN    1     // the clause is present (TRAILING alone is just this)
 #define SIGN_LEADING  2
@@ -150,6 +158,7 @@ typedef struct AstNode {
     bool blank_when_zero;   // BLANK WHEN ZERO
     int sign_mode;          // SIGN clause: SIGN_* bits, 0 without the clause
     bool is_group;          // data entry with subordinate entries (set by sema)
+    int org, access;        // AST_SELECT: FILE_ORG_*, FILE_ACCESS_*
 
     // Arithmetic statements
     bool rounded;           // ROUNDED on this receiving identifier

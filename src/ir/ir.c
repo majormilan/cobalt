@@ -741,11 +741,16 @@ static VarInfo *find_item(const AstNode *ref, bool report) {
     for (int i = 0; i < num_vars; i++) {
         if (vars[i].is_filler || strcasecmp(vars[i].name, ref->name) != 0) continue;
         int a = vars[i].parent;
-        bool ok = true;
+        bool ok = true, file_used = false;
         for (const AstNode *q = ref->extra; q && ok; q = q->next) {
             while (a >= 0 && strcasecmp(vars[a].name, q->name) != 0) a = vars[a].parent;
-            if (a < 0) ok = false;
-            else a = vars[a].parent;
+            if (a >= 0) { a = vars[a].parent; continue; }
+            // The outermost qualifier may be the file of a record
+            int top = i;
+            while (vars[top].parent >= 0) top = vars[top].parent;
+            int f = vars[top].file;
+            if (!file_used && !q->next && f >= 0 && strcasecmp(files[f].name, q->name) == 0) file_used = true;
+            else ok = false;
         }
         if (!ok) continue;
         if (!found) found = &vars[i];

@@ -1,4 +1,5 @@
 #include "lexer.h"
+#include "pp.h"
 #include "diag.h"
 #include <ctype.h>
 #include <string.h>
@@ -10,39 +11,6 @@
 
 #include "lexer_cobol85.h" // Corrected include path
 #include "lexer_cobol2002.h" // Corrected include path
-
-// Reads an entire file into a dynamically allocated string.
-// Returns NULL on failure. Caller is responsible for freeing the memory.
-static char *read_file_content(const char *filepath) {
-    FILE *file = fopen(filepath, "r");
-    if (file == NULL) {
-        cobalt_error(NULL, "Could not open file '%s': %s", filepath, strerror(errno));
-        return NULL;
-    }
-
-    fseek(file, 0, SEEK_END);
-    long length = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
-    char *buffer = malloc(length + 1);
-    if (buffer == NULL) {
-        cobalt_error(NULL, "Could not allocate memory for file '%s'", filepath);
-        fclose(file);
-        return NULL;
-    }
-
-    size_t read_bytes = fread(buffer, 1, length, file);
-    if (read_bytes != (size_t)length) {
-        cobalt_error(NULL, "Could not read entire file '%s'", filepath);
-        free(buffer);
-        fclose(file);
-        return NULL;
-    }
-    buffer[length] = '\0';
-
-    fclose(file);
-    return buffer;
-}
 
 // ── Reference format ─────────────────────────────────────────────────────────
 
@@ -155,6 +123,17 @@ static void advance(Lexer *l) {
 // by a space is equivalent to a space)
 static void skip_ws(Lexer *l) {
     while (*l->src) {
+        if (*l->src == PP_MARK) {
+            // A line marker of the text manipulation (pp.c): line:column
+            const char *p = l->src + 1;
+            int line = (int)strtol(p, (char **)&p, 10);
+            int col = *p == ':' ? (int)strtol(p + 1, (char **)&p, 10) : 1;
+            if (*p == PP_MARK) p++;
+            l->src = p;
+            l->current_line = line;
+            l->current_col = col;
+            continue;
+        }
         if (isspace((unsigned char)*l->src)) advance(l);
         else if ((*l->src == ',' || *l->src == ';') &&
                  (l->src[1] == '\0' || isspace((unsigned char)l->src[1]))) advance(l);
@@ -370,46 +349,6 @@ Token lexer_next(Lexer *l) {
         while (is_ident_char(l->src[0])) advance(l); // Use non-static is_ident_char
         Token t = l->get_keyword_or_ident(l, start, l->src - start);
         if (t.kind == TOK_PIC) l->pic_next = true;
-        if (t.kind == TOK_COPY) {
-            // Found a COPY statement, now parse the filename
-            // For simplicity, assume filename is a string literal immediately after COPY
-            skip_ws(l);
-            if (*l->src == '"') {
-                advance(l); // skip opening "
-                const char *filename_start = l->src;
-                while (*l->src && *l->src != '"') advance(l);
-                size_t filename_len = l->src - filename_start;
-                if (*l->src == '"') advance(l); // skip closing "
-
-                char *copied_filename = strndup(filename_start, filename_len);
-                if (copied_filename == NULL) {
-                    cobalt_error(l->original_source, "Failed to duplicate filename for COPY statement.");
-                    return make_token_public(l, TOK_EOF, start, 0); // Error recovery
-                }
-
-                char *file_content = read_file_content(copied_filename);
-                if (file_content == NULL) {
-                    char error_msg[512]; // Buffer for error message
-                    snprintf(error_msg, sizeof(error_msg), "Failed to read content of copied file '%s'.", copied_filename);
-                    free(copied_filename);
-                    cobalt_error(l->original_source, "%s", error_msg);
-                    return make_token_public(l, TOK_EOF, start, 0); // Error recovery
-                }
-                
-                if (!l->mode->free_format) {
-                    char *converted = lexer_reference_format(file_content);
-                    free(file_content);
-                    file_content = converted;
-                }
-                lexer_push_source(l, file_content, copied_filename, true);
-                // After pushing, we don't return TOK_COPY. We immediately get the next token
-                // which will be from the newly pushed source.
-                continue; // Continue the while(true) loop to get the first token from the new source.
-            } else {
-                cobalt_error(l->original_source, "Expected string literal after COPY statement.");
-                return make_token_public(l, TOK_EOF, start, 0); // Error recovery
-            }
-        }
         return t;
     }
 

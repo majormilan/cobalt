@@ -23,6 +23,8 @@ RUNTIME="$ROOT/obj/runtime/$TARGET/libcobrt.a"
 [ -f obj/nist/newcob.val ] || bash tools/nist/fetch.sh
 [ -d "$SRC" ] || python3 -I tools/nist/extract.py obj/nist/newcob.val "$SRC" > /dev/null
 mkdir -p "$WORK"
+FILES="$WORK/files-$MODULE"
+rm -rf "$FILES"; mkdir -p "$FILES"
 
 total=0; compiled=0; ran=0; passed=0; failed=0; deleted=0; inspect=0; build_ms=0
 for cbl in "$SRC"/$MODULE*.CBL; do
@@ -52,7 +54,12 @@ for cbl in "$SRC"/$MODULE*.CBL; do
     input=/dev/null
     [ -f "$SRC/$name.DAT" ] && input="$ROOT/$SRC/$name.DAT"
     # The operator's switch settings the suite expects: SWITCH-1 on
-    (cd "$dir" && COB_SWITCH_1=ON timeout 10 "./$name" < "$input" > run.log 2>&1)
+    # Programs of a module share their data files (one writes a file that a
+    # later one reads), so they run in order in one directory; the report
+    # moves to the program's own directory
+    (cd "$FILES" && rm -f report.log &&
+     COB_SWITCH_1=ON timeout 10 "$ROOT/$dir/$name" < "$input" > "$ROOT/$dir/run.log" 2>&1
+     [ -f report.log ] && mv report.log "$ROOT/$dir/")
     if [ -f "$dir/report.log" ]; then
         ran=$((ran+1))
         # Summary lines: "093 OF 093  TESTS WERE EXECUTED SUCCESSFULLY",
@@ -84,7 +91,7 @@ for cbl in "$SRC"/$MODULE*.CBL; do
             passed=$((passed+1))
             printf "%-8s RAN (DISPLAY) PASS\n" "$name"
         fi
-    elif grep -aq "Message expected for above statement" "$SRC/$name.CBL"; then
+    elif grep -aqi "Message expected for \(above\|following\) statement" "$SRC/$name.CBL"; then
         # FIPS flagging programs check compiler messages (OBSOLETE,
         # NON-CONFORMING ...), which COBALT does not issue: not counted
         printf "%-8s FLAGGING      (checks compiler flagging messages: not applicable)\n" "$name"

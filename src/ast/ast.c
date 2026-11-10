@@ -37,6 +37,9 @@ AstNode *ast_clone(const AstNode *node) {
     c->blank_when_zero = node->blank_when_zero;
     c->sign_mode = node->sign_mode;
     c->rounded = node->rounded;
+    c->org = node->org;
+    c->access = node->access;
+    c->is_group = node->is_group;
     c->children = ast_clone_list(node->children);
     c->on_error = ast_clone_list(node->on_error);
     c->not_on_error = ast_clone_list(node->not_on_error);

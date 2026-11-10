@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
+#include "pp.h"
 #include <unistd.h>
 
 char *current_filename = NULL;
@@ -119,6 +120,7 @@ static void print_help(const char *progname) {
     printf("        cobalt-basic\n");
     printf("  --fixed                Fixed reference format: columns 8-72 (default)\n");
     printf("  -F, --free             Free format source\n");
+    printf("  -I DIR                 Copy library directory (also: COBCPY=dir:dir...)\n");
     printf("  -a                     Always dump AST (debug parsing)\n\n");
 
     printf("Output (the default is an executable, assembled and linked by cobalt):\n");
@@ -173,6 +175,8 @@ int main(int argc, char **argv) {
     };
     dialect_select(&mode.dialect, "standard");
 
+    const char *copy_dirs[32];
+    int ncopy_dirs = 0;
     int opt;
     int opt_index = 0;
     static struct option long_options[] = {
@@ -191,7 +195,7 @@ int main(int argc, char **argv) {
         {0, 0, 0, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "i:o:t:S:X:E:D:f:caAF", long_options, &opt_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "i:o:t:S:X:E:D:f:I:caAF", long_options, &opt_index)) != -1) {
         switch (opt) {
             case 'i': input_file = optarg; break;
             case 'o': output_file = optarg; break;
@@ -215,6 +219,9 @@ int main(int argc, char **argv) {
                 if (!dialect_set_option(&mode.dialect, optarg)) return 1;
                 break;
             case 'F': mode.free_format = true; break;
+            case 'I':
+                if (ncopy_dirs < 32) copy_dirs[ncopy_dirs++] = optarg;
+                break;
             case 'R': mode.free_format = false; break;
             case 'c': emit = EMIT_OBJECT; break;
             case 'A': emit = EMIT_ASSEMBLY; break;
@@ -255,8 +262,14 @@ int main(int argc, char **argv) {
         free(source);
         source = converted;
     }
+    // COPY and REPLACE; the lexer reads the result, diagnostics show the
+    // lines of the source
+    PpOptions pp = { copy_dirs, ncopy_dirs, mode.free_format };
+    char *text = pp_process(source, input_file, &pp);
+    if (!text) { free(source); return 1; }
     Lexer lexer;
     lexer_init(&lexer, source, &mode, input_file);
+    lexer.src = text;
     AstNode *ast = parse_program(&lexer);
 
     if (!ast) {
