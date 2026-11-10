@@ -38,6 +38,8 @@ AstNode *ast_clone(const AstNode *node) {
     c->sign_mode = node->sign_mode;
     c->rounded = node->rounded;
     c->org = node->org;
+    c->is_global = node->is_global;
+    c->is_external = node->is_external;
     c->access = node->access;
     c->is_group = node->is_group;
     c->children = ast_clone_list(node->children);

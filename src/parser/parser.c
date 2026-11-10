@@ -235,6 +235,7 @@ static Token peek_token(void);
 static bool tok_is_word(const char *word);
 static bool tok_spelled(const char *word);
 static AstNode *parse_forward_identifier(void);
+static bool end_program_follows(void);
 static void arith_error(const char *msg);
 
 // Map a usage keyword to its usage type; returns false if tok is not one
@@ -427,6 +428,12 @@ static AstNode *parse_var_decl(void) {
             free(val);
             append_child(var, &tail, val_node);
             next();
+        } else if (tok_is_word("GLOBAL") || tok_is_word("EXTERNAL")) {
+            if (tok_is_word("GLOBAL")) var->is_global = true;
+            else var->is_external = true;
+            next();
+        } else if (tok.kind == TOK_IS && (peek_token().kind == TOK_IDENT)) {
+            next();                         // IS GLOBAL / IS EXTERNAL
         } else if (tok.kind == TOK_REDEFINES) {
             next();
             if (tok.kind != TOK_IDENT) { ast_free(var); arith_error("Expected data-name after REDEFINES"); return NULL; }
@@ -1271,15 +1278,35 @@ static AstNode *parse_imperative_block(void) {
 }
 
 // [ON] SIZE ERROR imperative  [NOT [ON] SIZE ERROR imperative]  [end_tok]
+// The kind of the token after the next one (two tokens of lookahead)
+static TokenKind peek_kind2(void) {
+    Lexer copy = *current_lexer;
+    copy.prev = NULL;
+    lexer_next(&copy);
+    return lexer_next(&copy).kind;
+}
+
+// [NOT] [ON] word: whether the phrase at tok is the one of word (an
+// enclosing statement's NOT ON EXCEPTION is not ours)
+static bool phrase_is(TokenKind word) {
+    if (tok.kind == word) return true;
+    if (tok.kind == TOK_ON) return peek_token().kind == word;
+    if (tok.kind == TOK_NOT) {
+        TokenKind k = peek_token().kind;
+        return k == word || (k == TOK_ON && peek_kind2() == word);
+    }
+    return false;
+}
+
 static void parse_size_error_phrases(AstNode *stmt, TokenKind end_tok) {
-    if (tok.kind == TOK_ON || tok.kind == TOK_SIZE) {
+    if ((tok.kind == TOK_ON && phrase_is(TOK_SIZE)) || tok.kind == TOK_SIZE) {
         if (tok.kind == TOK_ON) next();
         expect(TOK_SIZE, "SIZE");
         expect(TOK_ERROR, "ERROR");
         if (parser_panic_mode) return;
         stmt->on_error = parse_imperative_block();
     }
-    if (tok.kind == TOK_NOT) {
+    if (tok.kind == TOK_NOT && phrase_is(TOK_SIZE)) {
         next();
         if (tok.kind == TOK_ON) next();
         expect(TOK_SIZE, "SIZE");
@@ -1292,13 +1319,13 @@ static void parse_size_error_phrases(AstNode *stmt, TokenKind end_tok) {
 
 // [ON] OVERFLOW imperative  [NOT [ON] OVERFLOW imperative]  [end_tok]
 static void parse_overflow_phrases(AstNode *stmt, TokenKind end_tok) {
-    if (tok.kind == TOK_ON || tok.kind == TOK_OVERFLOW) {
+    if ((tok.kind == TOK_ON && phrase_is(TOK_OVERFLOW)) || tok.kind == TOK_OVERFLOW) {
         if (tok.kind == TOK_ON) next();
         expect(TOK_OVERFLOW, "OVERFLOW");
         if (parser_panic_mode) return;
         stmt->on_error = parse_imperative_block();
     }
-    if (tok.kind == TOK_NOT) {
+    if (tok.kind == TOK_NOT && phrase_is(TOK_OVERFLOW)) {
         next();
         if (tok.kind == TOK_ON) next();
         expect(TOK_OVERFLOW, "OVERFLOW");
@@ -2189,6 +2216,75 @@ static AstNode *parse_statement(void) {
         if (!stmt->children) { ast_free(stmt); arith_error(is_open ? "Expected OPEN mode and file" : "Expected file name"); return NULL; }
         return stmt;
     }
+    // ─── CALL {identifier | literal} [USING {[BY REFERENCE] id... | BY CONTENT
+    //     id...}...] [ON OVERFLOW s | [ON EXCEPTION s] [NOT ON EXCEPTION s]] [END-CALL]
+    else if (tok.kind == TOK_CALL) {
+        next();
+        AstNode *call = ast_new(AST_STATEMENT_CALL, NULL, loc);
+        if (tok.kind == TOK_STRING) {
+            call->extra = ast_new(AST_STRING_LITERAL, NULL, loc);
+            free(call->extra->name);
+            call->extra->name = tok_value();
+            next();
+        } else if (tok.kind == TOK_IDENT) {
+            call->extra = parse_identifier();
+        } else {
+            ast_free(call);
+            arith_error("Expected the program name after CALL");
+            return NULL;
+        }
+        AstNode *tail = NULL;
+        if (tok.kind == TOK_USING) {
+            next();
+            bool content = false;
+            for (;;) {
+                if (tok.kind == TOK_BY) next();
+                if (tok_is_word("REFERENCE")) { content = false; next(); continue; }
+                if (tok_is_word("CONTENT")) { content = true; next(); continue; }
+                if (tok.kind != TOK_IDENT) break;
+                AstNode *arg = parse_identifier();
+                arg->is_signed = content;
+                list_append(&call->children, &tail, arg);
+            }
+        }
+        for (;;) {
+            if (tok.kind == TOK_ON && (peek_token().kind == TOK_OVERFLOW || peek_token().kind == TOK_EXCEPTION))
+                next();
+            if (tok.kind == TOK_OVERFLOW || tok.kind == TOK_EXCEPTION) {
+                next();
+                call->on_error = parse_imperative_block();
+            } else if (tok.kind == TOK_NOT && (peek_token().kind == TOK_ON || peek_token().kind == TOK_EXCEPTION ||
+                                               peek_token().kind == TOK_OVERFLOW)) {
+                next();
+                if (tok.kind == TOK_ON) next();
+                next();
+                call->not_on_error = parse_imperative_block();
+            } else {
+                break;
+            }
+        }
+        if (tok.kind == TOK_END_CALL) next();
+        return call;
+    }
+    else if (tok.kind == TOK_CANCEL) {
+        next();
+        AstNode *cancel = ast_new(AST_STATEMENT_CANCEL, NULL, loc);
+        AstNode *tail = NULL;
+        while (tok.kind == TOK_STRING || tok.kind == TOK_IDENT) {
+            AstNode *n;
+            if (tok.kind == TOK_STRING) {
+                n = ast_new(AST_STRING_LITERAL, NULL, loc);
+                free(n->name);
+                n->name = tok_value();
+                next();
+            } else {
+                n = parse_identifier();
+            }
+            list_append(&cancel->children, &tail, n);
+        }
+        if (!cancel->children) { ast_free(cancel); arith_error("Expected a program name after CANCEL"); return NULL; }
+        return cancel;
+    }
     // ─── SORT file {ON {ASCENDING|DESCENDING} KEY data-name...}...
     //       [WITH DUPLICATES IN ORDER] [COLLATING SEQUENCE IS alphabet]
     //       {INPUT PROCEDURE IS p [THRU p] | USING file...}
@@ -2483,7 +2579,8 @@ static AstNode *parse_sentence(void) {
     }
     if (tok.kind == TOK_PERIOD) {
         next();
-    } else if (tok.kind != TOK_IDENT && tok.kind != TOK_EOF && !is_division_start(tok.kind)) {
+    } else if (tok.kind != TOK_IDENT && tok.kind != TOK_EOF && !is_division_start(tok.kind) &&
+               !(tok.kind == TOK_END && end_program_follows())) {
         // A token that cannot continue the sentence (e.g. a stray ELSE)
         if (error_count == errors_before)
             cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
@@ -2509,6 +2606,12 @@ static void declare_procedure(const char *name, SymbolKind kind, SourceLocation 
 // Division children: leading sentences, AST_SECTION and AST_PARAGRAPH nodes.
 // A section's children: its leading sentences and its paragraphs.
 // A paragraph's children: its sentences.
+// END PROGRAM follows (tok is END)
+static bool end_program_follows(void) {
+    Token t = peek_token();
+    return t.kind == TOK_IDENT && t.length == 7 && strncasecmp(t.lexeme, "PROGRAM", 7) == 0;
+}
+
 // USE statement, the first sentence of a declarative section:
 //   USE [GLOBAL] AFTER STANDARD {EXCEPTION|ERROR} PROCEDURE [ON]
 //       {file-name... | INPUT | OUTPUT | I-O | EXTEND}
@@ -2580,6 +2683,7 @@ static void parse_procedure_body(AstNode *div) {
             in_declaratives = true;
             continue;
         }
+        if (tok.kind == TOK_END && end_program_follows()) break;
         if (tok.kind == TOK_END && peek_token().kind == TOK_IDENT && in_declaratives) {
             next();
             if (!tok_is_word("DECLARATIVES")) { arith_error("Expected END DECLARATIVES"); continue; }
@@ -2625,7 +2729,8 @@ static void parse_procedure_body(AstNode *div) {
             free(name);
             AstNode *ptail = NULL;
             while (!is_procedure_name_token() && tok.kind != TOK_EOF && !is_division_start(tok.kind) &&
-                   !(in_declaratives && tok.kind == TOK_END && peek_token().kind == TOK_IDENT)) {
+                   !(tok.kind == TOK_END && peek_token().kind == TOK_IDENT &&
+                     (in_declaratives || end_program_follows()))) {
                 const char *at = tok.lexeme;
                 list_append(&node->children, &ptail, parse_sentence());
                 if (tok.lexeme == at && tok.kind != TOK_EOF) next();   // always make progress
@@ -3025,6 +3130,12 @@ static AstNode *parse_file_section(void) {
                 }
                 continue;
             }
+            if (tok_is_word("GLOBAL") || tok_is_word("EXTERNAL")) {
+                if (tok_is_word("GLOBAL")) fd->is_global = true;
+                else fd->is_external = true;
+                next();
+                continue;
+            }
             if (tok.kind == TOK_LINAGE) {
                 SourceLocation lloc = {current_lexer->filename, tok.line, tok.column};
                 next();
@@ -3077,17 +3188,35 @@ static AstNode *parse_division(void) {
     char *name = tok_to_str();
     next();
     expect(TOK_DIVISION, "DIVISION");
+    AstNode *using = NULL, *using_tail = NULL;
+    if (strcasecmp(name, "PROCEDURE") == 0 && tok.kind == TOK_USING) {
+        // PROCEDURE DIVISION USING data-name...
+        next();
+        while (tok.kind == TOK_IDENT || tok.kind == TOK_BY || tok_is_word("REFERENCE")) {
+            if (tok.kind == TOK_BY || tok_is_word("REFERENCE")) { next(); continue; }
+            list_append(&using, &using_tail, parse_forward_identifier());
+        }
+    }
     expect(TOK_PERIOD, ".");
-    if (parser_panic_mode) { free(name); return NULL; }
+    if (parser_panic_mode) { free(name); ast_free(using); return NULL; }
 
     AstNode *div = ast_new(AST_DIVISION, name, loc);
+    div->extra = using;
     free(name);
 
     if (strcasecmp(div->name, "IDENTIFICATION") == 0) {
         expect(TOK_PROGRAM_ID, "PROGRAM-ID");
         expect(TOK_PERIOD, ".");
-        char *prog_name_str = tok_to_str();
-        expect(TOK_IDENT, "program name");
+        char *prog_name_str = tok.kind == TOK_STRING ? tok_value() : tok_to_str();
+        if (tok.kind == TOK_STRING) next();
+        else expect(TOK_IDENT, "program name");
+        // [IS] [COMMON] [INITIAL] [PROGRAM]: digits 1 COMMON, 2 INITIAL
+        while (tok.kind == TOK_IS || tok_is_word("COMMON") || tok.kind == TOK_INITIAL ||
+               tok_is_word("PROGRAM")) {
+            if (tok_is_word("COMMON")) div->digits |= 1;
+            if (tok.kind == TOK_INITIAL) div->digits |= 2;
+            next();
+        }
         expect(TOK_PERIOD, ".");
         div->text = prog_name_str; // Assign to AST node
 
@@ -3188,11 +3317,14 @@ static AstNode *parse_division(void) {
                 if (sec) list_append(&div->children, &sec_tail, sec);
                 continue;
             }
-            const char *what = tok.kind == TOK_LINKAGE ? "LINKAGE SECTION" : NULL;
-            if (what) {
-                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
-                                 "%s is not supported yet", what);
-            } else {
+            if (tok.kind == TOK_LINKAGE) {
+                next();
+                AstNode *sec = parse_section();
+                if (sec) sec->name = strdup("LINKAGE");
+                if (sec) list_append(&div->children, &sec_tail, sec);
+                continue;
+            }
+            {
                 cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
                                  "Expected a DATA DIVISION section, got '%.*s'", (int)tok.length, tok.lexeme);
             }
@@ -3206,18 +3338,12 @@ static AstNode *parse_division(void) {
     return div;
 }
 
-AstNode *parse_program(Lexer *l) {
-    current_lexer = l; 
-    parser_panic_mode = false;
-    reset_diagnostics(); // Reset counters for this compilation
-    next();
-
-    // Initialize and push global scope
-    current_symtab = symtab_init();
-
+// One program: its divisions, its nested programs, up to END PROGRAM (or
+// the end of the source)
+static AstNode *parse_one_program(void) {
     SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
     AstNode *prog = ast_new(AST_PROGRAM, NULL, loc);
-    AstNode *last_div = NULL;
+    AstNode *last = NULL;
     int has_proc = 0;
     int error_count_before = error_count;
 
@@ -3225,44 +3351,88 @@ AstNode *parse_program(Lexer *l) {
         AstNode *div = parse_division();
         if (div) {
             prog->children = div;
-            last_div = div;
-
+            last = div;
             if (div->text) {
                 prog->name = div->text;
                 div->text = NULL;
             }
+            prog->digits = div->digits;
         }
     } else {
         cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Missing IDENTIFICATION DIVISION");
         synchronize();
     }
 
-    while (tok.kind != TOK_EOF && !parser_panic_mode) {
-        if (is_division_start(tok.kind)) {
-             AstNode *div = parse_division();
-             if (div) {
-                if (last_div) last_div->next = div;
-                else prog->children = div;
-                last_div = div;
-                if (strcasecmp(div->name, "PROCEDURE") == 0) has_proc = 1;
-             }
-        } else if (tok.kind == TOK_PERIOD) { // Consume standalone periods that might be after COPY statements
-            next(); // Consume the period
+    while (tok.kind != TOK_EOF) {
+        if (tok.kind == TOK_END && end_program_follows()) {
+            next();
+            next();
+            if (tok.kind == TOK_IDENT || tok.kind == TOK_STRING) {
+                char *name = tok.kind == TOK_STRING ? tok_value() : tok_to_str();
+                if (prog->name && strcasecmp(name, prog->name) != 0)
+                    cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                                     "END PROGRAM %s does not end program %s", name, prog->name);
+                free(name);
+                next();
+            }
+            if (tok.kind == TOK_PERIOD) next();
+            break;
         }
-        else {
-            // Unexpected token at global scope, outside a division; always
-            // consume it, so recovery cannot stop on the same token again
+        if (tok.kind == TOK_IDENTIFICATION) {
+            // A nested program (before this program's END PROGRAM), or with
+            // no END PROGRAM before it, the next separately compiled program
+            if (!has_proc) {
+                cobalt_error_loc(current_lexer->original_source, tok.line, tok.column,
+                                 "Expected a PROCEDURE DIVISION before the next program");
+            }
+            AstNode *nested = parse_one_program();
+            if (last) last->next = nested;
+            else prog->children = nested;
+            last = nested;
+            continue;
+        }
+        parser_panic_mode = false;
+        if (is_division_start(tok.kind)) {
+            AstNode *div = parse_division();
+            if (div) {
+                if (last) last->next = div;
+                else prog->children = div;
+                last = div;
+                if (strcasecmp(div->name, "PROCEDURE") == 0) has_proc = 1;
+            }
+        } else if (tok.kind == TOK_PERIOD) {
+            next();
+        } else {
             cobalt_error_loc(current_lexer->original_source, tok.line, tok.column, "Expected a DIVISION start");
             next();
-            while (tok.kind != TOK_EOF && !is_division_start(tok.kind)) next();
+            while (tok.kind != TOK_EOF && !is_division_start(tok.kind) &&
+                   !(tok.kind == TOK_END && end_program_follows())) next();
         }
     }
 
-    if (!has_proc && error_count == error_count_before) { // Only report if no other errors prevented parsing PROCEDURE
-        cobalt_error("Missing PROCEDURE DIVISION");
-    }
-    
-    symtab_check_unused_symbols(current_symtab); // Check for unused symbols
-    symtab_free(current_symtab); // Free the symbol table
+    if (!has_proc && error_count == error_count_before)
+        cobalt_error("Missing PROCEDURE DIVISION in program %s", prog->name ? prog->name : "");
     return prog;
+}
+
+// A source: one or more programs (each with its nested programs), as a
+// list of AST_PROGRAM nodes
+AstNode *parse_program(Lexer *l) {
+    current_lexer = l;
+    parser_panic_mode = false;
+    reset_diagnostics();
+    next();
+    current_symtab = symtab_init();
+
+    AstNode *first = NULL, *last = NULL;
+    while (tok.kind != TOK_EOF) {
+        AstNode *prog = parse_one_program();
+        if (!first) first = prog;
+        else last->next = prog;
+        last = prog;
+    }
+
+    symtab_check_unused_symbols(current_symtab);
+    symtab_free(current_symtab);
+    return first;
 }

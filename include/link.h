@@ -28,4 +28,8 @@ bool link_executable(const LinkObject *objects, int nobjects,
                      const LinkObject *library, int nlibrary,
                      const LinkOptions *opts, const char *path);
 
+// The global symbols an object defines whose names start with prefix: a
+// malloc'ed list of malloc'ed names; returns how many
+int link_object_globals(const LinkObject *obj, const char *prefix, char ***names);
+
 #endif

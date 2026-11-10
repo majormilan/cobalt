@@ -15,7 +15,9 @@ typedef enum {
 } AstUsageType;
 
 typedef enum {
-    AST_PROGRAM,
+    AST_PROGRAM,            // name: PROGRAM-ID; children: the divisions, then the nested
+                            //   programs (AST_PROGRAM); digits: 1 COMMON, 2 INITIAL; the
+                            //   PROCEDURE DIVISION's extra: its USING data-names
     AST_DIVISION,
     AST_SECTION,
     AST_STATEMENT_DISPLAY,
@@ -131,6 +133,10 @@ typedef enum {
                             //   on_error / not_on_error: INPUT / OUTPUT PROCEDURE (loop:
                             //   THRU); loop: AST_SPECIAL "USING" / "GIVING" (children: files)
     AST_STATEMENT_RELEASE,  // extra: sort record; loop: FROM
+    AST_STATEMENT_CALL,     // extra: the program (literal or identifier); children: the
+                            //   arguments (is_signed: BY CONTENT); on_error / not_on_error:
+                            //   [NOT] ON EXCEPTION / OVERFLOW
+    AST_STATEMENT_CANCEL,   // children: the programs (literals or identifiers)
     AST_STATEMENT_RETURN,   // extra: sort file; loop: INTO; on_error / not_on_error: [NOT] AT END
     AST_STATEMENT_START,    // extra: file; text: =, > or >=; children: KEY data-name;
                             //   on_error / not_on_error: [NOT] INVALID KEY
@@ -176,6 +182,8 @@ typedef struct AstNode {
     int sign_mode;          // SIGN clause: SIGN_* bits, 0 without the clause
     bool is_group;          // data entry with subordinate entries (set by sema)
     int org, access;        // AST_SELECT: FILE_ORG_*, FILE_ACCESS_*
+    bool is_global;         // GLOBAL clause (data entry, FD)
+    bool is_external;       // EXTERNAL clause (data entry, FD)
 
     // Arithmetic statements
     bool rounded;           // ROUNDED on this receiving identifier

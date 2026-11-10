@@ -52,6 +52,8 @@ typedef struct {
     int switch_value;       // condition-name of a switch: 1 for ON STATUS, 0 for OFF; else -1
     int switch_number;      // its switch (SWITCH-n)
     int qual_file;          // LINAGE-COUNTER: the file that qualifies it, else -1
+    bool linkage;           // LINKAGE SECTION item
+    const char *owner;      // GLOBAL item of a containing program: its entry symbol
 } VarInfo;
 
 static bool is_num_edited(const VarInfo *v) { return v->mask && v->num_edited; }
@@ -62,6 +64,33 @@ static VarInfo vars[MAX_VARS];
 static int num_vars = 0;
 static int record_size[MAX_VARS];
 static int num_records = 0;
+static int record_ptr_slot[MAX_VARS];       // records reached through an address slot
+                                            // (LINKAGE, EXTERNAL), else -1
+static char *record_extern[MAX_VARS];       // GLOBAL record of a containing program: its symbol
+static char *record_export[MAX_VARS];       // GLOBAL record of this program: a symbol for it
+static char *record_external[MAX_VARS];     // EXTERNAL record: its name
+static const char *self_symbol = "";        // this program's entry symbol
+static int external_status_fixups[64][2];   // EXTERNAL file: FCB record, status record/offset
+static int num_status_fixups = 0;
+
+// The label of offset off in record r (see IR_ADDR_SET in ir.h; "@symbol"
+// is storage of another program)
+static void record_label(char *buf, size_t n, int r, int off) {
+    if (record_ptr_slot[r] >= 0) snprintf(buf, n, "*A_%d+%d", record_ptr_slot[r], off);
+    else if (record_extern[r]) snprintf(buf, n, "@%s+%d", record_extern[r], off);
+    else snprintf(buf, n, "%%r%d+%d", r, off);
+}
+
+// The symbol of GLOBAL item or file name of the program with entry symbol
+// owner: kind 'g' a data record, 'f' a file's control block, 'r' its record area
+static char *global_symbol(const char *owner, char kind, const char *name) {
+    char buf[256];
+    int n = snprintf(buf, sizeof(buf), "cobg%c_%s_", kind, owner + 4);  // owner: "cob_..."
+    for (const char *p = name; *p && n < (int)sizeof(buf) - 1; p++)
+        buf[n++] = isalnum((unsigned char)*p) ? (char)toupper((unsigned char)*p) : '_';
+    buf[n] = '\0';
+    return strdup(buf);
+}
 static int lit_counter = 0;
 static int if_counter = 0;
 static int addr_slots = 0;  // address/length slots used so far
@@ -97,7 +126,7 @@ typedef struct {
     int largest_record;     // the longest 01 record description
     AstNode *fd;            // its FD entry
     int fcb_record;         // the record that is its file control block, or -1
-    char fcb_label[16];     // "%r<fcb_record>"
+    char fcb_label[48];     // the label of its control block
     int reclen_var;         // FCB_RECLEN, FCB_KEY and FCB_KEYREF as data items
     int key_var;
     int keyref_var;
@@ -107,6 +136,9 @@ typedef struct {
     bool variable;          // records of different lengths
     int same_group;         // SAME RECORD AREA group, or -1
     bool is_sort;           // SD: a sort-merge file
+    const char *owner;      // GLOBAL file of a containing program: its entry symbol
+    bool external;          // FD IS EXTERNAL
+    int status_var;         // its FILE STATUS item, or -1
     int nkeys;              // indexed: prime and alternate keys
     int key_item[16];       // their data items
 } FileInfo;
@@ -137,6 +169,8 @@ typedef struct {
     const char *file;
     int mode;
     int first, last;        // procedure range of the section
+    char *symbol;           // USE GLOBAL of a containing program: its entry
+    int global_index;       // USE GLOBAL of this program: its number, else -1
 } UseDecl;
 static UseDecl uses[64];
 static int num_uses = 0;
@@ -149,24 +183,50 @@ static AstNode *file_key(int f, const char *what) {
     return NULL;
 }
 
-static void collect_uses(AstNode *program) {
-    num_uses = 0;
-    has_declaratives = false;
+static const IrUnit *current_unit;
+
+// The USE AFTER EXCEPTION sections of a program: entries for this program
+// (symbol NULL), or for a containing program's USE GLOBAL sections (owner:
+// its entry symbol; they are entered through a symbol each)
+static void collect_program_uses(AstNode *program, const char *owner, bool own) {
+    int global_count = 0;
     for (AstNode *div = program->children; div; div = div->next) {
         if (div->kind != AST_DIVISION || strcasecmp(div->name, "PROCEDURE") != 0) continue;
         for (AstNode *n = div->children; n; n = n->next) {
             if (n->kind != AST_SECTION || !n->is_signed) continue;
-            has_declaratives = true;
+            if (own) has_declaratives = true;
             AstNode *u = n->extra;
             if (!u || !u->name || strcmp(u->name, "ERROR") != 0) continue;
+            int gi = u->is_signed ? global_count++ : -1;
+            if (!own && gi < 0) continue;
+            char *sym = NULL;
+            if (!own) {
+                char buf[200];
+                snprintf(buf, sizeof(buf), "cobuse_%s_%d", owner + 4, gi);
+                sym = strdup(buf);
+            }
             if (u->text) {
                 int mode = strcasecmp(u->text, "INPUT") == 0 ? 1 : strcasecmp(u->text, "OUTPUT") == 0 ? 2 :
                            strcasecmp(u->text, "I-O") == 0 ? 3 : 4;
-                if (num_uses < 64) uses[num_uses++] = (UseDecl){ n, NULL, mode, -1, -1 };
+                if (num_uses < 64) uses[num_uses++] = (UseDecl){ n, NULL, mode, -1, -1, sym, own ? gi : -1 };
             }
             for (AstNode *f = u->children; f; f = f->next)
-                if (num_uses < 64) uses[num_uses++] = (UseDecl){ n, f->name, 0, -1, -1 };
+                if (num_uses < 64) uses[num_uses++] = (UseDecl){ n, f->name, 0, -1, -1,
+                                                                 sym ? strdup(sym) : NULL, own ? gi : -1 };
         }
+    }
+}
+
+static void collect_uses(AstNode *program) {
+    num_uses = 0;
+    has_declaratives = false;
+    collect_program_uses(program, NULL, true);
+    // Then USE GLOBAL of the containing programs, the innermost first
+    for (int a = 0; a < current_unit->nancestors; a++) {
+        char entry[160], info[160];
+        AstNode *anc = current_unit->ancestors[a];
+        ir_program_symbols(anc->name ? anc->name : "MAIN", entry, info, sizeof(entry));
+        collect_program_uses(anc, entry, false);
     }
 }
 
@@ -592,7 +652,14 @@ static void build_file_records(void) {
         int r = num_records++;
         record_size[r] = FCB_BYTES;
         fi->fcb_record = r;
-        snprintf(fi->fcb_label, sizeof(fi->fcb_label), "%%r%d", r);
+        if (fi->owner) record_extern[r] = global_symbol(fi->owner, 'f', fi->name);
+        else if (fi->external) {
+            record_ptr_slot[r] = addr_slots++;
+            char nm[160];
+            snprintf(nm, sizeof(nm), "%s (file)", fi->name);
+            record_external[r] = strdup(nm);
+        }
+        record_label(fi->fcb_label, sizeof(fi->fcb_label), r, 0);
         fi->reclen_var = hidden_qword(r, FCB_OFF_RECLEN, fi->select);
         fi->key_var = hidden_qword(r, FCB_OFF_KEY, fi->select);
         fi->keyref_var = hidden_qword(r, FCB_OFF_KEYREF, fi->select);
@@ -614,6 +681,9 @@ static void build_file_records(void) {
     }
 }
 
+static void emit_qword(IrProgram *ir, const char *dest, int mode, long long imm,
+                       const char *src, int size);
+
 static void build_data(IrProgram *ir, AstNode *program) {
     int stack[64];
     int depth = 0;
@@ -630,10 +700,11 @@ static void build_data(IrProgram *ir, AstNode *program) {
             if (sel->kind != AST_SELECT || num_files >= 64) continue;
             files[num_files++] = (FileInfo){ .name = sel->name, .select = sel, .first_record = -1,
                                              .largest_record = -1, .fcb_record = -1,
-                                             .linage_record = -1, .same_group = -1 };
+                                             .linage_record = -1, .same_group = -1, .status_var = -1 };
         }
         int group = 0;
         for (AstNode *same = div->children; same; same = same->next, group++) {
+            if (same->kind == AST_SELECT) continue;
             if (same->kind != AST_SPECIAL || strcmp(same->name, "SAME RECORD") != 0) continue;
             for (AstNode *fn = same->children; fn; fn = fn->next) {
                 int f = -1;
@@ -645,11 +716,80 @@ static void build_data(IrProgram *ir, AstNode *program) {
         }
     }
 
+    // GLOBAL files of the containing programs (a name of the program's own
+    // hides them)
+    for (int a = 0; a < current_unit->nancestors; a++) {
+        AstNode *anc = current_unit->ancestors[a];
+        char owner_entry[160], owner_info[160];
+        ir_program_symbols(anc->name ? anc->name : "MAIN", owner_entry, owner_info, sizeof(owner_entry));
+        for (AstNode *div = anc->children; div; div = div->next) {
+            if (div->kind != AST_DIVISION || strcasecmp(div->name, "DATA") != 0) continue;
+            for (AstNode *sec = div->children; sec; sec = sec->next)
+                for (AstNode *fd = sec->kind == AST_SECTION ? sec->children : NULL; fd; fd = fd->next) {
+                    if (fd->kind != AST_FILE_DECL || !fd->is_global) continue;
+                    bool hidden = false;
+                    for (int k = 0; k < num_files; k++)
+                        if (strcasecmp(files[k].name, fd->name) == 0) hidden = true;
+                    AstNode *sel = NULL;
+                    for (AstNode *ed = anc->children; ed; ed = ed->next)
+                        if (ed->kind == AST_DIVISION && strcasecmp(ed->name, "ENVIRONMENT") == 0)
+                            for (AstNode *e = ed->children; e; e = e->next)
+                                if (e->kind == AST_SELECT && strcasecmp(e->name, fd->name) == 0) sel = e;
+                    if (hidden || !sel || num_files >= 64) continue;
+                    files[num_files++] = (FileInfo){ .name = sel->name, .select = sel, .first_record = -1,
+                                                     .largest_record = -1, .fcb_record = -1,
+                                                     .linage_record = -1, .same_group = -1,
+                                                     .status_var = -1, .owner = strdup(owner_entry) };
+                }
+        }
+    }
+
     // Record descriptions: WORKING-STORAGE entries, and the entries of every
-    // FD in the FILE SECTION (decl_file tells which file, or -1)
+    // FD in the FILE SECTION (decl_file tells which file, or -1); first the
+    // GLOBAL entries of the containing programs (decl_owner: their entry
+    // symbol), outermost first
     AstNode *decls[MAX_VARS];
     int decl_file[MAX_VARS];
+    const char *decl_owner[MAX_VARS];
     int ndecls = 0;
+    for (int a = current_unit->nancestors - 1; a >= 0; a--) {
+        AstNode *anc = current_unit->ancestors[a];
+        char owner_entry[160], owner_info[160];
+        ir_program_symbols(anc->name ? anc->name : "MAIN", owner_entry, owner_info, sizeof(owner_entry));
+        char *owner = strdup(owner_entry);
+        for (AstNode *div = anc->children; div; div = div->next) {
+            if (div->kind != AST_DIVISION || strcasecmp(div->name, "DATA") != 0) continue;
+            for (AstNode *sec = div->children; sec; sec = sec->next) {
+                if (sec->kind != AST_SECTION || (sec->name && strcmp(sec->name, "LINKAGE") == 0)) continue;
+                bool in_global = false;
+                for (AstNode *entry = sec->children; entry; entry = entry->next) {
+                    if (entry->kind == AST_FILE_DECL) {
+                        in_global = false;
+                        int f = -1;
+                        for (int k = 0; k < num_files; k++)
+                            if (files[k].owner && strcmp(files[k].owner, owner) == 0 &&
+                                strcasecmp(files[k].name, entry->name) == 0) f = k;
+                        if (f < 0) continue;
+                        files[f].fd = entry;
+                        files[f].is_sort = entry->is_numeric;
+                        for (AstNode *d = entry->children; d && ndecls < MAX_VARS; d = d->next) {
+                            decls[ndecls] = d;
+                            decl_owner[ndecls] = owner;
+                            decl_file[ndecls++] = f;
+                        }
+                        continue;
+                    }
+                    if (entry->kind != AST_VAR_DECL) continue;
+                    int level = entry->text ? atoi(entry->text) : 1;
+                    if (level == 1 || level == 77) in_global = entry->is_global;
+                    if (!in_global || ndecls >= MAX_VARS) continue;
+                    decls[ndecls] = entry;
+                    decl_owner[ndecls] = owner;
+                    decl_file[ndecls++] = -1;
+                }
+            }
+        }
+    }
     for (AstNode *div = program->children; div; div = div->next) {
         if (div->kind != AST_DIVISION || strcasecmp(div->name, "DATA") != 0) continue;
         for (AstNode *sec = div->children; sec; sec = sec->next) {
@@ -662,14 +802,21 @@ static void build_data(IrProgram *ir, AstNode *program) {
                     if (f < 0)
                         cobalt_error_loc(NULL, entry->loc.line, entry->loc.column,
                                          "FD '%s' has no SELECT", entry->name);
-                    else { files[f].fd = entry; files[f].is_sort = entry->is_numeric; }
+                    else {
+                        files[f].fd = entry;
+                        files[f].is_sort = entry->is_numeric;
+                        files[f].external = entry->is_external;
+                    }
                     for (AstNode *d = entry->children; d && ndecls < MAX_VARS; d = d->next) {
                         decls[ndecls] = d;
+                        decl_owner[ndecls] = NULL;
                         decl_file[ndecls++] = f;
                     }
                 } else if (ndecls < MAX_VARS) {
                     decls[ndecls] = entry;
-                    decl_file[ndecls++] = -1;
+                    decl_owner[ndecls] = NULL;
+                    // -2: LINKAGE SECTION (no storage of its own)
+                    decl_file[ndecls++] = sec->name && strcmp(sec->name, "LINKAGE") == 0 ? -2 : -1;
                 }
             }
         }
@@ -680,6 +827,8 @@ static void build_data(IrProgram *ir, AstNode *program) {
             for (int di = 0; di < ndecls; di++) {
                 AstNode *decl = decls[di];
                 int file = decl_file[di];
+                bool linkage = file == -2;
+                if (linkage) file = -1;
                 if (decl->kind != AST_VAR_DECL) continue;
                 int level = decl->text ? atoi(decl->text) : 1;
 
@@ -721,6 +870,8 @@ static void build_data(IrProgram *ir, AstNode *program) {
                 last_item = idx;
                 v->level = level;
                 v->decl = decl;
+                v->linkage = linkage;
+                v->owner = decl_owner[di];
                 v->is_filler = strcasecmp(decl->name, "FILLER") == 0;
                 v->is_group = !has_clause(decl, AST_PIC_CLAUSE) && !decl->is_numeric;
                 v->justified = has_clause(decl, AST_JUSTIFIED);
@@ -852,15 +1003,34 @@ static void build_data(IrProgram *ir, AstNode *program) {
         }
         int r = num_records++;
         record_size[r] = layout_item(i, r, 0);
+        // LINKAGE records: at the addresses the caller passes
+        if (v->linkage) record_ptr_slot[r] = addr_slots++;
+        // GLOBAL: storage of the containing program, or storage of this
+        // program that the programs it contains use (the area of a file)
+        const char *gname = v->file >= 0 ? files[v->file].name : v->name;
+        if (v->owner) record_extern[r] = global_symbol(v->owner, v->file >= 0 ? 'r' : 'g', gname);
+        else if (v->file >= 0 ? (files[v->file].fd && files[v->file].fd->is_global) : v->decl->is_global)
+            record_export[r] = global_symbol(self_symbol, v->file >= 0 ? 'r' : 'g', gname);
+        // EXTERNAL: shared by name with the other programs of the run unit
+        if (v->file < 0 ? v->decl->is_external : files[v->file].external) {
+            record_ptr_slot[r] = addr_slots++;
+            char nm[160];
+            snprintf(nm, sizeof(nm), v->file < 0 ? "%s" : "%s (record area)", gname);
+            record_external[r] = strdup(nm);
+        }
     }
     for (int k = 0; k < num_renames; k++) build_renames(renames[k], renames_record[k]);
     build_file_records();
     for (int r = 0; r < num_records; r++) {
         if (is_fcb_record(r)) continue;     // emitted as IR_DATA_FILE
+        if (record_ptr_slot[r] >= 0) continue;  // storage of the caller, or EXTERNAL
+        if (record_extern[r]) continue;     // storage of a containing program
         char label[32];
         snprintf(label, sizeof(label), "%%r%d", r);
-        append_instr(ir, new_instr(IR_DATA_VAR, label, NULL, NULL, 0,
-                                   record_size[r] > 0 ? record_size[r] : 1, 0, 0, USAGE_DISPLAY));
+        IrInstr *d = new_instr(IR_DATA_VAR, label, NULL, NULL, 0,
+                               record_size[r] > 0 ? record_size[r] : 1, 0, 0, USAGE_DISPLAY);
+        d->symbol = record_export[r];
+        append_instr(ir, d);
     }
 
     // File control blocks
@@ -875,11 +1045,16 @@ static void build_data(IrProgram *ir, AstNode *program) {
         for (int i = 0; i < num_vars; i++)
             if (vars[i].file == f && vars[i].parent < 0 && vars[i].size > vars[fi->largest_record].size)
                 fi->largest_record = i;
+        if (fi->owner) continue;            // the containing program's
         char name_lit[32];
         emit_data_lit(ir, "fname", fi->select->text, name_lit, sizeof(name_lit));
         int area = vars[fi->first_record].record;
-        IrInstr *d = new_instr(IR_DATA_FILE, fi->fcb_label, name_lit, NULL, 0,
-                               fi->max_size, 0, 0, USAGE_DISPLAY);
+        // An EXTERNAL file: this is the control block it starts as
+        char tpl[32];
+        if (fi->external) snprintf(tpl, sizeof(tpl), "$fcbtpl_%d", f);
+        else snprintf(tpl, sizeof(tpl), "%%r%d", fi->fcb_record);
+        IrInstr *d = new_instr(IR_DATA_FILE, tpl, name_lit, NULL, 0, fi->max_size, 0, 0, USAGE_DISPLAY);
+        if (fi->fd && fi->fd->is_global) d->symbol = global_symbol(self_symbol, 'f', fi->name);
         AstNode *sel = fi->select;
         d->flags = (sel->decimal_places == 1 ? FILE_LINE : 0) |
                    (sel->is_signed ? FILE_OPTIONAL : 0) |
@@ -901,7 +1076,8 @@ static void build_data(IrProgram *ir, AstNode *program) {
             // length and duplicates of the prime key and each alternate key
             fi->nkeys = 0;
             char table[2048];
-            int n = snprintf(table, sizeof(table), "%%r%d+0", area);
+            record_label(table, sizeof(table), area, 0);
+            int n = (int)strlen(table);
             char body[2000] = "";
             int bn = 0;
             for (int pass = 0; pass < 2; pass++) {
@@ -959,11 +1135,16 @@ static void build_data(IrProgram *ir, AstNode *program) {
             if (st && (st->is_numeric || st->size != 2))
                 cobalt_error_loc(NULL, fi->select->extra->loc.line, fi->select->extra->loc.column,
                                  "FILE STATUS item '%s' must be a two-character alphanumeric item", st->name);
-            else if (st) {
+            else if (st && !fi->external && record_ptr_slot[st->record] < 0 && !record_extern[st->record]) {
                 char label[48];
-                snprintf(label, sizeof(label), "%%r%d+%d", st->record, st->offset);
+                record_label(label, sizeof(label), st->record, st->offset);
                 d->content = strdup(label);
+            } else if (st && num_status_fixups < 64) {
+                // Its address is known at run time only: stored at initialization
+                external_status_fixups[num_status_fixups][0] = f;
+                external_status_fixups[num_status_fixups++][1] = (int)(st - vars);
             }
+            if (st) fi->status_var = (int)(st - vars);
         }
         append_instr(ir, d);
     }
@@ -1000,6 +1181,9 @@ static VarInfo *find_item(const AstNode *ref, bool report) {
             else ok = false;
         }
         if (!ok) continue;
+        // A program's own names hide the GLOBAL names of its containers
+        if (found && found->owner && !vars[i].owner) { found = &vars[i]; count = 1; continue; }
+        if (found && !found->owner && vars[i].owner) continue;
         if (!found) found = &vars[i];
         count++;
     }
@@ -1160,14 +1344,14 @@ static bool resolve_ref(IrProgram *ir, AstNode *ref, FieldRef *out) {
     // the current number of occurrences (the table ends the group)
     VarInfo *odo = ref->loop ? NULL : odo_table_in(v);
     if (!dynamic) {
-        snprintf(out->label, sizeof(out->label), "%%r%d+%d", v->record, offset);
+        record_label(out->label, sizeof(out->label), v->record, offset);
         out->size = odo ? odo_length(ir, v, odo) : size;
         return true;
     }
 
     int slot = addr_slots++;
     char base[32];
-    snprintf(base, sizeof(base), "%%r%d+%d", v->record, offset);
+    record_label(base, sizeof(base), v->record, offset);
     IrInstr *set = emit(ir, IR_ADDR_SET);
     set->imm = slot;
     set->var_name = strdup(base);
@@ -2784,6 +2968,14 @@ static int find_file(const AstNode *ref) {
 }
 
 static IrInstr *emit_file_op(IrProgram *ir, IrOpcode op, int file) {
+    // An EXTERNAL file is shared: this program's FILE STATUS item first
+    if (files[file].external && files[file].status_var >= 0) {
+        VarInfo *st = &vars[files[file].status_var];
+        char dest[64], src[64];
+        record_label(dest, sizeof(dest), files[file].fcb_record, 40);
+        record_label(src, sizeof(src), st->record, st->offset);
+        emit_qword(ir, dest, 1, 0, src, 0);
+    }
     IrInstr *i = emit(ir, op);
     i->var_name = strdup(files[file].fcb_label);
     return i;
@@ -2799,6 +2991,14 @@ static void emit_io_jump(IrProgram *ir, int low, int high, const char *target) {
 static AstNode no_phrases;          // an I-O statement without AT END / INVALID KEY
 
 static void emit_perform_use(IrProgram *ir, int k) {
+    if (uses[k].symbol) {
+        // USE GLOBAL of a containing program: through its entry
+        IrInstr *c = emit(ir, IR_CALL_USE);
+        char sym[220];
+        snprintf(sym, sizeof(sym), "@%s", uses[k].symbol);
+        c->var_name = strdup(sym);
+        return;
+    }
     IrInstr *p = emit(ir, IR_PERFORM);
     p->imm = uses[k].first;
     p->proc_end = uses[k].last;
@@ -2967,7 +3167,7 @@ static void lower_sort(IrProgram *ir, AstNode *node) {
     FileInfo *fi = &files[sd];
     int area_rec = vars[fi->first_record].record;
     char area[48];
-    snprintf(area, sizeof(area), "%%r%d+0", area_rec);
+    record_label(area, sizeof(area), area_rec, 0);
 
     // Key table: count, weights, then offset, length, usage, flags,
     // descending and numeric of each key
@@ -3015,7 +3215,7 @@ static void lower_sort(IrProgram *ir, AstNode *node) {
             char loop[32], done[32], uarea[48];
             new_label(loop, sizeof(loop), "sort_in");
             new_label(done, sizeof(done), "sort_in_end");
-            snprintf(uarea, sizeof(uarea), "%%r%d+0", vars[files[u].first_record].record);
+            record_label(uarea, sizeof(uarea), vars[files[u].first_record].record, 0);
             emit_file_op(ir, IR_FILE_OPEN, u)->imm = 1;
             emit_label(ir, loop);
             IrInstr *r = emit_file_op(ir, IR_FILE_READ, u);
@@ -3071,7 +3271,7 @@ static void lower_sort(IrProgram *ir, AstNode *node) {
             move_from_item(ir, fi->reclen_var, len);
             ast_free(len);
             char garea[48];
-            snprintf(garea, sizeof(garea), "%%r%d+0", vars[files[g].first_record].record);
+            record_label(garea, sizeof(garea), vars[files[g].first_record].record, 0);
             IrInstr *w = emit_file_op(ir, IR_FILE_WRITE, g);
             w->lit_name = strdup(garea);
             w->size = files[g].max_size;
@@ -3125,7 +3325,7 @@ static void lower_release_return(IrProgram *ir, AstNode *node) {
     int sd = sort_file(node->extra, true);
     if (sd < 0) return;
     char area[48];
-    snprintf(area, sizeof(area), "%%r%d+0", vars[files[sd].first_record].record);
+    record_label(area, sizeof(area), vars[files[sd].first_record].record, 0);
     emit_sort_op(ir, IR_SORT_RETURN, sd, area);
     AstNode *dep = files[sd].fd ? files[sd].fd->extra : NULL;
     if (dep || node->loop) {
@@ -3179,7 +3379,7 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
                 move_int_to_item(ir, k, fi->keyref_var, node->loc);
             }
             char area[48];
-            snprintf(area, sizeof(area), "%%r%d+0", vars[fi->first_record].record);
+            record_label(area, sizeof(area), vars[fi->first_record].record, 0);
             IrInstr *r = emit_file_op(ir, IR_FILE_READ, f);
             r->lit_name = strdup(area);
             r->imm = keyed ? 1 : 0;
@@ -3327,6 +3527,82 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
         }
         default:
             break;
+    }
+}
+
+// ── CALL and CANCEL ─────────────────────────────────────────────────────────
+
+// The name operand of a CALL or CANCEL into an IR_CALL_PROGRAM-like instruction
+static bool program_name_operand(IrProgram *ir, AstNode *name, IrInstr *op) {
+    if (name->kind == AST_STRING_LITERAL) {
+        char lit[32];
+        emit_data_lit(ir, "pname", name->name, lit, sizeof(lit));
+        op->lit_name = strdup(lit);
+        op->lit_len = (int)strlen(name->name);
+        return true;
+    }
+    FieldRef f;
+    if (!resolve_ref(ir, name, &f)) return false;
+    if (f.var && f.var->is_numeric) {
+        cobalt_error_loc(NULL, name->loc.line, name->loc.column, "The program name '%s' must be alphanumeric", name->name);
+        return false;
+    }
+    op->var_name = strdup(f.label);
+    op->size = f.size;
+    return true;
+}
+
+static void lower_call(IrProgram *ir, AstNode *node) {
+    if (node->kind == AST_STATEMENT_CANCEL) {
+        for (AstNode *n = node->children; n; n = n->next) {
+            IrInstr *c = new_instr(IR_CANCEL_PROGRAM, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY);
+            if (!program_name_operand(ir, n, c)) { free(c); continue; }
+            append_instr(ir, c);
+        }
+        return;
+    }
+    // The arguments: BY REFERENCE their addresses, BY CONTENT a copy's
+    int argc = 0;
+    for (AstNode *a = node->children; a; a = a->next, argc++) {
+        FieldRef f;
+        if (!resolve_ref(ir, a, &f)) return;
+        if (f.size < 0) f.size = f.var->size;      // BY CONTENT: the longest it can be
+        char label[64];
+        snprintf(label, sizeof(label), "%s", f.label);
+        if (a->is_signed) {
+            int r = num_records++;
+            record_size[r] = f.size;
+            char rec[32];
+            snprintf(rec, sizeof(rec), "%%r%d", r);
+            append_instr(ir, new_instr(IR_DATA_VAR, rec, NULL, NULL, 0, f.size > 0 ? f.size : 1, 0, 0, USAGE_DISPLAY));
+            record_label(label, sizeof(label), r, 0);
+            FieldRef dest = { .var = f.var, .size = f.size };
+            snprintf(dest.label, sizeof(dest.label), "%s", label);
+            emit_move_alpha(ir, &dest, f.label, f.size);
+        }
+        IrInstr *arg = emit(ir, IR_CALL_ARG);
+        arg->imm = argc;
+        arg->var_name = strdup(label);
+    }
+    if (argc > 64) {
+        cobalt_error_loc(NULL, node->loc.line, node->loc.column, "CALL with more than 64 arguments");
+        return;
+    }
+    IrInstr *call = new_instr(IR_CALL_PROGRAM, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY);
+    if (!program_name_operand(ir, node->extra, call)) { free(call); return; }
+    call->imm = argc;
+    call->flags = node->on_error ? 1 : 0;
+    append_instr(ir, call);
+    if (node->on_error || node->not_on_error) {
+        char exc[32], end[32];
+        new_label(exc, sizeof(exc), "call_exception");
+        new_label(end, sizeof(end), "call_end");
+        emit_io_jump(ir, 1, 1, exc);
+        lower_block(ir, node->not_on_error);
+        emit_jump(ir, IR_JUMP, end);
+        emit_label(ir, exc);
+        lower_block(ir, node->on_error);
+        emit_label(ir, end);
     }
 }
 
@@ -3982,11 +4258,17 @@ static void lower_node(IrProgram *ir, AstNode *node) {
         case AST_STATEMENT_SORT:
             lower_sort(ir, node);
             break;
+        case AST_STATEMENT_CALL:
+        case AST_STATEMENT_CANCEL:
+            lower_call(ir, node);
+            break;
         case AST_STATEMENT_RELEASE:
         case AST_STATEMENT_RETURN:
             lower_release_return(ir, node);
             break;
         case AST_STATEMENT_EXIT:        // marks the end of a procedure; does nothing
+            if (node->name && strcmp(node->name, "PROGRAM") == 0) emit(ir, IR_EXIT_PROGRAM);
+            break;
         case AST_STATEMENT_CONTINUE:
             break;
         case AST_STATEMENT_IF: {
@@ -4098,7 +4380,8 @@ static void lower_initial_occurrence(IrProgram *ir, int idx, const int subs[], i
 // Initial value of a data item: every occurrence of an item in a table
 static void lower_initial_value(IrProgram *ir, int idx) {
     VarInfo *v = &vars[idx];
-    if (!v->value || v->is_cond || v->is_index) return;
+    if (!v->value || v->is_cond || v->is_index || record_ptr_slot[v->record] >= 0 ||
+        record_extern[v->record]) return;
     int counts[16], strides[16], subs[16];
     int ndims = item_dims(v, counts, strides);
     long total = 1;
@@ -4117,14 +4400,40 @@ static void lower_initial_value(IrProgram *ir, int idx) {
     }
 }
 
-IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect) {
+// A program's entry symbol ("cob_" and its name, - as _) and descriptor
+void ir_program_symbols(const char *program_name, char *entry, char *info, size_t size) {
+    char m[128];
+    size_t k = 0;
+    for (const char *p = program_name; *p && k < sizeof(m) - 1; p++)
+        m[k++] = isalnum((unsigned char)*p) ? (char)toupper((unsigned char)*p) : '_';
+    m[k] = '\0';
+    snprintf(entry, size, "cob_%s", m);
+    snprintf(info, size, "cobinfo_%s", m);
+}
+
+IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const IrUnit *unit) {
     IrProgram *ir = calloc(1, sizeof(IrProgram));
     if (!ir) return NULL;
     dialect = program_dialect;
     if (dialect->sign_encoding == SIGN_ENCODING_EBCDIC) ir->runtime_flags |= IR_RT_SIGN_EBCDIC;
+    ir->subprogram = !unit->main;
+    ir->program_name = strdup(program->name ? program->name : "MAIN");
+    char entry[160], info[160];
+    ir_program_symbols(ir->program_name, entry, info, sizeof(entry));
+    ir->entry_symbol = strdup(entry);
+    ir->info_symbol = strdup(info);
+    ir->initial = (program->digits & 2) != 0;
 
     num_vars = 0;
     num_records = 0;
+    memset(record_ptr_slot, 0xFF, sizeof(record_ptr_slot));
+    for (int r = 0; r < MAX_VARS; r++) {
+        free(record_extern[r]); free(record_export[r]); free(record_external[r]);
+        record_extern[r] = record_export[r] = record_external[r] = NULL;
+    }
+    current_unit = unit;
+    self_symbol = ir->entry_symbol;
+    num_status_fixups = 0;
     lit_counter = 0;
     if_counter = 0;
     addr_slots = 0;
@@ -4138,8 +4447,63 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect) {
         if (div->kind == AST_DIVISION && strcasecmp(div->name, "ENVIRONMENT") == 0) environment_division = div;
     build_data(ir, program);
 
-    // Emit initializations
-    append_instr(ir, new_instr(IR_CALL_INIT, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+    // PROCEDURE DIVISION USING: the address slots of the LINKAGE items
+    for (AstNode *div = program->children; div; div = div->next) {
+        if (div->kind != AST_DIVISION || strcasecmp(div->name, "PROCEDURE") != 0) continue;
+        for (AstNode *u = div->extra; u; u = u->next) {
+            VarInfo *v = find_item(u, true);
+            if (!v) continue;
+            if (!v->linkage || v->parent >= 0 || (v->level != 1 && v->level != 77)) {
+                cobalt_error_loc(NULL, u->loc.line, u->loc.column,
+                                 "USING item '%s' must be a level 01 or 77 LINKAGE SECTION item", v->name);
+                continue;
+            }
+            if (ir->nusing < 64) ir->using_slots[ir->nusing++] = record_ptr_slot[v->record];
+        }
+        if (div->extra && !ir->subprogram)
+            cobalt_error_loc(NULL, div->loc.line, div->loc.column,
+                             "The main program %s cannot have PROCEDURE DIVISION USING", ir->program_name);
+    }
+
+    // Emit initializations: the main program at start, a subprogram on its
+    // first CALL (every CALL for an INITIAL program, the first after CANCEL)
+    if (ir->subprogram) {
+        IrInstr *e = emit(ir, IR_PROGRAM_ENTRY);
+        e->jump_target = strdup("$init_done");
+    } else {
+        append_instr(ir, new_instr(IR_CALL_INIT, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+    }
+    // EXTERNAL records and files: their storage, by name
+    for (int r = 0; r < num_records; r++) {
+        if (!record_external[r]) continue;
+        char lit[32];
+        emit_data_lit(ir, "extname", record_external[r], lit, sizeof(lit));
+        IrInstr *x = emit(ir, IR_EXTERNAL);
+        x->imm = record_ptr_slot[r];
+        x->lit_name = strdup(lit);
+        x->lit_len = (int)strlen(record_external[r]);
+        x->size = record_size[r];
+        for (int f = 0; f < num_files; f++)
+            if (files[f].fcb_record == r && files[f].external) {
+                char tpl[32];
+                snprintf(tpl, sizeof(tpl), "$fcbtpl_%d", f);
+                x->content = strdup(tpl);
+            }
+    }
+    for (int k = 0; k < num_status_fixups; k++) {
+        FileInfo *fi = &files[external_status_fixups[k][0]];
+        VarInfo *st = &vars[external_status_fixups[k][1]];
+        char dest[64], src[64];
+        record_label(dest, sizeof(dest), fi->fcb_record, 40);
+        record_label(src, sizeof(src), st->record, st->offset);
+        emit_qword(ir, dest, 1, 0, src, 0);
+    }
+    emit(ir, IR_SIZE_ERR_CLEAR);
+    for (int i = 0; i < num_vars; i++) lower_initial_value(ir, i);
+    if (ir->subprogram) {
+        emit_label(ir, "$init_done");
+        emit(ir, IR_RESET_PERFORM);
+    }
     if (has_collation) {
         IrInstr *t = emit(ir, IR_DATA_BYTES);
         t->var_name = strdup("$collate");
@@ -4149,8 +4513,6 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect) {
         t->content = bytes;
         emit(ir, IR_CALL_SET_COLLATION)->var_name = strdup("$collate");
     }
-    emit(ir, IR_SIZE_ERR_CLEAR);
-    for (int i = 0; i < num_vars; i++) lower_initial_value(ir, i);
 
     // Lower PROCEDURE DIVISION: procedures laid out in source order
     num_procs = 0;
@@ -4222,8 +4584,24 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect) {
             current_section = NULL;
         }
     }
-    // Falling off the end of the PROCEDURE DIVISION ends the run unit
-    append_instr(ir, new_instr(IR_CALL_EXIT, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+    // Falling off the end of the PROCEDURE DIVISION ends the run unit, or
+    // returns from a called program
+    if (ir->subprogram) emit(ir, IR_EXIT_PROGRAM);
+    else append_instr(ir, new_instr(IR_CALL_EXIT, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+    // USE GLOBAL sections: an entry each, for the programs this one contains
+    for (int k = 0; k < num_uses; k++) {
+        if (uses[k].global_index < 0 || uses[k].symbol || uses[k].first < 0) continue;
+        bool done = false;
+        for (int j = 0; j < k; j++) done |= uses[j].section == uses[k].section && !uses[j].symbol;
+        if (done) continue;
+        char sym[200];
+        snprintf(sym, sizeof(sym), "cobuse_%s_%d", ir->entry_symbol + 4, uses[k].global_index);
+        IrInstr *e = emit(ir, IR_USE_ENTRY);
+        e->var_name = strdup(sym);
+        emit_perform_use(ir, k);
+        emit(ir, IR_USE_RETURN);
+    }
+    ir->addr_slots = addr_slots;
     current_proc = -1;
 
     // An altered paragraph must consist of a GO TO statement
@@ -4252,6 +4630,9 @@ void ir_free(IrProgram *ir) {
         free(i);
         i = next;
     }
+    free(ir->program_name);
+    free(ir->entry_symbol);
+    free(ir->info_symbol);
     for (int i = 0; i < num_vars; i++) {
         free(vars[i].name);
     }

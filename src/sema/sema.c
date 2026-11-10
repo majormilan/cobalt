@@ -471,9 +471,7 @@ void sema_basic_check(AstNode *program, SemaContext *ctx) {
         return;
     }
 
-    if (!has_stop_run(proc_div)) {
-        cobalt_error("No STOP RUN found in PROCEDURE DIVISION");
-    }
+    (void)has_stop_run;     // a run unit may end in a called program, or at the end
 
     // Future checks can be added here:
     // - Undeclared identifiers

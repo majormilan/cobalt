@@ -26,9 +26,20 @@ mkdir -p "$WORK"
 FILES="$WORK/files-$MODULE"
 rm -rf "$FILES"; mkdir -p "$FILES"
 
+# Programs called by others are built with their callers (tools/nist/deps.py)
+DEPS="$WORK/deps-$MODULE"
+python3 -I tools/nist/deps.py "$SRC" "$MODULE" > "$DEPS"
+
 total=0; compiled=0; ran=0; passed=0; failed=0; deleted=0; inspect=0; build_ms=0
 for cbl in "$SRC"/$MODULE*.CBL; do
     name=$(basename "$cbl" .CBL)
+    dep=$(grep "^$name " "$DEPS")
+    if [ "${dep#* }" = sub ]; then
+        printf "%-8s SUBPROGRAM    (built with the programs that call it)\n" "$name"
+        continue
+    fi
+    extra=""
+    for d in $(echo "$dep" | cut -d' ' -f3-); do extra="$extra -i $SRC/$d.CBL"; done
     total=$((total+1))
     dir="$WORK/$name"
     rm -rf "$dir"; mkdir -p "$dir"
@@ -36,7 +47,7 @@ for cbl in "$SRC"/$MODULE*.CBL; do
     if [ "$COMPILER" = gnucobol ]; then
         timeout 60 cobc -x -std=cobol85 -o "$dir/$name" "$cbl" > "$dir/compile.log" 2>&1
     elif [ -z "$ASSEMBLER" ]; then
-        timeout 20 ./bin/cobalt $COBALT_FLAGS -i "$cbl" -o "$dir/$name" > "$dir/compile.log" 2>&1
+        timeout 20 ./bin/cobalt $COBALT_FLAGS -i "$cbl" $extra -o "$dir/$name" > "$dir/compile.log" 2>&1
     else
         timeout 20 ./bin/cobalt $COBALT_FLAGS -A -i "$cbl" -o "$dir/$name.asm" > "$dir/compile.log" 2>&1 &&
         $ASSEMBLER -f elf64 "$dir/$name.asm" -o "$dir/$name.o" >> "$dir/compile.log" 2>&1 &&

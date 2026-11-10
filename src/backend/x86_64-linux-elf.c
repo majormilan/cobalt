@@ -36,6 +36,11 @@ static char *sanitize_label_name(const char *name) {
         sprintf(sanitized, "%c_%s", name[1] == 'f' ? 'F' : 'D', name + 2);
         return sanitized;
     }
+    if (name[0] == '@') {
+        // Storage of another program: "@symbol+12"
+        strcpy(sanitized, name + 1);
+        return sanitized;
+    }
     *d++ = 'c';
     *d++ = '_';
     for (const char *p = name; *p; p++) *d++ = (*p == '-') ? '_' : (char)toupper((unsigned char)*p);
@@ -1220,6 +1225,27 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     for (size_t r = 0; r < sizeof(runtime_routines) / sizeof(runtime_routines[0]); r++) {
         fprintf(f, "extern %s\n", runtime_routines[r]);
     }
+    // Storage of other programs ("@symbol" operands): GLOBAL items of a
+    // containing program
+    {
+        char *seen[512];
+        int nseen = 0;
+        for (IrInstr *x = ir->head; x; x = x->next) {
+            const char *ops[3] = { x->var_name, x->lit_name, x->op == IR_STORE_QWORD ? NULL : NULL };
+            for (int k = 0; k < 2; k++) {
+                const char *o = ops[k];
+                if (!o || o[0] != '@') continue;
+                size_t n = strcspn(o + 1, "+");
+                bool dup = false;
+                for (int j = 0; j < nseen && !dup; j++)
+                    dup = strlen(seen[j]) == n && strncmp(seen[j], o + 1, n) == 0;
+                if (dup || nseen >= 512) continue;
+                seen[nseen] = strndup(o + 1, n);
+                fprintf(f, "extern %s\n", seen[nseen++]);
+            }
+        }
+        for (int j = 0; j < nseen; j++) free(seen[j]);
+    }
     fprintf(f, "\n"); // Add a single newline for readability if preferred
 
     fprintf(f, "section .bss\n");
@@ -1227,6 +1253,7 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     while (i) {
         if (i->op == IR_DATA_VAR && i->var_name) {
             char *sanitized_name = sanitize_label_name(i->var_name);
+            if (i->symbol) fprintf(f, "global %s\n%s:\n", i->symbol, i->symbol);
             fprintf(f, "%s: resb %d\n", sanitized_name, i->size);
             free(sanitized_name);
         }
@@ -1236,12 +1263,20 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     int num_procs = 0;
     for (i = ir->head; i; i = i->next)
         if (i->op == IR_PROC_ENTRY && i->imm + 1 > num_procs) num_procs = (int)i->imm + 1;
+    fprintf(f, "L_rslots:\n");
     for (int p = 0; p < num_procs; p++) fprintf(f, "R_%d: resq 1\n", p);
+    fprintf(f, "L_rslots_end:\n");
+    if (ir->subprogram) {
+        fprintf(f, "L_entry_rsp: resq 1\n");      // the stack at the entry (EXIT PROGRAM)
+        fprintf(f, "L_prog_state: resq 1\n");     // 0: initialize on the next CALL
+    }
+    fprintf(f, "L_callargs: resq 64\n");          // CALL arguments
     // Address and length slots of field references computed at run time
     int num_slots = 0;
     for (i = ir->head; i; i = i->next)
         if ((i->op == IR_ADDR_SET || i->op == IR_LEN_SET || i->op == IR_UNSTRING_SLOTS) && i->imm + 1 > num_slots)
             num_slots = (int)i->imm + 1;
+    if (ir->addr_slots > num_slots) num_slots = ir->addr_slots;
     for (int k = 0; k < num_slots; k++) fprintf(f, "A_%d: resq 1\nN_%d: resq 1\n", k, k);
     for (i = ir->head; i; i = i->next) {
         if (i->op != IR_DATA_BSS) continue;
@@ -1311,6 +1346,7 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
         // fd, mode, size, flags, name, status, state, last mode, min size,
         // record length, key, key table, buffer (5), lock, LINAGE block,
         // private, key of reference, next, sort
+        if (i->symbol) fprintf(f, "align 8\nglobal %s\n%s:\n", i->symbol, i->symbol);
         fprintf(f, "align 8\n%s: dq 0, 0, %d, %d, %s, %s, 0, 0, %d, 0, 0, %s, 0, 0, 0, 0, 0, 0, 0, %s, 0, 0, 0, 0\n",
                 fcb, i->size, i->flags, name, status ? status : "0", i->digits,
                 keys ? keys : "0", linage ? linage : "0");
@@ -1338,14 +1374,25 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     }
     fprintf(f, "\n");
 
+    // A called program's descriptor, for the program table (runtime/ABI.md
+    // section 12): its name, the name's length, its entry, its state
+    if (ir->subprogram) {
+        fprintf(f, "L_progname: ");
+        emit_bytes(f, ir->program_name);
+        fprintf(f, "align 8\nglobal %s\n%s: dq L_progname, %zu, %s, L_prog_state\n",
+                ir->info_symbol, ir->info_symbol, strlen(ir->program_name), ir->entry_symbol);
+    }
+
     fprintf(f, "section .text\n");
-    fprintf(f, "global %s\n", target->entry_symbol);
-    fprintf(f, "%s:\n", target->entry_symbol);
-    fprintf(f, "    mov rdi, rsp\n");  // entry stack: argc, argv, environment
-    fprintf(f, "    mov rsi, %d\n", ir->runtime_flags);
-    fprintf(f, "    call runtime_init\n\n");
+    if (!ir->subprogram) {
+        fprintf(f, "global %s\n", target->entry_symbol);
+        fprintf(f, "%s:\n", target->entry_symbol);
+        fprintf(f, "    mov rdi, rsp\n");  // entry stack: argc, argv, environment
+        fprintf(f, "    mov rsi, %d\n", ir->runtime_flags);
+        fprintf(f, "    call runtime_init\n\n");
+    }
     vs_n = 0;
-    tgt_zero = val_zero = true;     // .bss starts zeroed
+    tgt_zero = val_zero = !ir->subprogram;     // .bss starts zeroed
 
     i = ir->head;
 
@@ -1497,6 +1544,99 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 break;
             case IR_CALL_EXIT:
                 fprintf(f, "    call runtime_exit\n");
+                break;
+            case IR_PROGRAM_ENTRY:
+                // Called with rdi = the number of arguments, rsi = their
+                // addresses; the caller's callee-saved registers are kept
+                fprintf(f, "global %s\n%s:\n", ir->entry_symbol, ir->entry_symbol);
+                fprintf(f, "    push rbp\n    push rbx\n    push r12\n    push r13\n    push r14\n    push r15\n");
+                fprintf(f, "    sub rsp, 8\n");
+                fprintf(f, "    mov [rel L_entry_rsp], rsp\n");
+                for (int k = 0; k < ir->nusing; k++) {
+                    fprintf(f, "    xor eax, eax\n");
+                    fprintf(f, "    cmp rdi, %d\n", k);
+                    fprintf(f, "    jbe L_arg_%d\n", k);
+                    fprintf(f, "    mov rax, [rsi + %d]\n", 8 * k);
+                    fprintf(f, "L_arg_%d:\n", k);
+                    fprintf(f, "    mov [rel A_%d], rax\n", ir->using_slots[k]);
+                }
+                fprintf(f, "    mov byte [rel cobrt_tgt_err], 0\n");
+                fprintf(f, "    mov byte [rel cobrt_val_err], 0\n");
+                if (!ir->initial) {
+                    fprintf(f, "    cmp qword [rel L_prog_state], 0\n");
+                    fprintf(f, "    jne %s\n", sanitized_jump);
+                }
+                fprintf(f, "    mov qword [rel L_prog_state], 1\n");
+                tgt_zero = val_zero = true;
+                break;
+            case IR_RESET_PERFORM:
+                fprintf(f, "    lea rdi, [rel L_rslots]\n");
+                fprintf(f, "    lea rcx, [rel L_rslots_end]\n");
+                fprintf(f, "    sub rcx, rdi\n");
+                fprintf(f, "    shr rcx, 3\n");
+                fprintf(f, "    xor eax, eax\n");
+                fprintf(f, "    rep stosq\n");
+                break;
+            case IR_EXIT_PROGRAM:
+                if (!ir->subprogram) break;     // no effect in the main program
+                fprintf(f, "    mov rsp, [rel L_entry_rsp]\n");
+                fprintf(f, "    add rsp, 8\n");
+                fprintf(f, "    pop r15\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n");
+                fprintf(f, "    xor eax, eax\n");
+                fprintf(f, "    ret\n");
+                break;
+            case IR_USE_ENTRY:
+                fprintf(f, "global %s\n%s:\n", i->var_name, i->var_name);
+                fprintf(f, "    push rbp\n    push rbx\n    push r12\n    push r13\n    push r14\n    push r15\n");
+                fprintf(f, "    sub rsp, 8\n");
+                tgt_zero = val_zero = false;
+                break;
+            case IR_USE_RETURN:
+                fprintf(f, "    add rsp, 8\n");
+                fprintf(f, "    pop r15\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n");
+                fprintf(f, "    ret\n");
+                break;
+            case IR_CALL_USE:
+                fprintf(f, "    call %s\n", i->var_name + 1);
+                tgt_zero = val_zero = false;
+                break;
+            case IR_EXTERNAL: {
+                char *lit = sanitize_label_name(i->lit_name);
+                fprintf(f, "    lea rdi, [%s]\n", lit);
+                fprintf(f, "    mov rsi, %d\n", i->lit_len);
+                fprintf(f, "    mov rdx, %d\n", i->size);
+                if (i->content) emit_addr(f, "rcx", i->content);
+                else fprintf(f, "    xor ecx, ecx\n");
+                fprintf(f, "    call runtime_external\n");
+                fprintf(f, "    mov [rel A_%lld], rax\n", i->imm);
+                free(lit);
+                break;
+            }
+            case IR_CALL_ARG:
+                emit_addr(f, "rax", i->var_name);
+                fprintf(f, "    mov [rel L_callargs + %lld], rax\n", 8 * i->imm);
+                break;
+            case IR_CALL_PROGRAM:
+            case IR_CANCEL_PROGRAM:
+                if (i->lit_name) {
+                    char *lit = sanitize_label_name(i->lit_name);
+                    fprintf(f, "    lea rdi, [%s]\n", lit);
+                    fprintf(f, "    mov rsi, %d\n", i->lit_len);
+                    free(lit);
+                } else {
+                    emit_addr(f, "rdi", i->var_name);
+                    emit_size(f, "rsi", i->size);
+                }
+                if (i->op == IR_CANCEL_PROGRAM) {
+                    fprintf(f, "    call runtime_cancel\n");
+                    break;
+                }
+                fprintf(f, "    mov rdx, %lld\n", i->imm);
+                fprintf(f, "    lea rcx, [rel L_callargs]\n");
+                fprintf(f, "    mov r8, %d\n", i->flags);
+                fprintf(f, "    call runtime_call\n");
+                fprintf(f, "    mov [rel cobrt_io_status], rax\n");
+                tgt_zero = val_zero = false;    // the program called may leave them set
                 break;
             case IR_JUMP:
                 if (promo.loop && i == promo.loop->back && promo.test) {

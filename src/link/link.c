@@ -564,3 +564,42 @@ done:
     namemap_free(&lk.globals);
     return lk.errors == 0;
 }
+
+// The names of the global symbols that object defines and that start with
+// prefix (a list the caller frees); returns their number
+int link_object_globals(const LinkObject *obj, const char *prefix, char ***names) {
+    *names = NULL;
+    const uint8_t *d = obj->data;
+    if (obj->size < 64 || memcmp(d, "\177ELF", 4) != 0 || d[4] != 2) return 0;
+    uint64_t shoff = rd64(d + 40);
+    uint16_t shentsize = rd16(d + 58), shnum = rd16(d + 60);
+    if (shoff + (uint64_t)shnum * shentsize > obj->size) return 0;
+    int count = 0, cap = 0;
+    size_t plen = strlen(prefix);
+    for (int k = 0; k < shnum; k++) {
+        const uint8_t *sh = d + shoff + (uint64_t)k * shentsize;
+        if (rd32(sh + 4) != SHT_SYMTAB) continue;
+        uint64_t off = rd64(sh + 24), size = rd64(sh + 32), entsize = rd64(sh + 56);
+        uint32_t link = rd32(sh + 40);
+        if (link >= shnum || entsize < 24 || off + size > obj->size) continue;
+        const uint8_t *str_sh = d + shoff + (uint64_t)link * shentsize;
+        uint64_t str_off = rd64(str_sh + 24), str_size = rd64(str_sh + 32);
+        if (str_off + str_size > obj->size) continue;
+        const char *strtab = (const char *)d + str_off;
+        for (uint64_t e = 0; e + entsize <= size; e += entsize) {
+            const uint8_t *sym = d + off + e;
+            uint32_t name = rd32(sym);
+            uint8_t bind = sym[4] >> 4;
+            uint16_t shndx = rd16(sym + 6);
+            if (bind != STB_GLOBAL || shndx == SHN_UNDEF || name >= str_size) continue;
+            const char *nm = strtab + name;
+            if (strncmp(nm, prefix, plen) != 0) continue;
+            if (count == cap) {
+                cap = cap ? cap * 2 : 8;
+                *names = realloc(*names, (size_t)cap * sizeof(char *));
+            }
+            (*names)[count++] = strdup(nm);
+        }
+    }
+    return count;
+}

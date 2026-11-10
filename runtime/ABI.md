@@ -603,3 +603,53 @@ length slot, so the receivers' MOVE rules apply, then stores COUNT IN,
 TALLYING IN and the pointer. Characters left unexamined after the last
 receiver are an overflow.
 
+
+## 12. Programs and CALL [implemented]
+
+A run unit is the main program and the programs it calls. cobalt compiles
+every program of its sources (`-i`, or source arguments; objects `.o` link
+in too): the first program of the first source is the main program, the
+executable's entry (`--module`: none is, for objects of called programs).
+Each program, nested programs included, becomes an object of its own, so
+the labels of generated code never meet; a table of the called programs,
+`cobrt_program_table`, is generated for the executable.
+
+**Called programs.** A program that is not the main program has an entry
+`cob_<NAME>` (its PROGRAM-ID in upper case, other characters than letters
+and digits as `_`) and a descriptor `cobinfo_<NAME>`: the address of its
+name, the name's length, its entry, the address of its state qword (0:
+initialize it on the next CALL). The entry takes ARG0 = the number of
+arguments and ARG1 = the address of an array of their addresses; it saves
+the callee-saved registers, keeps the stack at the entry for EXIT PROGRAM,
+stores the addresses of the PROCEDURE DIVISION USING items in their address
+slots, initializes the program on its first CALL (every CALL for an INITIAL
+program, the first after a CANCEL), and marks no PERFORM active. EXIT
+PROGRAM, and the end of the PROCEDURE DIVISION, return to the caller; in the
+main program EXIT PROGRAM has no effect. STOP RUN ends the run unit from any
+program.
+
+**LINKAGE SECTION** records have no storage: their items are reached
+through an address slot (`*A_<n>+offset` operands) set from the arguments.
+
+**CALL** `runtime_call(name, length, argc, argv, flags)` finds the program
+by name (case and trailing spaces ignored) in the table and calls it; it
+returns 0, or 1 when there is no such program and the CALL has ON EXCEPTION
+or ON OVERFLOW (flags 1); otherwise the run ends with a message. BY
+REFERENCE passes the item's address, BY CONTENT the address of a copy.
+`runtime_cancel(name, length)` sets the program's state to 0.
+
+**GLOBAL** items and files of a program are visible in the programs it
+contains: the containing program defines a global symbol for each such
+record (`cobgg_<PROGRAM>_<NAME>`), file control block (`cobgf_...`) and
+file record area (`cobgr_...`), and the contained programs use them
+(`@symbol+offset` operands). A name of a program's own hides them. A USE
+GLOBAL declarative gets an entry `cobuse_<PROGRAM>_<n>` that performs it;
+the contained programs call it after an unsuccessful I-O statement that no
+USE procedure of their own covers.
+
+**EXTERNAL** records and files are shared by name across the run unit:
+`runtime_external(name, length, size, template)` returns the storage of
+that name, allocated (zeroed, or a copy of the template: a file's control
+block) by the first program that asks; programs reach it through an
+address slot set at initialization. A program stores the address of its
+FILE STATUS item into a shared file control block before each operation.

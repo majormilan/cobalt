@@ -145,6 +145,22 @@ typedef enum {
     IR_UNSTRING_END,        // all receivers done: overflow if characters remain
     IR_UNSTRING_OVERFLOW,   // cobrt_stmt_err = the overflow condition of state var_name
     IR_SWITCH_SET,          // set switch imm on (flags 1) / off (0)
+    IR_PROGRAM_ENTRY,       // a subprogram's entry (instead of IR_CALL_INIT): jumps to
+                            //   jump_target when it needs no initialization
+    IR_RESET_PERFORM,       // no PERFORM is active (the return slots are cleared)
+    IR_EXIT_PROGRAM,        // return to the caller (a no-op in the main program)
+    IR_CALL_ARG,            // CALL argument imm is the address of var_name
+    IR_CALL_PROGRAM,        // CALL the program named by lit_name (lit_len bytes) or by
+                            //   the field var_name (size), with imm arguments; status 1 in
+                            //   cobrt_io_status when it does not exist and flags = 1 (ON
+                            //   EXCEPTION given), else the run ends
+    IR_CANCEL_PROGRAM,      // CANCEL the program named as for IR_CALL_PROGRAM
+    IR_USE_ENTRY,           // the entry var_name (a global symbol) of a USE GLOBAL section,
+                            //   for the programs nested in this one; then its IR_PERFORM
+    IR_USE_RETURN,          //   and the return to the program whose I-O raised it
+    IR_CALL_USE,            // call the USE GLOBAL entry var_name ("@symbol")
+    IR_EXTERNAL,            // A_<imm> = the EXTERNAL storage named lit_name (lit_len bytes)
+                            //   of size bytes; content: a template it starts as (or NULL)
     IR_SIZE_ERR_CLEAR,      // start of a statement that stores numeric results
     IR_JUMP_IF_NO_SIZE_ERR, // jump to jump_target if no size error since the clear
 } IrOpcode;
@@ -165,6 +181,7 @@ struct IrInstr {
     AstUsageType usage_type;
     const char *cmp_op;         // comparison operator string
     const char *jump_target;    // label to jump to
+    const char *symbol;         // IR_DATA_VAR, IR_DATA_FILE: also a global symbol for it
     IrInstr *next;
 };
 
@@ -172,9 +189,28 @@ typedef struct {
     IrInstr *head;
     IrInstr *tail;
     int runtime_flags;          // IR_RT_* settings for runtime_init
+    // Inter-program communication (runtime/ABI.md section 12)
+    bool subprogram;            // entered by CALL (else the run unit's main program)
+    char *program_name;         // PROGRAM-ID
+    char *entry_symbol;         // global entry of a subprogram
+    char *info_symbol;          // global program descriptor (for the program table)
+    bool initial;               // INITIAL program: initialized on every CALL
+    int nusing;                 // PROCEDURE DIVISION USING: address slot of each
+    int using_slots[64];
+    int addr_slots;             // address slots used (A_0 ...)
 } IrProgram;
 
-IrProgram *lower_to_ir(AstNode *program, const Dialect *dialect);
+// How a program is compiled
+typedef struct {
+    bool main;                  // the run unit's main program (the executable's entry)
+    AstNode *ancestors[16];     // the programs containing it, innermost first: their
+    int nancestors;             //   GLOBAL items and files are visible in it
+} IrUnit;
+
+IrProgram *lower_to_ir(AstNode *program, const Dialect *dialect, const IrUnit *unit);
+
+// The symbol names of a program's entry and descriptor
+void ir_program_symbols(const char *program_name, char *entry, char *info, size_t size);
 
 void ir_free(IrProgram *ir);
 

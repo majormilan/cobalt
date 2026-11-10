@@ -63,9 +63,10 @@ def substitute(line):
     # (columns 73-80) in place: a value of another length is padded with, or
     # takes the place of, trailing spaces of the area
     area, rest = line[:72], line[72:]
-    # XXXXDnnn and XXXXPnnn name the same file as XXXXXnnn
-    area = re.sub(r"XXXX[DP](\d{3})", r"XXXXX\1", area)
-    new = re.sub(r"XXXXX(\d{3})", repl, area)
+    # XXXXDnnn and XXXXPnnn name the same file as XXXXXnnn; a longer run of
+    # X (a literal of the test data) is not an X-card
+    area = re.sub(r"(?<![A-Z0-9])XXXX[DP](\d{3})(?![0-9])", r"XXXXX\1", area)
+    new = re.sub(r"(?<![A-Z0-9])XXXXX(\d{3})(?![0-9])", repl, area)
     if new != area and rest:
         new = new.rstrip().ljust(72) if len(new.rstrip()) <= 72 else new
     return new + rest
@@ -81,7 +82,8 @@ def main():
             line = line.rstrip("\r\n")
             if line.startswith("*HEADER,"):
                 parts = line.split(",")
-                members.append([parts[1].strip(), parts[2].strip(), []])
+                # (some headers have more after the name)
+                members.append([parts[1].strip(), parts[2].split()[0], []])
                 continue
             if line.startswith("*END-OF,"):
                 continue
