@@ -202,6 +202,7 @@ static const char *line_of(File *f, int line, int *len) {
 // ---------------------------------------------------------------- output
 
 static bool last_shown;         // whether notes of the last diagnostic are shown
+static bool any_located;        // a diagnostic about a source was given (for the summary)
 
 static bool word_char(char c) {
     return isalnum((unsigned char)c) || c == '-' || c == '_';
@@ -248,6 +249,7 @@ static void show_inclusion(SourceLocation loc) {
 }
 
 static void location_prefix(SourceLocation loc) {
+    any_located = true;
     const char *name = loc.filename ? loc.filename : current_filename;
     if (name && loc.line > 0) fprintf(stderr, "%s%s:%d:%d:%s ", BOLD, name, loc.line, loc.column, RESET);
     else if (name) fprintf(stderr, "%s%s:%s ", BOLD, name, RESET);
@@ -379,7 +381,7 @@ bool diag_extension(ExtensionOwner owner, SourceLocation loc, const char *fmt, .
 }
 
 void diag_summary(void) {
-    if (!error_count && !warning_count) return;
+    if (!any_located || (!error_count && !warning_count)) return;
     char e[32] = "", w[32] = "";
     if (error_count) snprintf(e, sizeof(e), "%d error%s", error_count, error_count == 1 ? "" : "s");
     if (warning_count) snprintf(w, sizeof(w), "%d warning%s", warning_count, warning_count == 1 ? "" : "s");

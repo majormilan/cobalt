@@ -80,10 +80,3 @@ const char *strictness_name(Strictness s) {
     }
 }
 
-const char *extensions_name(Extensions e) {
-    switch (e) {
-        case EXT_NONE:              return "none";
-        case EXT_COBALT_BASIC:      return "cobalt-basic";
-        default:                    return "unknown";
-    }
-}

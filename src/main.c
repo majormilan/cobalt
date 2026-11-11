@@ -12,10 +12,13 @@
 #include "link.h"
 #include <stdint.h>
 #include <stdio.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
 #include "pp.h"
+#include "version.h"
+#include <strings.h>
 #include <unistd.h>
 
 char *current_filename = NULL;
@@ -69,11 +72,13 @@ static char *read_file(const char *path) {
     return buf;
 }
 
+// Only COBOL-85 is compiled in this release
 static Standard parse_standard(const char *s) {
-    if (!strcmp(s, "COBOL-85")) return STD_COBOL85;
-    if (!strcmp(s, "COBOL-2002")) return STD_COBOL2002;
-    if (!strcmp(s, "COBOL-2014")) return STD_COBOL2014;
-    cobalt_error("Unknown COBOL standard: %s", s);
+    if (!strcasecmp(s, "COBOL-85") || !strcasecmp(s, "COBOL85") || !strcmp(s, "85")) return STD_COBOL85;
+    if (!strcasecmp(s, "COBOL-2002") || !strcasecmp(s, "COBOL-2014"))
+        cobalt_error("%s is not supported in this release: cobalt compiles COBOL-85", s);
+    else
+        cobalt_error("Unknown COBOL standard '%s' (this release compiles COBOL-85)", s);
     exit(1);
 }
 
@@ -86,52 +91,54 @@ static Strictness parse_strictness(const char *s) {
     exit(1);
 }
 
-static Extensions parse_extensions(const char *s) {
-    if (!strcmp(s, "none")) return EXT_NONE;
-    if (!strcmp(s, "cobalt-basic")) return EXT_COBALT_BASIC;
-    cobalt_error("Unknown extension: %s", s);
-    exit(1);
+static void print_version(void) {
+    printf("cobalt %s\n", COBALT_VERSION);
+    printf("Target: x86_64-linux-elf; built %s\n", __DATE__);
+    printf("COBOL-85 compiler with a built-in assembler and linker. MIT license.\n");
 }
 
 static void print_help(const char *progname) {
-    printf("COBALT - tiny COBOL compiler\n\n");
-    printf("Usage: %s [OPTIONS] -i <input.cbl>\n\n", progname);
+    printf("cobalt %s: a COBOL-85 compiler\n\n", COBALT_VERSION);
+    printf("Usage: %s [options] source.cbl... [object.o...]\n\n", progname);
+    printf("The sources (and objects) make one run unit: by default an executable named\n");
+    printf("after the first source, assembled and linked by cobalt itself.\n\n");
 
-    printf("Required:\n");
-    printf("  -i, --input FILE       Input COBOL source file (.cbl); several sources, or\n");
-    printf("                         source and object arguments, make one run unit\n");
-    printf("  --module               No main program: every program is a called one\n");
+    printf("Input:\n");
+    printf("  -i, --input FILE       A source (the same as giving it as an argument)\n");
+    printf("  --fixed                Fixed reference format, columns 8-72 (default)\n");
+    printf("  -F, --free             Free-form reference format (an extension)\n");
+    printf("  -I DIR                 Copy library directory (also COBCPY=dir:dir...)\n");
+    printf("  --module               No main program: every program is a called one\n\n");
+
+    printf("Output:\n");
+    printf("  -o FILE                Output file (default: the first source's name without\n");
+    printf("                         its extension; .o with -c, .asm with -A)\n");
+    printf("  -c                     Compile to an object file only\n");
+    printf("  -A, --asm              Compile to assembly only (NASM syntax)\n");
+    printf("  --strip                Executable without symbols\n");
+    printf("  -t, --target TRIPLE    Target (default: x86_64-linux-elf)\n");
+    for (int t = 0; t < TARGET_COUNT; t++) {
+        if (backend_supports(&target_infos[t])) printf("        %s\n", target_infos[t].name);
+        else printf("        %-24s (not yet supported)\n", target_infos[t].name);
+    }
     printf("\n");
 
-    printf("Mode control:\n");
-    printf("  -S, --std STANDARD     COBOL standard (default: COBOL-85)\n");
-    printf("      Supported:\n");
-    printf("        COBOL-85       (default)\n");
-    printf("        COBOL-2002\n");
-    printf("        COBOL-2014\n");
-    printf("  -D, --dialect NAME     Vendor dialect on top of the standard (default: standard)\n");
-    printf("      Supported:\n");
-    printf("        standard       (default) the standard's rules\n");
-    printf("        ibm            IBM Enterprise COBOL\n");
-    printf("        gnucobol       GnuCOBOL\n");
-    printf("        microfocus     Micro Focus COBOL\n");
-    printf("  -f KEY=VALUE           Override one dialect setting (after --dialect):\n");
-    printf("        display=stored|pretty        numeric DISPLAY format\n");
-    printf("        sign=ascii|ebcdic            overpunched sign encoding\n");
-    printf("        binary-truncate=yes|no       COMP items limited to PICTURE digits\n");
+    printf("Language:\n");
+    printf("  -S, --std STANDARD     COBOL-85 (the only one in this release)\n");
     printf("  -X, --strictness LEVEL What is done with elements outside COBOL-85 (default: normal)\n");
     printf("        relaxed        accepted; reference format (areas, column 72) not checked\n");
     printf("        normal         accepted, each with a warning (-Wextension)\n");
     printf("        pedantic       errors; obsolete elements are flagged too (-Wobsolete)\n");
     printf("        ibm-strict     as pedantic, but IBM Enterprise COBOL's extensions are accepted\n");
-    printf("  -E, --extensions EXT   Enable compiler extensions (default: none)\n");
-    printf("      Supported:\n");
-    printf("        none           (default)\n");
-    printf("        cobalt-basic\n");
-    printf("  --fixed                Fixed reference format: columns 8-72 (default)\n");
-    printf("  -F, --free             Free format source\n");
-    printf("  -I DIR                 Copy library directory (also: COBCPY=dir:dir...)\n");
-    printf("  -a                     Always dump AST (debug parsing)\n\n");
+    printf("  -D, --dialect NAME     How implementor-defined behavior works (default: standard)\n");
+    printf("        standard       the standard's rules\n");
+    printf("        ibm            IBM Enterprise COBOL\n");
+    printf("        gnucobol       GnuCOBOL\n");
+    printf("        microfocus     Micro Focus COBOL\n");
+    printf("  -f KEY=VALUE           One dialect setting (after -D):\n");
+    printf("        display=stored|pretty        numeric DISPLAY format\n");
+    printf("        sign=ascii|ebcdic            overpunched sign encoding\n");
+    printf("        binary-truncate=yes|no       COMP items limited to PICTURE digits\n\n");
 
     printf("Diagnostics:\n");
     printf("  -Wname, -Wno-name      Turn the warning on or off (names below)\n");
@@ -146,34 +153,20 @@ static void print_help(const char *progname) {
     diag_print_warning_help();
     printf("\n");
 
-    printf("Output (the default is an executable, assembled and linked by cobalt):\n");
-    printf("  -o FILE                Output file (default: the input name without .cbl,\n");
-    printf("                         .o with -c, .asm with -A)\n");
-    printf("  -c                     Compile to an object file only\n");
-    printf("  -A, --asm              Compile to assembly only (NASM syntax)\n");
-    printf("  --strip                Executable without symbols\n\n");
+    printf("Other:\n");
+    printf("  -a                     Dump the syntax tree (debugging cobalt)\n");
+    printf("  --version              Version and target\n");
+    printf("  --help                 This help\n");
+    printf("  %s as [-f elf64] [-D NAME[=value]] [-I dir/] [-MD file] [-MP] [-o out.o] in.asm\n", progname);
+    printf("                         The built-in assembler (NASM syntax)\n\n");
 
-    printf("Assembler:\n");
-    printf("  %s as [-f elf64] [-D NAME[=value]] [-I dir/] [-MD file] [-MP] [-o out.o] in.asm\n\n", progname);
-
-    printf("Target control:\n");
-    printf("  -t, --target TRIPLE    Target triple (default: x86_64-linux-elf)\n");
-    printf("      Known:\n");
-    for (int t = 0; t < TARGET_COUNT; t++) {
-        if (backend_supports(&target_infos[t]))
-            printf("        %s\n", target_infos[t].name);
-        else
-            printf("        %-24s (not yet supported)\n", target_infos[t].name);
-    }
-    printf("\n");
-
-    printf("Debug:\n");
-    printf("  --help                 Show this help\n\n");
+    printf("Exit status: 0 on success, 1 after errors.\n\n");
 
     printf("Examples:\n");
-    printf("  %s -i hello.cbl                    # executable ./hello\n", progname);
-    printf("  %s -i hello.cbl -o bin/hello -A    # assembly bin/hello (NASM syntax)\n", progname);
-    printf("  %s -i hello.cbl -c                 # object hello.o\n", progname);
+    printf("  %s hello.cbl                       # executable ./hello\n", progname);
+    printf("  %s main.cbl sub.cbl -o payroll     # two sources, one executable\n", progname);
+    printf("  %s -X pedantic -Wextra hello.cbl   # strict COBOL-85, all warnings\n", progname);
+    printf("  %s -c hello.cbl                    # object hello.o\n", progname);
 }
 
 int main(int argc, char **argv) {
@@ -182,6 +175,10 @@ int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "as") == 0) return asm_command(argc - 1, argv + 1);
     if (argc == 1 || strcmp(argv[1], "--help") == 0) {
         print_help(argv[0]);
+        return 0;
+    }
+    if (strcmp(argv[1], "--version") == 0) {
+        print_version();
         return 0;
     }
 
@@ -200,7 +197,6 @@ int main(int argc, char **argv) {
     CompilerMode mode = {
         .std = STD_COBOL85,
         .strictness = STRICT_NORMAL,
-        .extensions = EXT_NONE
     };
     dialect_select(&mode.dialect, "standard");
 
@@ -214,7 +210,6 @@ int main(int argc, char **argv) {
         {"target",      required_argument, 0, 't'},
         {"std",         required_argument, 0, 'S'},
         {"strictness",  required_argument, 0, 'X'},
-        {"extensions",  required_argument, 0, 'E'},
         {"free",        no_argument,       0, 'F'},
         {"fixed",       no_argument,       0, 'R'},
         {"dialect",     required_argument, 0, 'D'},
@@ -222,11 +217,13 @@ int main(int argc, char **argv) {
         {"strip",       no_argument,       0, 0},
         {"module",      no_argument,       0, 'M'},
         {"flag-obsolete", no_argument,     0, 0},
-        {"help",        no_argument,       0, 0}, // Handled separately
+        {"help",        no_argument,       0, 0},
+        {"version",     no_argument,       0, 0},
         {0, 0, 0, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "i:o:t:S:X:E:D:f:I:W:wcaAFM", long_options, &opt_index)) != -1) {
+    opterr = 0;
+    while ((opt = getopt_long(argc, argv, ":i:o:t:S:X:D:f:I:W:wcaAFM", long_options, &opt_index)) != -1) {
         switch (opt) {
             case 'i':
                 if (nsources < 64) sources[nsources++] = optarg;
@@ -242,7 +239,6 @@ int main(int argc, char **argv) {
                 break;
             case 'S': mode.std = parse_standard(optarg); break;
             case 'X': mode.strictness = parse_strictness(optarg); break;
-            case 'E': mode.extensions = parse_extensions(optarg); break;
             case 'D':
                 if (!dialect_select(&mode.dialect, optarg)) {
                     cobalt_error("Unknown dialect: %s (see --help)", optarg);
@@ -277,12 +273,35 @@ int main(int argc, char **argv) {
                     print_help(argv[0]);
                     return 0;
                 }
+                if (strcmp(long_options[opt_index].name, "version") == 0) {
+                    print_version();
+                    return 0;
+                }
                 if (strcmp(long_options[opt_index].name, "strip") == 0) strip = true;
                 if (strcmp(long_options[opt_index].name, "flag-obsolete") == 0) mode.flag_obsolete = true;
                 break;
-            default:
-                cobalt_error("Unknown option -%c", optopt);
+            case ':':
+                cobalt_error("Option '%s' needs a value", argv[optind - 1]);
                 return 1;
+            default: {
+                // getopt's own message is off (opterr = 0): name the option
+                const char *arg = optopt ? NULL : argv[optind - 1];
+                if (optopt) {
+                    cobalt_error("Unknown option '-%c' (see --help)", optopt);
+                    return 1;
+                }
+                char name[128];
+                snprintf(name, sizeof(name), "%s", arg + (arg[1] == '-' ? 2 : 1));
+                char *eq = strchr(name, '=');
+                if (eq) *eq = '\0';
+                const char *names[64];
+                int n = 0;
+                for (int k = 0; long_options[k].name && n < 64; k++) names[n++] = long_options[k].name;
+                const char *near = diag_closest(name, names, n);
+                if (near) cobalt_error("Unknown option '%s'; did you mean '--%s'?", arg, near);
+                else cobalt_error("Unknown option '%s' (see --help)", arg);
+                return 1;
+            }
         }
     }
 
@@ -304,13 +323,13 @@ int main(int argc, char **argv) {
         }
     }
     if (nsources == 0) {
-        cobalt_error("Missing required -i <input_file>");
+        cobalt_error("No source to compile (usage: cobalt [options] source.cbl...; see --help)");
         return 1;
     }
     input_file = (char *)sources[0];
     for (int k = 0; k < nsources; k++) {
         if (access(sources[k], R_OK) != 0) {
-            cobalt_error("Input file not readable: %s", sources[k]);
+            cobalt_error("Cannot read '%s': %s", sources[k], strerror(errno));
             return 1;
         }
     }

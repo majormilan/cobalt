@@ -88,7 +88,7 @@ failures; RW and CM are not implemented.
 ## 4. Documentation
 
 - [x] **4.1 LICENSE** (MIT).
-- [ ] **4.2 README.** What cobalt is, status (alpha, COBOL-85), supported
+- [x] **4.2 README.** What cobalt is, status (alpha, COBOL-85), supported
   platforms, install, a first program, links to the docs, license.
 - [ ] **4.3 User guide** (`docs/`):
   - [ ] getting started (install, compile, run, several sources, CALL)
@@ -130,19 +130,19 @@ failures; RW and CM are not implemented.
 
 ## 6. Command line
 
-- [ ] **6.1 `--version`** (version, target, build date).
-- [ ] **6.2 Options without effect** hidden or rejected: `-S COBOL-2002`,
+- [x] **6.1 `--version`** (version, target, build date).
+- [x] **6.2 Options without effect** hidden or rejected: `-S COBOL-2002`,
   `-S COBOL-2014`, `-E cobalt-basic`.
-- [ ] **6.3 Unknown options** named in the error (an unknown long option
+- [x] **6.3 Unknown options** named in the error (an unknown long option
   now prints `Unknown option -`), with a "did you mean".
-- [ ] **6.4 `--help` accurate:** `-i` is not required (sources may be
+- [x] **6.4 `--help` accurate:** `-i` is not required (sources may be
   arguments), every option listed once.
-- [ ] **6.5 Exit status** of the compiler documented (0 success, 1 errors).
+- [x] **6.5 Exit status** of the compiler documented (0 success, 1 errors).
 
 ## 7. Packaging and release
 
-- [ ] **7.1 Version number** in one place (`0.1.0-alpha`), shown by
-  `--version` and in the release notes.
+- [ ] **7.1 Version number** in one place (`0.1.0-alpha`, `include/version.h`),
+  shown by `--version` and in the release notes.
 - [ ] **7.2 `make install`** (PREFIX, DESTDIR): the `cobalt` binary, man
   page or docs, a copybook directory searched by default.
 - [ ] **7.3 Release builds:** `cobalt-0.1.0-alpha-linux-x86_64.tar.gz`
