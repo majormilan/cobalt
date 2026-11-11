@@ -1,0 +1,22 @@
+tests/diag/extensions.cbl:7:42: warning: USAGE COMP-3 is an extension to COBOL-85 [-Wextension]
+     7 |        01  PACKED-AMOUNT    PIC S9(7)V99 COMP-3.
+       |                                          ^~~~~~
+note: the standard name of this usage is PACKED-DECIMAL
+tests/diag/extensions.cbl:8:42: warning: USAGE COMP-5 is an extension to COBOL-85 [-Wextension]
+     8 |        01  NATIVE-COUNT     PIC 9(9)     COMP-5.
+       |                                          ^~~~~~
+note: COMP-5 is native binary; BINARY is the standard usage
+tests/diag/extensions.cbl:11:12: warning: The underscore in 'CUSTOMER_NAME' is an extension to COBOL-85 [-Wextension]
+    11 |        01  CUSTOMER_NAME    PIC X(10)    VALUE 'SMITH'.
+       |            ^~~~~~~~~~~~~
+tests/diag/extensions.cbl:11:48: warning: A nonnumeric literal in apostrophes is an extension to COBOL-85 [-Wextension]
+    11 |        01  CUSTOMER_NAME    PIC X(10)    VALUE 'SMITH'.
+       |                                                ^~~~~~~
+tests/diag/extensions.cbl:12:12: warning: The 36-character word 'A-VERY-LONG-DATA-NAME-OF-THIRTY-FIVE' is an extension to COBOL-85 [-Wextension]
+    12 |        01  A-VERY-LONG-DATA-NAME-OF-THIRTY-FIVE PIC X.
+       |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+note: COBOL-85 words have at most 30 characters
+tests/diag/extensions.cbl:15:35: warning: ACCEPT FROM DATE YYYYMMDD is an extension to COBOL-85 [-Wextension]
+    15 |            ACCEPT TODAY FROM DATE YYYYMMDD.
+       |                                   ^~~~~~~~
+6 warnings generated.

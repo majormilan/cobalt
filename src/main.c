@@ -82,7 +82,7 @@ static Strictness parse_strictness(const char *s) {
     if (!strcmp(s, "normal")) return STRICT_NORMAL;
     if (!strcmp(s, "pedantic")) return STRICT_PEDANTIC;
     if (!strcmp(s, "ibm-strict")) return STRICT_IBM;
-    cobalt_error("Unknown strictness level: %s", s);
+    cobalt_error("Unknown strictness level '%s' (relaxed, normal, pedantic or ibm-strict)", s);
     exit(1);
 }
 
@@ -171,6 +171,7 @@ static void print_help(const char *progname) {
 
 int main(int argc, char **argv) {
     reset_diagnostics();
+    atexit(diag_summary);
     if (argc > 1 && strcmp(argv[1], "as") == 0) return asm_command(argc - 1, argv + 1);
     if (argc == 1 || strcmp(argv[1], "--help") == 0) {
         print_help(argv[0]);
@@ -218,7 +219,7 @@ int main(int argc, char **argv) {
         {0, 0, 0, 0}
     };
 
-    while ((opt = getopt_long(argc, argv, "i:o:t:S:X:E:D:f:I:caAFM", long_options, &opt_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "i:o:t:S:X:E:D:f:I:W:wcaAFM", long_options, &opt_index)) != -1) {
         switch (opt) {
             case 'i':
                 if (nsources < 64) sources[nsources++] = optarg;
@@ -242,8 +243,20 @@ int main(int argc, char **argv) {
                 }
                 break;
             case 'f':
-                if (!dialect_set_option(&mode.dialect, optarg)) return 1;
+                if (strncmp(optarg, "max-errors", 10) == 0 || strncmp(optarg, "diagnostics-color", 17) == 0 ||
+                    strncmp(optarg, "no-diagnostics-color", 20) == 0) {
+                    char arg[256];
+                    snprintf(arg, sizeof(arg), "-f%s", optarg);
+                    if (!diag_option(arg)) return 1;
+                } else if (!dialect_set_option(&mode.dialect, optarg)) return 1;
                 break;
+            case 'W': {
+                char arg[256];
+                snprintf(arg, sizeof(arg), "-W%s", optarg);
+                if (!diag_option(arg)) return 1;
+                break;
+            }
+            case 'w': diag_option("-w"); break;
             case 'F': mode.free_format = true; break;
             case 'I':
                 if (ncopy_dirs < 32) copy_dirs[ncopy_dirs++] = optarg;
@@ -265,6 +278,10 @@ int main(int argc, char **argv) {
                 return 1;
         }
     }
+
+    diag_set_strictness(mode.strictness);
+    if (mode.flag_obsolete) diag_option("-Wobsolete");
+    if (mode.free_format && !diag_extension(EXT_ANY, (SourceLocation){0}, "Free-form reference format (-F)")) return 1;
 
     if (!backend_supports(target)) {
         cobalt_error("Target %s is not supported yet", target->name);
@@ -300,6 +317,8 @@ int main(int argc, char **argv) {
     for (int k = 0; k < nsources; k++) {
         current_filename = (char *)sources[k];
         char *source = read_file(sources[k]);
+        int file = diag_add_file(sources[k], source, -1, (SourceLocation){0});
+        const char *filename = diag_file_name(file);
         lexer_set_debugging_lines(!mode.free_format && lexer_debugging_mode(source));
         if (!mode.free_format) {
             char *converted = lexer_reference_format(source);
@@ -309,14 +328,12 @@ int main(int argc, char **argv) {
         // COPY and REPLACE; the lexer reads the result, diagnostics show the
         // lines of the source
         PpOptions pp = { copy_dirs, ncopy_dirs, mode.free_format };
-        char *text = pp_process(source, sources[k], &pp);
+        char *text = pp_process(source, file, &pp);
         if (!text) { free(source); return 1; }
         Lexer lexer;
-        lexer_init(&lexer, source, &mode, sources[k]);
+        lexer_init(&lexer, source, &mode, filename);
         lexer.src = text;
-        int errors_before = error_count;
         AstNode *ast = parse_program(&lexer);
-        error_count += errors_before;   // parse_program starts counting anew
         texts[k] = text;
         sources_text[k] = source;
         if (!ast) return 1;
@@ -356,7 +373,9 @@ int main(int argc, char **argv) {
         }
     }
     current_filename = input_file;
-    if (error_count > 0) return 1;
+    // Undefined names leave a sound syntax tree: the later stages still run,
+    // and report what they find too
+    if (error_count > parser_name_errors) return 1;
     if (dump_ast) return 0;
 
     // Output file name: as given, or the input's name without its extension
@@ -394,9 +413,10 @@ int main(int argc, char **argv) {
             unit.ancestors[unit.nancestors++] = programs[a];
         IrProgram *ir = lower_to_ir(programs[k], &mode.dialect, &unit);
         if (!ir || error_count > 0) {
-            if (!ir) fprintf(stderr, "IR lowering failed\n");
+            // go on checking the other programs
+            if (!ir && error_count == 0) cobalt_error("Internal error: program %d was not translated", k + 1);
             ir_free(ir);
-            return 1;
+            continue;
         }
         if (ir->subprogram && tn < (int)sizeof(table) - 200) {
             tn += snprintf(table + tn, sizeof(table) - tn, "    dq %s\n", ir->info_symbol);
@@ -441,6 +461,7 @@ int main(int argc, char **argv) {
         nlink++;
     }
     for (int k = 0; k < nsources; k++) { free(texts[k]); free(sources_text[k]); }
+    if (error_count > 0) return 1;
     if (emit != EMIT_EXECUTABLE) return 0;
 
     // Objects given as arguments, and the program table: every called

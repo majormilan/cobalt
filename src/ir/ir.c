@@ -269,6 +269,7 @@ typedef struct {
 } ProcInfo;
 
 static ProcInfo procs[MAX_PROCS];
+static SourceLocation proc_loc_of(int p);
 static int num_procs = 0;
 static const char *current_section = NULL;   // during lowering
 static int current_proc = -1;                // procedure being lowered
@@ -507,8 +508,7 @@ static void build_special_names(AstNode *program) {
             while (digit > e->text && isdigit((unsigned char)digit[-1])) digit--;
             int number = atoi(digit);
             if ((e->on_error || e->not_on_error) && (number < 1 || number > 9)) {
-                cobalt_error_loc(NULL, e->loc.line, e->loc.column,
-                                 "Switch '%s' is not SWITCH-1 to SWITCH-9", e->text);
+                diag_error(e->loc, "Switch '%s' is not SWITCH-1 to SWITCH-9", e->text);
                 continue;
             }
             if (e->extra && number >= 1 && number <= 9 && num_switch_names < 16) {
@@ -551,7 +551,7 @@ static void build_special_names(AstNode *program) {
                 if (a->kind == AST_SPECIAL && strcmp(a->name, "ALPHABET") == 0 && strcasecmp(a->text, e->text) == 0)
                     alpha = a;
             if (!alpha) {
-                cobalt_error_loc(NULL, e->loc.line, e->loc.column, "Undeclared alphabet '%s'", e->text);
+                diag_error(e->loc, "Undeclared alphabet '%s'", e->text);
                 continue;
             }
             if (alpha->children) alphabet_weights(alpha, weights);
@@ -561,8 +561,7 @@ static void build_special_names(AstNode *program) {
             for (int c = 0; c < 256 && ch < 0; c++)
                 if (n->digits >= 1 && weights[c] == n->digits - 1) ch = c;
             if (ch < 0) {
-                cobalt_error_loc(NULL, n->loc.line, n->loc.column,
-                                 "Ordinal position %d of symbolic character '%s' is out of range", n->digits, n->name);
+                diag_error(n->loc, "Ordinal position %d of symbolic character '%s' is out of range", n->digits, n->name);
                 continue;
             }
             if (num_symbolic < 256) {
@@ -588,8 +587,7 @@ static void build_renames(AstNode *decl, int record_item) {
     int end = thru->offset + thru->size;
     if (top_from != record_item || top_thru != record_item || from->level == 1 ||
         from->is_cond || thru->is_cond || from->level == 66 || in_table || end <= from->offset) {
-        cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
-                         "Invalid RENAMES in '%s': the items must be in the record before it, "
+        diag_error(decl->loc, "Invalid RENAMES in '%s': the items must be in the record before it, "
                          "outside tables, in order", decl->name);
         return;
     }
@@ -765,7 +763,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
                 int f = -1;
                 for (int k = 0; k < num_files; k++)
                     if (strcasecmp(files[k].name, fn->name) == 0) f = k;
-                if (f < 0) cobalt_error_loc(NULL, fn->loc.line, fn->loc.column, "'%s' is not a file", fn->name);
+                if (f < 0) diag_error(fn->loc, "'%s' is not a file", fn->name);
                 else files[f].same_group = group;
             }
         }
@@ -855,8 +853,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
                     for (int k = 0; k < num_files; k++)
                         if (strcasecmp(files[k].name, entry->name) == 0) f = k;
                     if (f < 0)
-                        cobalt_error_loc(NULL, entry->loc.line, entry->loc.column,
-                                         "FD '%s' has no SELECT", entry->name);
+                        diag_error(entry->loc, "FD '%s' has no SELECT", entry->name);
                     else {
                         files[f].fd = entry;
                         files[f].is_sort = entry->is_numeric;
@@ -889,8 +886,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
 
                 if (level == 88) {
                     if (last_item < 0) {
-                        cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
-                                         "Condition-name '%s' has no data item", decl->name);
+                        diag_error(decl->loc, "Condition-name '%s' has no data item", decl->name);
                         continue;
                     }
                     VarInfo *cv = new_var(decl->name);
@@ -905,8 +901,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
                     // belongs to the record being described
                     int record = depth > 0 ? stack[0] : -1;
                     if (record < 0 || vars[record].level == 77) {
-                        cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
-                                         "RENAMES entry '%s' does not follow a record", decl->name);
+                        diag_error(decl->loc, "RENAMES entry '%s' does not follow a record", decl->name);
                     } else if (num_renames < 256) {
                         renames_record[num_renames] = record;
                         renames[num_renames++] = decl;
@@ -914,8 +909,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
                     continue;
                 }
                 if (level != 1 && level != 77 && (level < 2 || level > 49)) {
-                    cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
-                                     "Level %d is not supported", level);
+                    diag_error(decl->loc, "Level %d is not supported", level);
                     continue;
                 }
 
@@ -953,8 +947,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
                         // Every record description of a file shares its record area
                         v->file = file;
                         if (level == 77)
-                            cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
-                                             "Level 77 is not allowed in an FD");
+                            diag_error(decl->loc, "Level 77 is not allowed in an FD");
                             // SAME RECORD AREA: the record area of the group's first file
                         int area_file = file;
                         for (int g = 0; g < num_files; g++)
@@ -967,14 +960,12 @@ static void build_data(IrProgram *ir, AstNode *program) {
                 } else {
                     while (depth > 0 && vars[stack[depth - 1]].level >= level) depth--;
                     if (depth == 0) {
-                        cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
-                                         "Level %02d item '%s' is not inside a group", level, decl->name);
+                        diag_error(decl->loc, "Level %02d item '%s' is not inside a group", level, decl->name);
                         continue;
                     }
                     v->parent = stack[depth - 1];
                     if (!vars[v->parent].is_group) {
-                        cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
-                                         "'%s' has a PICTURE, so it cannot contain '%s'",
+                        diag_error(decl->loc, "'%s' has a PICTURE, so it cannot contain '%s'",
                                          vars[v->parent].name, decl->name);
                     }
                     add_child(v->parent, idx);
@@ -985,8 +976,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
                 if (redef) {
                     v->redefines = find_redefined(redef->name, v->parent, idx);
                     if (v->redefines < 0)
-                        cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
-                                         "REDEFINES target '%s' is not the preceding item at this level", redef->name);
+                        diag_error(decl->loc, "REDEFINES target '%s' is not the preceding item at this level", redef->name);
                 }
 
                 AstNode *occurs = find_clause(decl, AST_OCCURS);
@@ -994,11 +984,9 @@ static void build_data(IrProgram *ir, AstNode *program) {
                     v->occurs = atoi(occurs->name);
                     v->depending = occurs->extra;
                     if (v->depending && (occurs->digits < 0 || occurs->digits >= v->occurs))
-                        cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
-                                         "OCCURS %d TO %d is not a valid range", occurs->digits, v->occurs);
+                        diag_error(decl->loc, "OCCURS %d TO %d is not a valid range", occurs->digits, v->occurs);
                     if (v->occurs < 1 || level == 1 || level == 77) {
-                        cobalt_error_loc(NULL, decl->loc.line, decl->loc.column,
-                                         "Invalid OCCURS on '%s'", decl->name);
+                        diag_error(decl->loc, "Invalid OCCURS on '%s'", decl->name);
                         v->occurs = 0;
                     }
                     for (AstNode *ix = occurs->children; ix; ix = ix->next) {
@@ -1030,8 +1018,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
         if (!v->sign_mode) continue;
         if (!v->is_numeric || !v->is_signed || v->usage_type != USAGE_DISPLAY) {
             if (v->decl->sign_mode)
-                cobalt_error_loc(NULL, v->decl->loc.line, v->decl->loc.column,
-                                 "SIGN clause requires a signed numeric DISPLAY item ('%s')", v->name);
+                diag_error(v->decl->loc, "SIGN clause requires a signed numeric DISPLAY item ('%s')", v->name);
             v->sign_mode = 0;
             continue;
         }
@@ -1043,8 +1030,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
         VarInfo *v = &vars[i];
         if (v->is_cond || v->is_index) continue;
         if (v->is_group && v->first_child < 0)
-            cobalt_error_loc(NULL, v->decl->loc.line, v->decl->loc.column,
-                             "'%s' needs a PICTURE clause (it has no subordinate items)", v->name);
+            diag_error(v->decl->loc, "'%s' needs a PICTURE clause (it has no subordinate items)", v->name);
     }
     for (int i = 0; i < num_vars; i++) {
         VarInfo *v = &vars[i];
@@ -1093,8 +1079,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
     for (int f = 0; f < num_files; f++) {
         FileInfo *fi = &files[f];
         if (fi->first_record < 0) {
-            cobalt_error_loc(NULL, fi->select->loc.line, fi->select->loc.column,
-                             "File '%s' has no FD with a record description", fi->name);
+            diag_error(fi->select->loc, "File '%s' has no FD with a record description", fi->name);
             continue;
         }
         fi->largest_record = fi->first_record;
@@ -1146,8 +1131,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
                     int top = (int)(kv - vars);
                     while (vars[top].parent >= 0) top = vars[top].parent;
                     if (vars[top].file != f) {
-                        cobalt_error_loc(NULL, k->extra->loc.line, k->extra->loc.column,
-                                         "Key '%s' is not in a record of file '%s'", kv->name, fi->name);
+                        diag_error(k->extra->loc, "Key '%s' is not in a record of file '%s'", kv->name, fi->name);
                         continue;
                     }
                     if (fi->nkeys >= 16) break;
@@ -1157,8 +1141,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
                 }
             }
             if (!file_key(f, "RECORD"))
-                cobalt_error_loc(NULL, sel->loc.line, sel->loc.column,
-                                 "INDEXED file '%s' has no RECORD KEY", fi->name);
+                diag_error(sel->loc, "INDEXED file '%s' has no RECORD KEY", fi->name);
             snprintf(table + n, sizeof(table) - n, " %d%s", fi->nkeys, body);
             char label[32];
             snprintf(label, sizeof(label), "$keys_%d", f);
@@ -1176,21 +1159,18 @@ static void build_data(IrProgram *ir, AstNode *program) {
                 snprintf(num, sizeof(num), "%lld", lim - 1);
                 d->jump_target = strdup(num);
             } else if (kv && !kv->is_numeric) {
-                cobalt_error_loc(NULL, sel->loc.line, sel->loc.column,
-                                 "RELATIVE KEY '%s' must be an unsigned integer item", kv->name);
+                diag_error(sel->loc, "RELATIVE KEY '%s' must be an unsigned integer item", kv->name);
             }
         }
         if (sel->org == FILE_ORG_RELATIVE && sel->access != FILE_ACCESS_SEQUENTIAL && !file_key(f, "RELATIVE"))
-            cobalt_error_loc(NULL, sel->loc.line, sel->loc.column,
-                             "RELATIVE file '%s' with RANDOM or DYNAMIC access needs a RELATIVE KEY", fi->name);
+            diag_error(sel->loc, "RELATIVE file '%s' with RANDOM or DYNAMIC access needs a RELATIVE KEY", fi->name);
         bool any_mode = false;
         for (int k = 1; k <= 4; k++) any_mode |= use_for_mode(k) >= 0;
         if (any_mode || use_for_file(fi->name) >= 0) d->flags |= FILE_USE;
         if (fi->select->extra) {
             VarInfo *st = find_item(fi->select->extra, true);
             if (st && (st->is_numeric || st->size != 2))
-                cobalt_error_loc(NULL, fi->select->extra->loc.line, fi->select->extra->loc.column,
-                                 "FILE STATUS item '%s' must be a two-character alphanumeric item", st->name);
+                diag_error(fi->select->extra->loc, "FILE STATUS item '%s' must be a two-character alphanumeric item", st->name);
             else if (st && !fi->external && record_ptr_slot[st->record] < 0 && !record_extern[st->record]) {
                 char label[48];
                 record_label(label, sizeof(label), st->record, st->offset);
@@ -1308,7 +1288,7 @@ static int function_temp(const AstNode *f) {
     const FuncInfo *fi = function_info(f->name + 1);
     int idx;
     if (!fi) {
-        cobalt_error_loc(NULL, f->loc.line, f->loc.column, "Unknown function '%s'", f->name + 1);
+        diag_error(f->loc, "Unknown function '%s'", f->name + 1);
         idx = temp_numeric(0, f);
     } else {
         AstNode *args[1024];
@@ -1345,6 +1325,86 @@ static int function_temp(const AstNode *f) {
     return idx;
 }
 
+// For messages: an item's name with its qualifiers ("G1 OF G")
+static const char *qualified_name(const VarInfo *v) {
+    static char buf[2][256];
+    static int which;
+    char *b = buf[which ^= 1];
+    snprintf(b, 256, "%s", v->name);
+    for (int a = v->parent; a >= 0 && strlen(b) < 200; a = vars[a].parent)
+        if (!vars[a].is_filler) snprintf(b + strlen(b), 256 - strlen(b), " OF %s", vars[a].name);
+    return b;
+}
+
+static const char *pic_of(const VarInfo *v) {
+    if (!v->decl) return NULL;
+    for (AstNode *c = v->decl->children; c; c = c->next)
+        if (c->kind == AST_PIC_CLAUSE) return c->name;
+    return NULL;
+}
+
+// For messages: what kind of item it is ("an alphanumeric item (PICTURE X(10))")
+static const char *item_kind(const VarInfo *v) {
+    static char buf[160];
+    const char *pic = pic_of(v);
+    const char *what = v->is_cond ? "a condition-name" : v->is_index ? "an index-name" :
+                       v->is_group ? "a group item" : v->num_edited ? "a numeric edited item" :
+                       v->mask ? "an alphanumeric edited item" : v->is_numeric ? "a numeric item" :
+                       "an alphanumeric item";
+    if (pic && !v->is_group) snprintf(buf, sizeof(buf), "%s (PICTURE %s)", what, pic);
+    else snprintf(buf, sizeof(buf), "%s", what);
+    return buf;
+}
+
+// A note on where an item is declared and what it is
+static void note_item(const VarInfo *v) {
+    if (v->decl && v->decl->loc.line)
+        diag_note(v->decl->loc, "'%s' is declared here", qualified_name(v));
+}
+
+static void undefined_item(const AstNode *ref) {
+    // The name exists, but not with these qualifiers
+    int same = -1, nsame = 0;
+    for (int i = 0; i < num_vars; i++)
+        if (!vars[i].is_filler && strcasecmp(vars[i].name, ref->name) == 0) { if (same < 0) same = i; nsame++; }
+    if (same >= 0 && ref->extra) {
+        // a qualifier that names nothing at all
+        for (const AstNode *q = ref->extra; q; q = q->next) {
+            bool known = false;
+            for (int i = 0; i < num_vars && !known; i++) known = strcasecmp(vars[i].name, q->name) == 0;
+            for (int f = 0; f < num_files && !known; f++) known = strcasecmp(files[f].name, q->name) == 0;
+            if (!known) {
+                diag_error(q->loc, "'%s' is not defined", q->name);
+                return;
+            }
+        }
+        diag_error(ref->loc, "No '%s' is in '%s'", ref->name, ref->extra->name);
+        for (int i = 0, shown = 0; i < num_vars && shown < 5; i++)
+            if (!vars[i].is_filler && strcasecmp(vars[i].name, ref->name) == 0) {
+                if (vars[i].decl && vars[i].decl->loc.line)
+                    diag_note(vars[i].decl->loc, "there is '%s'", qualified_name(&vars[i]));
+                shown++;
+            }
+        return;
+    }
+    diag_error(ref->loc, "'%s' is not defined", ref->name);
+    const char *names[MAX_VARS > 4096 ? 4096 : MAX_VARS];
+    int n = 0;
+    for (int i = 0; i < num_vars && n < (int)(sizeof(names) / sizeof(names[0])); i++)
+        if (!vars[i].is_filler && vars[i].decl) names[n++] = vars[i].name;
+    const char *near = diag_closest(ref->name, names, n);
+    for (int i = 0; near && i < num_vars; i++)
+        if (vars[i].name == near) {
+            diag_note(vars[i].decl->loc, "did you mean '%s'?", qualified_name(&vars[i]));
+            break;
+        }
+    for (int p = 0; p < num_procs; p++)
+        if (strcasecmp(procs[p].name, ref->name) == 0) {
+            diag_note(proc_loc_of(p), "'%s' is a %s, not a data item", ref->name, procs[p].is_section ? "section" : "paragraph");
+            break;
+        }
+}
+
 // Find the data item an identifier refers to, applying OF/IN qualification.
 // Reports unknown and ambiguous names when report is set.
 static VarInfo *find_item(const AstNode *ref, bool report) {
@@ -1374,10 +1434,27 @@ static VarInfo *find_item(const AstNode *ref, bool report) {
         count++;
     }
     if (report && !found)
-        cobalt_error_loc(NULL, ref->loc.line, ref->loc.column, "Undeclared identifier '%s'", ref->name);
-    else if (report && count > 1)
-        cobalt_error_loc(NULL, ref->loc.line, ref->loc.column,
-                         "'%s' is ambiguous; qualify it with OF or IN", ref->name);
+        undefined_item(ref);
+    else if (report && count > 1) {
+        diag_error(ref->loc, "'%s' is ambiguous: %d data items have this name", ref->name, count);
+        for (int i = 0, shown = 0; i < num_vars && shown < 5; i++)
+            if (!vars[i].is_filler && strcasecmp(vars[i].name, ref->name) == 0 && vars[i].decl) {
+                diag_note(vars[i].decl->loc, "it could be '%s'", qualified_name(&vars[i]));
+                shown++;
+            }
+        // Qualification helps only if the candidates' qualified names differ
+        bool distinct = true;
+        const char *first_q = NULL;
+        char firstbuf[256];
+        for (int i = 0; i < num_vars && distinct; i++)
+            if (!vars[i].is_filler && strcasecmp(vars[i].name, ref->name) == 0) {
+                const char *q = qualified_name(&vars[i]);
+                if (!first_q) { snprintf(firstbuf, sizeof(firstbuf), "%s", q); first_q = firstbuf; }
+                else if (strcasecmp(first_q, q) == 0) distinct = false;
+            }
+        if (distinct) diag_note_plain("qualify the name with OF or IN and the name of a group that holds it");
+        else diag_note_plain("qualification cannot tell them apart: their groups have the same names too; rename one");
+    }
     return count == 1 ? found : (report ? NULL : found);
 }
 
@@ -1445,8 +1522,7 @@ static int odo_length(IrProgram *ir, const VarInfo *v, const VarInfo *t) {
         for (int a = dv->parent; a >= 0; a = vars[a].parent)
             if (&vars[a] == v) return v->size;
     if (!dv || !dv->is_numeric || dv->decimal_places > 0) {
-        if (dv) cobalt_error_loc(NULL, t->depending->loc.line, t->depending->loc.column,
-                                 "DEPENDING ON item '%s' must be an integer", dv->name);
+        if (dv) diag_error(t->depending->loc, "DEPENDING ON item '%s' must be an integer", dv->name);
         return v->size;
     }
     int slot = addr_slots++;
@@ -1467,7 +1543,7 @@ static bool resolve_ref(IrProgram *ir, AstNode *ref, FieldRef *out) {
     VarInfo *v = find_item(ref, true);
     if (!v) return false;
     if (v->is_cond) {
-        cobalt_error_loc(NULL, ref->loc.line, ref->loc.column, "Condition-name '%s' is not a data item", ref->name);
+        diag_error(ref->loc, "Condition-name '%s' is not a data item", ref->name);
         return false;
     }
     out->var = v;
@@ -1477,8 +1553,17 @@ static bool resolve_ref(IrProgram *ir, AstNode *ref, FieldRef *out) {
     int nsubs = 0;
     for (AstNode *s = ref->children; s; s = s->next) nsubs++;
     if (nsubs != ndims) {
-        cobalt_error_loc(NULL, ref->loc.line, ref->loc.column,
-                         "'%s' needs %d subscript%s, %d given", ref->name, ndims, ndims == 1 ? "" : "s", nsubs);
+        if (ndims == 0)
+            diag_error(ref->loc, "'%s' is not a table, so it cannot be subscripted", ref->name);
+        else
+            diag_error(ref->loc, "'%s' needs %d subscript%s, %d given", ref->name, ndims, ndims == 1 ? "" : "s", nsubs);
+        if (ndims > 0) {
+            // the items with OCCURS that make the dimensions
+            for (const VarInfo *a = v; a; a = a->parent >= 0 ? &vars[a->parent] : NULL)
+                if (a->occurs && a->decl) diag_note(a->decl->loc, "'%s' has OCCURS %d", a->name, a->occurs);
+        } else {
+            note_item(v);
+        }
         return false;
     }
 
@@ -1489,8 +1574,13 @@ static bool resolve_ref(IrProgram *ir, AstNode *ref, FieldRef *out) {
         long long n;
         if (is_int_literal(s, &n)) {
             if (n < 1 || n > counts[k]) {
-                cobalt_error_loc(NULL, s->loc.line, s->loc.column,
-                                 "Subscript %lld of '%s' is out of range 1 to %d", n, ref->name, counts[k]);
+                diag_error(s->loc, "Subscript %lld of '%s' is out of range 1 to %d", n, ref->name, counts[k]);
+                int dim = 0;
+                for (const VarInfo *a = v; a; a = a->parent >= 0 ? &vars[a->parent] : NULL)
+                    if (a->occurs && dim++ == ndims - 1 - k && a->decl) {
+                        diag_note(a->decl->loc, "'%s' has OCCURS %d", a->name, a->occurs);
+                        break;
+                    }
                 return false;
             }
             offset += (int)(n - 1) * strides[k];
@@ -1513,7 +1603,7 @@ static bool resolve_ref(IrProgram *ir, AstNode *ref, FieldRef *out) {
             start_const = false;
             dynamic = true;
         } else if (start_val < 1 || start_val > v->size) {
-            cobalt_error_loc(NULL, start->loc.line, start->loc.column, "Reference modifier start is out of range");
+            diag_error(start->loc, "Reference modifier start is out of range");
             return false;
         }
         if (length && !is_int_literal(length, &len_val)) {
@@ -1521,7 +1611,7 @@ static bool resolve_ref(IrProgram *ir, AstNode *ref, FieldRef *out) {
             len_const = false;
             dynamic = true;
         } else if (length && (len_val < 1 || (start_const && start_val + len_val - 1 > v->size))) {
-            cobalt_error_loc(NULL, length->loc.line, length->loc.column, "Reference modifier length is out of range");
+            diag_error(length->loc, "Reference modifier length is out of range");
             return false;
         }
         if (start_const) offset += (int)start_val - 1;
@@ -1635,7 +1725,12 @@ static VarInfo *numeric_item(AstNode *n, const char *role) {
     VarInfo *v = find_item(n, true);
     if (!v) return NULL;
     if (!v->is_numeric || v->is_cond || n->loop) {
-        cobalt_error_loc(NULL, n->loc.line, n->loc.column, "%s '%s' is not numeric", role, n->name);
+        if (n->loop) diag_error(n->loc, "%s '%s' must be numeric, but it is reference modified", role, n->name);
+        else {
+            diag_error(n->loc, "%s '%s' must be numeric, but it is %s", role, n->name,
+                       item_kind(v));
+            note_item(v);
+        }
         return NULL;
     }
     return v;
@@ -1655,13 +1750,13 @@ static bool num_expr_valid(AstNode *e) {
         }
         case AST_LITERAL_NUMBER:
             if (!parse_num_literal(e->name, &value, &scale)) {
-                cobalt_error_loc(NULL, e->loc.line, e->loc.column, "Invalid numeric literal '%s'", e->name);
+                diag_error(e->loc, "Invalid numeric literal '%s'", e->name);
                 return false;
             }
             return true;
         case AST_FIGURATIVE_CONSTANT:
             if (figurative_char(e) == '0') return true;
-            cobalt_error_loc(NULL, e->loc.line, e->loc.column, "%s is not numeric", e->name);
+            diag_error(e->loc, "%s is not numeric", e->name);
             return false;
         case AST_EXPR_NEG:
         case AST_EXPR_RESCALE:
@@ -1680,7 +1775,7 @@ static bool num_expr_valid(AstNode *e) {
             return left && right;
         }
         default:
-            cobalt_error_loc(NULL, e->loc.line, e->loc.column, "Invalid operand in arithmetic expression");
+            diag_error(e->loc, "Invalid operand in arithmetic expression");
             return false;
     }
 }
@@ -1941,7 +2036,12 @@ static VarInfo *receiving_item(AstNode *n) {
     VarInfo *v = find_item(n, true);
     if (!v) return NULL;
     if ((!v->is_numeric && !is_num_edited(v)) || v->is_cond || n->loop) {
-        cobalt_error_loc(NULL, n->loc.line, n->loc.column, "Receiving item '%s' is not numeric", n->name);
+        if (n->loop) diag_error(n->loc, "Receiving item '%s' must be numeric, but it is reference modified", n->name);
+        else {
+            diag_error(n->loc, "Receiving item '%s' must be numeric or numeric edited, but it is %s",
+                       n->name, item_kind(v));
+            note_item(v);
+        }
         return NULL;
     }
     return v;
@@ -1990,8 +2090,13 @@ static int resolve_proc(AstNode *ref) {
                 strcasecmp(procs[i].section, ref->extra->name) == 0 &&
                 strcasecmp(procs[i].name, ref->name) == 0) return i;
         }
-        cobalt_error_loc(NULL, ref->loc.line, ref->loc.column, "Procedure '%s' not found in section '%s'",
-                         ref->name, ref->extra->name);
+        diag_error(ref->loc, "Section '%s' has no paragraph '%s'", ref->extra->name, ref->name);
+        for (int i = 0; i < num_procs; i++)
+            if (!procs[i].is_section && strcasecmp(procs[i].name, ref->name) == 0) {
+                diag_note(proc_loc_of(i), "there is '%s' in section '%s'", procs[i].name,
+                          procs[i].section ? procs[i].section : "(none)");
+                break;
+            }
         return -1;
     }
     if (current_section) {
@@ -2009,10 +2114,24 @@ static int resolve_proc(AstNode *ref) {
         }
     }
     if (found < 0) {
-        cobalt_error_loc(NULL, ref->loc.line, ref->loc.column, "Procedure '%s' not found", ref->name);
+        diag_error(ref->loc, "No paragraph or section is named '%s'", ref->name);
+        const char *names[4096];
+        int n = 0;
+        for (int i = 0; i < num_procs && n < 4096; i++) names[n++] = procs[i].name;
+        const char *near = diag_closest(ref->name, names, n);
+        for (int i = 0; near && i < num_procs; i++)
+            if (procs[i].name == near) { diag_note(proc_loc_of(i), "did you mean '%s'?", near); break; }
+        for (int i = 0; i < num_vars; i++)
+            if (!vars[i].is_filler && strcasecmp(vars[i].name, ref->name) == 0 && vars[i].decl) {
+                diag_note(vars[i].decl->loc, "'%s' is a data item", vars[i].name);
+                break;
+            }
     } else if (count > 1) {
-        cobalt_error_loc(NULL, ref->loc.line, ref->loc.column,
-                         "Procedure name '%s' is ambiguous (qualify it with OF section)", ref->name);
+        diag_error(ref->loc, "Paragraph name '%s' is ambiguous: %d sections have one", ref->name, count);
+        for (int i = 0; i < num_procs; i++)
+            if (strcasecmp(procs[i].name, ref->name) == 0)
+                diag_note(proc_loc_of(i), "it could be '%s OF %s'", procs[i].name, procs[i].section ? procs[i].section : "?");
+        diag_note_plain("qualify the paragraph name with OF and its section name");
         return -1;
     }
     return found;
@@ -2179,7 +2298,7 @@ static void lower_corresponding(IrProgram *ir, AstNode *node, AstNode *from, Ast
     VarInfo *g1 = find_item(from, true), *g2 = find_item(to, true);
     if (!g1 || !g2) return;
     if (!g1->is_group || !g2->is_group) {
-        cobalt_error_loc(NULL, node->loc.line, node->loc.column, "CORRESPONDING requires two group items");
+        diag_error(node->loc, "CORRESPONDING requires two group items");
         return;
     }
     corr_pairs(ir, node->kind, (int)(g1 - vars), (int)(g2 - vars), from, to, to->rounded, keep);
@@ -2336,8 +2455,7 @@ static bool alnum_operand(IrProgram *ir, AstNode *n, FieldRef *f, const char *bu
         f->size = (int)strlen(n->name);
         return true;
     }
-    cobalt_error_loc(NULL, n->loc.line, n->loc.column,
-                     "An arithmetic expression cannot be compared with a nonnumeric operand");
+    diag_error(n->loc, "An arithmetic expression cannot be compared with a nonnumeric operand");
     return false;
 }
 
@@ -2363,7 +2481,7 @@ static void emit_relation_false_jump(IrProgram *ir, AstNode *left, AstNode *righ
         }
     } else if (fl != -1 || fr != -1) {
         if (fl != -1 && fr != -1) {
-            cobalt_error_loc(NULL, left->loc.line, left->loc.column, "Two figurative constants cannot be compared");
+            diag_error(left->loc, "Two figurative constants cannot be compared");
         } else {
             if (fl != -1) {
                 AstNode *t = left; left = right; right = t;
@@ -2453,8 +2571,7 @@ static AstNode *condition_name_tree(const VarInfo *cv, const AstNode *cond_ref) 
 static void emit_class_jump(IrProgram *ir, AstNode *c, const char *target, bool when) {
     AstNode *operand = c->children;
     if (operand->kind != AST_IDENTIFIER) {
-        cobalt_error_loc(NULL, operand->loc.line, operand->loc.column,
-                         "A class condition requires a data item");
+        diag_error(operand->loc, "A class condition requires a data item");
         return;
     }
     FieldRef f;
@@ -2468,7 +2585,7 @@ static void emit_class_jump(IrProgram *ir, AstNode *c, const char *target, bool 
         for (int k = 0; k < num_classes; k++)
             if (strcasecmp(classes[k].name, c->text) == 0) cls = &classes[k];
         if (!cls) {
-            cobalt_error_loc(NULL, c->loc.line, c->loc.column, "'%s' is not a class-name", c->text);
+            diag_error(c->loc, "'%s' is not a class-name", c->text);
             return;
         }
         char members[32];
@@ -2552,7 +2669,7 @@ static void emit_cond_jump(IrProgram *ir, AstNode *cond, const char *target, boo
             const char *op = strcmp(cond->name, "POSITIVE") == 0 ? ">" :
                              strcmp(cond->name, "NEGATIVE") == 0 ? "<" : "=";
             if (!is_numeric_operand(cond->children)) {
-                cobalt_error_loc(NULL, cond->loc.line, cond->loc.column, "A sign condition requires a numeric operand");
+                diag_error(cond->loc, "A sign condition requires a numeric operand");
                 break;
             }
             AstNode *zero = ast_new(AST_LITERAL_NUMBER, "0", cond->loc);
@@ -2564,7 +2681,9 @@ static void emit_cond_jump(IrProgram *ir, AstNode *cond, const char *target, boo
             VarInfo *cv = find_item(cond, true);
             if (!cv) break;
             if (!cv->is_cond) {
-                cobalt_error_loc(NULL, cond->loc.line, cond->loc.column, "'%s' is not a condition-name", cond->name);
+                diag_error(cond->loc, "'%s' is not a condition-name, so it is not a condition by itself", cond->name);
+                note_item(cv);
+                diag_note_plain("compare it with a value, for example IF %s = ...", cond->name);
                 break;
             }
             if (cv->switch_value >= 0) {
@@ -2581,7 +2700,7 @@ static void emit_cond_jump(IrProgram *ir, AstNode *cond, const char *target, boo
             break;
         }
         default:
-            cobalt_error_loc(NULL, cond->loc.line, cond->loc.column, "Invalid condition");
+            diag_error(cond->loc, "Invalid condition");
             break;
     }
 }
@@ -2712,8 +2831,9 @@ static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const ch
     int fig = figurative_char(src);
     if (fig != -1) {
         if (dest_numeric && fig != '0') {
-            cobalt_error_loc(NULL, src->loc.line, src->loc.column,
-                             "%s cannot be moved to numeric '%s'", src->name, dv->name);
+            diag_error(src->loc, "%s cannot be moved to the numeric item '%s'", src->name, dv->name);
+            note_item(dv);
+            diag_note_plain("only ZERO is a numeric figurative constant");
         } else if (dest_takes_value && fig == '0') {
             emit_num(ir, IR_NUM_CONST, 0, 0);
             if (resolve_receiver(ir, dest_node, &dest)) emit_store(ir, &dest, false);
@@ -2820,8 +2940,7 @@ static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const ch
         FieldRef sf;
         if (!resolve_ref(ir, src, &sf)) return;
         if (sf.size < 0) {
-            cobalt_error_loc(NULL, src->loc.line, src->loc.column,
-                             "MOVE of a variable-length item to numeric '%s' is not supported yet", dv->name);
+            diag_error(src->loc, "MOVE of a variable-length item to numeric '%s' is not supported yet", dv->name);
             return;
         }
         move_text_to_numeric(ir, &sf, dv, dest_node);
@@ -3043,8 +3162,7 @@ static void init_replace(IrProgram *ir, FieldRef *f, AstNode *src) {
     VarInfo *v = f->var;
     if (v->is_numeric || is_num_edited(v)) {
         if (src->kind == AST_STRING_LITERAL) {
-            cobalt_error_loc(NULL, src->loc.line, src->loc.column,
-                             "A nonnumeric literal cannot replace numeric data");
+            diag_error(src->loc, "A nonnumeric literal cannot replace numeric data");
             return;
         }
         bool ok = true;
@@ -3066,8 +3184,7 @@ static void init_replace(IrProgram *ir, FieldRef *f, AstNode *src) {
         FieldRef sf;
         if (!resolve_ref(ir, src, &sf)) return;
         if (sf.var->is_numeric && !src->loop) {
-            cobalt_error_loc(NULL, src->loc.line, src->loc.column,
-                             "A numeric item cannot replace nonnumeric data");
+            diag_error(src->loc, "A numeric item cannot replace nonnumeric data");
             return;
         }
         if (is_alnum_edited(v)) emit_edit_alnum(ir, f, sf.label, sf.size);
@@ -3143,8 +3260,7 @@ static void lower_set(IrProgram *ir, AstNode *node) {
             for (int k = 0; k < num_switch_names; k++)
                 if (strcasecmp(switch_names[k].name, recv->name) == 0) number = switch_names[k].number;
             if (!number) {
-                cobalt_error_loc(NULL, recv->loc.line, recv->loc.column,
-                                 "'%s' is not the mnemonic-name of a switch", recv->name);
+                diag_error(recv->loc, "'%s' is not the mnemonic-name of a switch", recv->name);
                 continue;
             }
             IrInstr *s = emit(ir, IR_SWITCH_SET);
@@ -3182,8 +3298,7 @@ static void lower_search(IrProgram *ir, AstNode *node) {
     VarInfo *tv = find_item(table, true);
     if (!tv) return;
     if (!tv->occurs || tv->first_index < 0) {
-        cobalt_error_loc(NULL, table->loc.line, table->loc.column,
-                         "SEARCH needs a table with INDEXED BY ('%s')", table->name);
+        diag_error(table->loc, "SEARCH needs a table with INDEXED BY ('%s')", table->name);
         return;
     }
     // The search index: the first index-name of the table, or the VARYING
@@ -3240,7 +3355,7 @@ static void lower_search(IrProgram *ir, AstNode *node) {
 static int find_file(const AstNode *ref) {
     for (int f = 0; f < num_files; f++)
         if (strcasecmp(files[f].name, ref->name) == 0) return f;
-    cobalt_error_loc(NULL, ref->loc.line, ref->loc.column, "'%s' is not a file", ref->name);
+    diag_error(ref->loc, "'%s' is not a file", ref->name);
     return -1;
 }
 
@@ -3331,7 +3446,7 @@ static int record_file(IrProgram *ir, AstNode *rec, FieldRef *f) {
     VarInfo *v = find_item(rec, true);
     if (!v) return -1;
     if (v->file < 0 || v->parent >= 0) {
-        cobalt_error_loc(NULL, rec->loc.line, rec->loc.column, "'%s' is not a record of a file", rec->name);
+        diag_error(rec->loc, "'%s' is not a record of a file", rec->name);
         return -1;
     }
     return resolve_ref(ir, rec, f) ? v->file : -1;
@@ -3389,8 +3504,7 @@ static int key_of_item(int f, AstNode *item, int *len) {
             return k;
         }
     }
-    cobalt_error_loc(NULL, item->loc.line, item->loc.column,
-                     "'%s' is not a record key of file '%s'", v->name, files[f].name);
+    diag_error(item->loc, "'%s' is not a record key of file '%s'", v->name, files[f].name);
     return -1;
 }
 
@@ -3430,7 +3544,7 @@ static int sort_file(AstNode *ref, bool report) {
             if (files[f].is_sort) return f;
             break;
         }
-    if (report) cobalt_error_loc(NULL, ref->loc.line, ref->loc.column, "'%s' is not a sort file (SD)", ref->name);
+    if (report) diag_error(ref->loc, "'%s' is not a sort file (SD)", ref->name);
     return -1;
 }
 
@@ -3459,8 +3573,7 @@ static void lower_sort(IrProgram *ir, AstNode *node) {
         int top = (int)(kv - vars);
         while (vars[top].parent >= 0) top = vars[top].parent;
         if (vars[top].file != sd || item_dims(kv, (int[16]){0}, (int[16]){0}) > 0) {
-            cobalt_error_loc(NULL, k->loc.line, k->loc.column,
-                             "Sort key '%s' must be an item of a record of '%s' (without OCCURS)", kv->name, fi->name);
+            diag_error(k->loc, "Sort key '%s' must be an item of a record of '%s' (without OCCURS)", kv->name, fi->name);
             return;
         }
         bool numeric = kv->is_numeric && !kv->mask;
@@ -3487,7 +3600,7 @@ static void lower_sort(IrProgram *ir, AstNode *node) {
             int u = find_file(fn);
             if (u < 0) continue;
             if (files[u].is_sort) {
-                cobalt_error_loc(NULL, fn->loc.line, fn->loc.column, "USING file '%s' is a sort file", fn->name);
+                diag_error(fn->loc, "USING file '%s' is a sort file", fn->name);
                 continue;
             }
             char loop[32], done[32], uarea[48];
@@ -3584,8 +3697,7 @@ static void lower_release_return(IrProgram *ir, AstNode *node) {
         if (!v) return;
         int top = (int)(v - vars);
         if (v->parent >= 0 || v->file < 0 || !files[v->file].is_sort) {
-            cobalt_error_loc(NULL, node->extra->loc.line, node->extra->loc.column,
-                             "'%s' is not a record of a sort file", v->name);
+            diag_error(node->extra->loc, "'%s' is not a record of a sort file", v->name);
             return;
         }
         FieldRef rf;
@@ -3777,7 +3889,7 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
             FileInfo *fi = &files[f];
             int org = fi->select->org;
             if (org != FILE_ORG_RELATIVE && org != FILE_ORG_INDEXED) {
-                cobalt_error_loc(NULL, node->loc.line, node->loc.column, "%s needs a RELATIVE or INDEXED file",
+                diag_error(node->loc, "%s needs a RELATIVE or INDEXED file",
                                  node->kind == AST_STATEMENT_DELETE ? "DELETE" : "START");
                 return;
             }
@@ -3785,8 +3897,7 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
             bool start = node->kind == AST_STATEMENT_START;
             if (relkey && (start || random_or_dynamic(f))) move_to_item(ir, relkey, fi->key_var);
             if (start && org == FILE_ORG_RELATIVE && !relkey) {
-                cobalt_error_loc(NULL, node->loc.line, node->loc.column,
-                                 "START needs the RELATIVE KEY of file '%s'", fi->name);
+                diag_error(node->loc, "START needs the RELATIVE KEY of file '%s'", fi->name);
                 return;
             }
             IrInstr *op = emit_file_op(ir, start ? IR_FILE_START : IR_FILE_DELETE, f);
@@ -3891,8 +4002,7 @@ static void expand_all_args(const AstNode *f, AstNode **out, int *n, int max) {
         for (const AstNode *s = a->children; s && k < nd; s = s->next, k++) {
             if (s->kind == AST_SPECIAL) is_all[k] = true;
             else if (!is_int_literal(s, &fixed[k])) {
-                cobalt_error_loc(NULL, s->loc.line, s->loc.column,
-                                 "Only literal subscripts go with ALL subscripts");
+                diag_error(s->loc, "Only literal subscripts go with ALL subscripts");
                 return;
             }
         }
@@ -3934,7 +4044,7 @@ static bool eval_function(IrProgram *ir, AstNode *f) {
     expand_all_args(f, args, &nargs, 1024);
     bool ok = true;
     if (nargs < fi->min_args || nargs > fi->max_args) {
-        cobalt_error_loc(NULL, f->loc.line, f->loc.column, "FUNCTION %s takes %d to %d arguments, %d given",
+        diag_error(f->loc, "FUNCTION %s takes %d to %d arguments, %d given",
                          fi->name, fi->min_args, fi->max_args, nargs);
         ok = false;
     }
@@ -3952,7 +4062,7 @@ static bool eval_function(IrProgram *ir, AstNode *f) {
         int len = args[0]->kind == AST_IDENTIFIER && args[0]->name[0] != '!' ? 0 : arg_length(args[0]);
         if (args[0]->kind == AST_IDENTIFIER && resolve_ref(ir, args[0], &af)) len = af.size;
         if (len < 0) {
-            cobalt_error_loc(NULL, f->loc.line, f->loc.column, "FUNCTION LENGTH of an item of variable length is not supported yet");
+            diag_error(f->loc, "FUNCTION LENGTH of an item of variable length is not supported yet");
             ok = false;
         } else {
             move_int_to_item(ir, len, t, f->loc);
@@ -3976,8 +4086,7 @@ static bool eval_function(IrProgram *ir, AstNode *f) {
             if ((fi->args == 'n' && alnum) || (fi->args == 'a' && !alnum && fi->id != 26)) {
                 // (ORD of a numeric DISPLAY item: its character)
                 if (!(fi->args == 'a' && args[k]->kind == AST_IDENTIFIER)) {
-                    cobalt_error_loc(NULL, args[k]->loc.line, args[k]->loc.column,
-                                     "Argument %d of FUNCTION %s must be %s", k + 1, fi->name,
+                    diag_error(args[k]->loc, "Argument %d of FUNCTION %s must be %s", k + 1, fi->name,
                                      fi->args == 'n' ? "numeric" : "alphanumeric");
                     ok = false;
                     break;
@@ -4053,7 +4162,7 @@ static bool program_name_operand(IrProgram *ir, AstNode *name, IrInstr *op) {
     FieldRef f;
     if (!resolve_ref(ir, name, &f)) return false;
     if (f.var && f.var->is_numeric) {
-        cobalt_error_loc(NULL, name->loc.line, name->loc.column, "The program name '%s' must be alphanumeric", name->name);
+        diag_error(name->loc, "The program name '%s' must be alphanumeric", name->name);
         return false;
     }
     op->var_name = strdup(f.label);
@@ -4094,7 +4203,7 @@ static void lower_call(IrProgram *ir, AstNode *node) {
         arg->var_name = strdup(label);
     }
     if (argc > 64) {
-        cobalt_error_loc(NULL, node->loc.line, node->loc.column, "CALL with more than 64 arguments");
+        diag_error(node->loc, "CALL with more than 64 arguments");
         return;
     }
     IrInstr *call = new_instr(IR_CALL_PROGRAM, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY);
@@ -4226,7 +4335,7 @@ static void lower_inspect_pass(IrProgram *ir, AstNode *node, bool tallying) {
     FieldRef subject;
     if (!resolve_ref(ir, node->extra, &subject)) return;
     if (subject.var->is_numeric && subject.var->usage_type != USAGE_DISPLAY && !subject.refmod) {
-        cobalt_error_loc(NULL, node->loc.line, node->loc.column, "INSPECT requires a DISPLAY item");
+        diag_error(node->loc, "INSPECT requires a DISPLAY item");
         return;
     }
 
@@ -4249,8 +4358,7 @@ static void lower_inspect_pass(IrProgram *ir, AstNode *node, bool tallying) {
         int plen = 1, rlen = 0, blen = 0, alen = 0;
         if (item->extra && !inspect_operand(ir, item->extra, pat, sizeof(pat), &plen, 0)) return;
         if (plen < 0 && (item->on_error || convert)) {
-            cobalt_error_loc(NULL, item->loc.line, item->loc.column,
-                             "INSPECT operands of variable length are not supported yet");
+            diag_error(item->loc, "INSPECT operands of variable length are not supported yet");
             return;
         }
         if (item->on_error &&
@@ -4258,8 +4366,7 @@ static void lower_inspect_pass(IrProgram *ir, AstNode *node, bool tallying) {
         if (item->not_on_error && !inspect_operand(ir, item->not_on_error, before, sizeof(before), &blen, 0)) return;
         if (item->children && !inspect_operand(ir, item->children, after, sizeof(after), &alen, 0)) return;
         if (item->on_error && rlen != plen) {
-            cobalt_error_loc(NULL, item->loc.line, item->loc.column,
-                             "INSPECT replacement must be as long as what it replaces");
+            diag_error(item->loc, "INSPECT replacement must be as long as what it replaces");
             return;
         }
 
@@ -4357,8 +4464,7 @@ static bool check_text_receiver(AstNode *ref, const char *role) {
     VarInfo *v = find_item(ref, true);
     if (!v) return false;
     if (!ref->loop && (v->is_numeric || v->mask || v->is_cond)) {
-        cobalt_error_loc(NULL, ref->loc.line, ref->loc.column,
-                         "%s '%s' must be an alphanumeric item", role, ref->name);
+        diag_error(ref->loc, "%s '%s' must be an alphanumeric item", role, ref->name);
         return false;
     }
     return true;
@@ -4381,8 +4487,7 @@ static void lower_string(IrProgram *ir, AstNode *node) {
             VarInfo *sv = find_item(src, true);
             if (!sv) return;
             if (sv->is_numeric && !src->loop && (sv->usage_type != USAGE_DISPLAY || sv->decimal_places != 0)) {
-                cobalt_error_loc(NULL, src->loc.line, src->loc.column,
-                                 "A numeric STRING operand must be an integer DISPLAY item ('%s')", src->name);
+                diag_error(src->loc, "A numeric STRING operand must be an integer DISPLAY item ('%s')", src->name);
                 return;
             }
         }
@@ -4473,8 +4578,7 @@ static void lower_unstring(IrProgram *ir, AstNode *node) {
         bool numeric = rv->is_numeric && !r->loop;
         if (!numeric && !check_text_receiver(r, "UNSTRING receiving item")) return;
         if (numeric && rv->usage_type != USAGE_DISPLAY) {
-            cobalt_error_loc(NULL, r->loc.line, r->loc.column,
-                             "A numeric UNSTRING receiving item must be DISPLAY ('%s')", r->name);
+            diag_error(r->loc, "A numeric UNSTRING receiving item must be DISPLAY ('%s')", r->name);
             return;
         }
         IrInstr *next = emit(ir, IR_CALL_UNSTRING_NEXT);
@@ -4660,9 +4764,11 @@ static void move_from_digits(IrProgram *ir, int n, AstNode *dest_node) {
 static void lower_accept(IrProgram *ir, AstNode *node) {
     AstNode *var_node = node->children;
     if (node->name && var_node) {
-        // ACCEPT FROM DATE (YYMMDD), DAY (YYDDD), TIME (HHMMSShh), DAY-OF-WEEK (1-7)
+        // ACCEPT FROM DATE (YYMMDD), DAY (YYDDD), TIME (HHMMSShh), DAY-OF-WEEK
+        // (1-7); DATE YYYYMMDD and DAY YYYYDDD (extensions)
         static const struct { const char *name; int kind, digits; } sources[] = {
             { "DATE", 0, 6 }, { "DAY", 1, 5 }, { "TIME", 2, 8 }, { "DAY-OF-WEEK", 3, 1 },
+            { "DATE YYYYMMDD", 4, 8 }, { "DAY YYYYDDD", 5, 7 },
         };
         for (size_t k = 0; k < sizeof(sources) / sizeof(sources[0]); k++) {
             if (strcmp(node->name, sources[k].name) != 0) continue;
@@ -4672,7 +4778,7 @@ static void lower_accept(IrProgram *ir, AstNode *node) {
         }
     }
     if (!var_node || var_node->kind != AST_IDENTIFIER) {
-        cobalt_warn("ACCEPT statement requires a variable", NULL);
+        diag_error(node->loc, "ACCEPT requires a data item to receive the input");
         return;
     }
     FieldRef f;
@@ -4905,8 +5011,7 @@ static void lower_initial_value(IrProgram *ir, int idx) {
     long total = 1;
     for (int d = 0; d < ndims; d++) { subs[d] = 1; total *= counts[d]; }
     if (total > 100000) {
-        cobalt_error_loc(NULL, v->decl->loc.line, v->decl->loc.column,
-                         "VALUE in a table of more than 100000 occurrences is not supported ('%s')", v->name);
+        diag_error(v->decl->loc, "VALUE in a table of more than 100000 occurrences is not supported ('%s')", v->name);
         return;
     }
     for (long k = 0; k < total; k++) {
@@ -4979,6 +5084,8 @@ static void emit_debug_call(IrProgram *ir, int u, const char *name, int line, co
 
 static bool proc_declarative[MAX_PROCS];
 static int proc_line[MAX_PROCS];
+static SourceLocation proc_loc[MAX_PROCS];
+static SourceLocation proc_loc_of(int p) { return proc_loc[p]; }
 
 // Debugging procedures for procedure p: a bit per debug use
 static unsigned debug_uses_of_proc(int p) {
@@ -5310,15 +5417,13 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
             VarInfo *v = find_item(u, true);
             if (!v) continue;
             if (!v->linkage || v->parent >= 0 || (v->level != 1 && v->level != 77)) {
-                cobalt_error_loc(NULL, u->loc.line, u->loc.column,
-                                 "USING item '%s' must be a level 01 or 77 LINKAGE SECTION item", v->name);
+                diag_error(u->loc, "USING item '%s' must be a level 01 or 77 LINKAGE SECTION item", v->name);
                 continue;
             }
             if (ir->nusing < 64) ir->using_slots[ir->nusing++] = record_ptr_slot[v->record];
         }
         if (div->extra && !ir->subprogram)
-            cobalt_error_loc(NULL, div->loc.line, div->loc.column,
-                             "The main program %s cannot have PROCEDURE DIVISION USING", ir->program_name);
+            diag_error(div->loc, "The main program %s cannot have PROCEDURE DIVISION USING", ir->program_name);
     }
 
     // Emit initializations: the main program at start, a subprogram on its
@@ -5385,17 +5490,19 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
         if (div->kind != AST_DIVISION || strcasecmp(div->name, "PROCEDURE") != 0) continue;
         for (AstNode *n = div->children; n; n = n->next) {
             if (n->kind == AST_SECTION || n->kind == AST_PARAGRAPH) {
-                if (num_procs >= MAX_PROCS) { cobalt_error("Too many procedures (%d limit)", MAX_PROCS); break; }
+                if (num_procs >= MAX_PROCS) { diag_error(n->loc, "Too many procedures (%d limit)", MAX_PROCS); break; }
                 proc_declarative[num_procs] = n->kind == AST_SECTION && n->is_signed;
                 proc_line[num_procs] = n->loc.line;
+                proc_loc[num_procs] = n->loc;
                 procs[num_procs++] = (ProcInfo){ n->name, NULL, n->kind == AST_SECTION };
             }
             if (n->kind == AST_SECTION) {
                 for (AstNode *p = n->children; p; p = p->next) {
                     if (p->kind != AST_PARAGRAPH) continue;
-                    if (num_procs >= MAX_PROCS) { cobalt_error("Too many procedures (%d limit)", MAX_PROCS); break; }
+                    if (num_procs >= MAX_PROCS) { diag_error(p->loc, "Too many procedures (%d limit)", MAX_PROCS); break; }
                     proc_declarative[num_procs] = n->is_signed;
                     proc_line[num_procs] = p->loc.line;
+                    proc_loc[num_procs] = p->loc;
                     procs[num_procs++] = (ProcInfo){ p->name, n->name, false };
                 }
             }
@@ -5491,7 +5598,7 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
         for (IrInstr *i = ir->head; i && !has_goto; i = i->next)
             has_goto = i->op == IR_GOTO_ALTERABLE && i->imm == p;
         if (!has_goto)
-            cobalt_error("ALTER names '%s', which does not consist of a GO TO statement", procs[p].name);
+            diag_error(proc_loc[p], "Paragraph '%s' is named in an ALTER statement, so it must consist of a single GO TO statement", procs[p].name);
     }
 
     return ir;

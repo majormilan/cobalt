@@ -19,7 +19,7 @@ static unsigned int hash_string(const char *str) {
 SymbolTable *symtab_init() {
     SymbolTable *table = malloc(sizeof(SymbolTable));
     if (!table) {
-        cobalt_error(NULL, "Failed to allocate memory for SymbolTable.");
+        cobalt_error("Failed to allocate memory for SymbolTable.");
         exit(1);
     }
     table->current_scope = NULL;
@@ -59,7 +59,7 @@ void symtab_free(SymbolTable *table) {
 void symtab_push_scope(SymbolTable *table) {
     Scope *new_scope = malloc(sizeof(Scope));
     if (!new_scope) {
-        cobalt_error(NULL, "Failed to allocate memory for new Scope.");
+        cobalt_error("Failed to allocate memory for new Scope.");
         exit(1);
     }
     memset(new_scope, 0, sizeof(Scope)); // Initialize all entries to NULL
@@ -69,7 +69,7 @@ void symtab_push_scope(SymbolTable *table) {
 
 void symtab_pop_scope(SymbolTable *table) {
     if (!table->current_scope) {
-        cobalt_error(NULL, "Attempted to pop from an empty symbol table scope stack.");
+        cobalt_error("Attempted to pop from an empty symbol table scope stack.");
         return;
     }
     Scope *old_scope = table->current_scope;
@@ -80,19 +80,19 @@ void symtab_pop_scope(SymbolTable *table) {
 
 Symbol *symtab_declare_symbol(SymbolTable *table, const char *name, SymbolKind kind, SourceLocation loc) {
     if (!table->current_scope) {
-        cobalt_error_loc(loc.filename, loc.line, loc.column, "Cannot declare symbol '%s': no active scope.", name);
+        diag_error(loc, "Cannot declare symbol '%s': no active scope.", name);
         return NULL;
     }
 
     // Check for redeclaration in current scope
     if (symtab_find_symbol_in_current_scope(table, name)) {
-        cobalt_error_loc(loc.filename, loc.line, loc.column, "Redeclaration of symbol '%s'.", name);
+        diag_error(loc, "Redeclaration of symbol '%s'.", name);
         return NULL; // Or return existing symbol, depending on desired error recovery
     }
 
     Symbol *new_sym = malloc(sizeof(Symbol));
     if (!new_sym) {
-        cobalt_error_loc(loc.filename, loc.line, loc.column, "Failed to allocate memory for symbol '%s'.", name);
+        diag_error(loc, "Failed to allocate memory for symbol '%s'.", name);
         exit(1);
     }
     memset(new_sym, 0, sizeof(Symbol)); // Initialize all fields to 0/NULL
@@ -237,7 +237,7 @@ void symtab_check_unused_symbols(SymbolTable *table) {
                 // subordinate items, so only elementary items are reported
                 if (current->is_declared && !current->is_used && current->kind == SYM_VAR &&
                     current->pic_string) {
-                    cobalt_warn_loc(current->loc.filename, current->loc.line, current->loc.column, "Unused symbol '%s'.", current->name);
+                    diag_warning(W_UNUSED, current->loc, "Data item '%s' is never used", current->name);
                 }
                 current = current->next;
             }
@@ -246,4 +246,18 @@ void symtab_check_unused_symbols(SymbolTable *table) {
         current_scope_ptr = current_scope_ptr->parent_scope;
     }
     // TODO: If nested SymbolTables exist, recursively call symtab_check_unused_symbols on table->parent
+}
+const char *symtab_closest(SymbolTable *table, const char *name, SymbolKind kind) {
+    int n = 0, cap = 256;
+    const char **names = malloc(cap * sizeof(char *));
+    for (Scope *sc = table->current_scope; sc; sc = sc->parent_scope)
+        for (int i = 0; i < HASH_TABLE_SIZE; i++)
+            for (Symbol *s = sc->entries[i]; s; s = s->next) {
+                if (s->kind != kind || !s->is_declared || !s->loc.line) continue;
+                if (n == cap) { cap *= 2; names = realloc(names, cap * sizeof(char *)); }
+                names[n++] = s->name;
+            }
+    const char *found = diag_closest(name, names, n);
+    free(names);
+    return found;
 }

@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdbool.h> // For bool type
 #include <stddef.h>  // For size_t type
+#include "diag.h"
 
 // Storage usage of a data item. The values are the runtime usage codes
 // (runtime/ABI.md section 5), so they are passed to the runtime unchanged.
@@ -146,11 +147,7 @@ typedef enum {
 } AstKind;
 
 
-typedef struct {
-    const char *filename; // File where the token/symbol is located
-    int line;
-    int column;
-} SourceLocation;
+// SourceLocation: diag.h
 
 // File organization and access mode (AST_SELECT)
 enum { FILE_ORG_SEQUENTIAL, FILE_ORG_LINE_SEQUENTIAL, FILE_ORG_RELATIVE, FILE_ORG_INDEXED };

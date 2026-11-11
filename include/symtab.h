@@ -75,6 +75,8 @@ Symbol *symtab_declare_symbol(SymbolTable *table, const char *name, SymbolKind k
 Symbol *symtab_resolve_symbol(SymbolTable *table, const char *name);
 Symbol *symtab_find_symbol_in_current_scope(SymbolTable *table, const char *name);
 void symtab_mark_symbol_as_used(Symbol *sym);
+// The declared name of the kind closest to a misspelled name, or NULL
+const char *symtab_closest(SymbolTable *table, const char *name, SymbolKind kind);
 // For reporting unused symbols (Task 2)
 void symtab_check_unused_symbols(SymbolTable *table);
 

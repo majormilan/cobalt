@@ -164,10 +164,14 @@ static void advance(Lexer *l) {
 static void skip_ws(Lexer *l) {
     while (*l->src) {
         if (*l->src == PP_MARK) {
-            // A line marker of the text manipulation (pp.c): line:column
+            // A line marker of the text manipulation (pp.c): line:column:file
             const char *p = l->src + 1;
             int line = (int)strtol(p, (char **)&p, 10);
             int col = *p == ':' ? (int)strtol(p + 1, (char **)&p, 10) : 1;
+            if (*p == ':') {
+                const char *name = diag_file_name((int)strtol(p + 1, (char **)&p, 10));
+                if (name) l->filename = name;
+            }
             if (*p == PP_MARK) p++;
             l->src = p;
             l->current_line = line;
@@ -181,6 +185,36 @@ static void skip_ws(Lexer *l) {
             advance(l);
         }
         else break;
+    }
+}
+
+// Words beyond COBOL-85: '_' in a word, more than 30 characters. Each word
+// is reported where it first appears.
+static bool word_reported(const Token *t) {
+    static char **seen;
+    static int nseen, cap;
+    for (int k = 0; k < nseen; k++)
+        if (strlen(seen[k]) == t->length && strncasecmp(seen[k], t->lexeme, t->length) == 0) return true;
+    if (nseen == cap) { cap = cap ? cap * 2 : 32; seen = realloc(seen, cap * sizeof(char *)); }
+    seen[nseen++] = strndup(t->lexeme, t->length);
+    return false;
+}
+
+static void check_word(const Lexer *l, const Token *t) {
+    if (l->quiet) return;
+    SourceLocation loc = { t->filename, t->line, t->column };
+    if (t->kind == TOK_YYYYMMDD) {
+        diag_extension(EXT_IBM, loc, "ACCEPT FROM DATE YYYYMMDD");
+        return;
+    }
+    if (t->kind != TOK_IDENT) return;
+    bool underscore = memchr(t->lexeme, '_', t->length) != NULL;
+    if ((underscore || t->length > 30) && word_reported(t)) return;
+    if (underscore)
+        diag_extension(EXT_ANY, loc, "the underscore in '%.*s'", (int)t->length, t->lexeme);
+    else if (t->length > 30) {
+        diag_extension(EXT_ANY, loc, "the %d-character word '%.*s'", (int)t->length, (int)t->length, t->lexeme);
+        diag_note_plain("COBOL-85 words have at most 30 characters");
     }
 }
 
@@ -201,6 +235,7 @@ Token make_token_public(Lexer *l, TokenKind kind, const char *start, size_t leng
     t.kind = kind;
     t.lexeme = start;
     t.length = length;
+    t.filename = l->filename;
     t.line = l->current_line;
     t.column = l->current_col - length;
     return t;
@@ -219,6 +254,7 @@ void lexer_init(Lexer *l, const char *source, const CompilerMode *mode, const ch
     l->prev = NULL;
     l->pic_next = false;
     l->decimal_comma = false;
+    l->quiet = false;
     l->comma_seen = false;
 
     // Set standard-specific keyword checker
@@ -237,7 +273,7 @@ void lexer_init(Lexer *l, const char *source, const CompilerMode *mode, const ch
 void lexer_push_source(Lexer *l, const char *new_source_content, const char *new_filename, bool free_content) {
     Lexer *new_lexer_state = malloc(sizeof(Lexer));
     if (new_lexer_state == NULL) {
-        cobalt_error(l->original_source, "Failed to allocate memory for new lexer state.");
+        cobalt_error("Failed to allocate memory for new lexer state.");
         return; // Or exit, depending on error handling strategy
     }
 
@@ -258,7 +294,7 @@ void lexer_push_source(Lexer *l, const char *new_source_content, const char *new
 
 void lexer_pop_source(Lexer *l) {
     if (l->prev == NULL) {
-        cobalt_error(l->original_source, "Attempted to pop source from an empty lexer stack.");
+        cobalt_error("Attempted to pop source from an empty lexer stack.");
         return; // Cannot pop the base lexer
     }
 
@@ -333,8 +369,22 @@ Token lexer_next(Lexer *l) {
         }
         size_t len = l->src - start;
         if (*l->src == q) advance(l);  // skip closing quote
-        else cobalt_error_loc(l->original_source, line, col, "Nonnumeric literal is not closed");
-        return make_token_public(l, TOK_STRING, start, len);
+        else if (!l->quiet) {
+            diag_error((SourceLocation){l->filename, line, col}, "Nonnumeric literal is not closed");
+            diag_note_plain("a literal ends on its line; continue a long literal on the next line "
+                            "with '-' in the indicator area and a quote before the rest");
+        }
+        Token t = make_token_public(l, TOK_STRING, start, len);
+        t.line = line;
+        t.column = col;                 // at the opening quote
+        SourceLocation loc = { l->filename, line, col };
+        if (l->quiet) return t;
+        if (q == '\'') diag_extension(EXT_IBM, loc, "a nonnumeric literal in apostrophes");
+        if (len > 160) {
+            diag_extension(EXT_ANY, loc, "a nonnumeric literal of %d characters", (int)len);
+            diag_note_plain("COBOL-85 nonnumeric literals have at most 160 characters");
+        }
+        return t;
     }
 
     // A user-defined word may start with digits ("3-DIMENSION-TBL", "25ANS")
@@ -395,6 +445,7 @@ Token lexer_next(Lexer *l) {
         while (is_ident_char(l->src[0])) advance(l); // Use non-static is_ident_char
         Token t = l->get_keyword_or_ident(l, start, l->src - start);
         if (t.kind == TOK_PIC) l->pic_next = true;
+        check_word(l, &t);
         return t;
     }
 
@@ -469,7 +520,7 @@ Token lexer_next(Lexer *l) {
         return make_token_public(l, TOK_DIV, start, 1);
     }
 
-    cobalt_error_loc(l->original_source, l->current_line, l->current_col, "Unexpected character '%c'", *l->src);
+    if (!l->quiet) diag_error((SourceLocation){l->filename, l->current_line, l->current_col}, "Unexpected character '%c'", *l->src);
     advance(l);
     return lexer_next(l);  // recovery
     } // Closing brace for while(true)

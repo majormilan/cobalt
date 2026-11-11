@@ -1,0 +1,47 @@
+tests/diag/names.cbl:16:37: error: 'TOTAL-AMONT' is not defined
+    16 |            MOVE CUSTOMER-BALANCE TO TOTAL-AMONT.
+       |                                     ^~~~~~~~~~~
+tests/diag/names.cbl:11:12: note: did you mean 'TOTAL-AMOUNT'?
+    11 |        01  TOTAL-AMOUNT          PIC S9(9)V99.
+       |            ^~~~~~~~~~~~
+tests/diag/names.cbl:17:20: error: 'CUSTOMER-NAME' is ambiguous: 2 data items have this name
+    17 |            DISPLAY CUSTOMER-NAME.
+       |                    ^~~~~~~~~~~~~
+tests/diag/names.cbl:7:16: note: it could be 'CUSTOMER-NAME OF CUSTOMER-RECORD'
+     7 |            05  CUSTOMER-NAME     PIC X(20).
+       |                ^~~~~~~~~~~~~
+tests/diag/names.cbl:10:16: note: it could be 'CUSTOMER-NAME OF SUPPLIER-RECORD'
+    10 |            05  CUSTOMER-NAME     PIC X(20).
+       |                ^~~~~~~~~~~~~
+note: qualify the name with OF or IN and the name of a group that holds it
+tests/diag/names.cbl:18:37: error: 'ORDER-RECORD' is not defined
+    18 |            DISPLAY CUSTOMER-NAME OF ORDER-RECORD.
+       |                                     ^~~~~~~~~~~~
+tests/diag/names.cbl:19:16: error: Operand 'CUSTOMER-NAME' must be numeric, but it is an alphanumeric item (PICTURE X(20))
+    19 |            ADD CUSTOMER-NAME OF CUSTOMER-RECORD TO TOTAL-AMOUNT.
+       |                ^~~~~~~~~~~~~
+tests/diag/names.cbl:7:16: note: 'CUSTOMER-NAME OF CUSTOMER-RECORD' is declared here
+     7 |            05  CUSTOMER-NAME     PIC X(20).
+       |                ^~~~~~~~~~~~~
+tests/diag/names.cbl:20:31: error: Subscript 11 of 'ENTRY-AMOUNT' is out of range 1 to 10
+    20 |            MOVE ENTRY-AMOUNT (11) TO TOTAL-AMOUNT.
+       |                               ^~
+tests/diag/names.cbl:13:16: note: 'ENTRY-AMOUNT' has OCCURS 10
+    13 |            05  ENTRY-AMOUNT      PIC 9(5) OCCURS 10 TIMES.
+       |                ^~~~~~~~~~~~
+tests/diag/names.cbl:21:17: error: 'ENTRY-AMOUNT' needs 1 subscript, 0 given
+    21 |            MOVE ENTRY-AMOUNT TO TOTAL-AMOUNT.
+       |                 ^~~~~~~~~~~~
+tests/diag/names.cbl:13:16: note: 'ENTRY-AMOUNT' has OCCURS 10
+    13 |            05  ENTRY-AMOUNT      PIC 9(5) OCCURS 10 TIMES.
+       |                ^~~~~~~~~~~~
+tests/diag/names.cbl:22:20: error: No paragraph or section is named 'PRINT-TOTALS'
+    22 |            PERFORM PRINT-TOTALS.
+       |                    ^~~~~~~~~~~~
+tests/diag/names.cbl:25:8: note: did you mean 'PRINT-TOTAL'?
+    25 |        PRINT-TOTAL.
+       |        ^~~~~~~~~~~
+tests/diag/names.cbl:23:35: error: No paragraph or section is named 'FINISH'
+    23 |            PERFORM MAIN-PARA THRU FINISH.
+       |                                   ^~~~~~
+8 errors generated.

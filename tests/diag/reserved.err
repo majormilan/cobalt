@@ -1,0 +1,5 @@
+tests/diag/reserved.cbl:2:20: error: Expected program name, found the reserved word 'VALUES'
+     2 |        PROGRAM-ID. VALUES.
+       |                    ^~~~~~
+note: a reserved word cannot be used as a name; choose another name
+1 error generated.

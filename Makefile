@@ -141,5 +141,7 @@ test: $(EXEC) check-runtime
 	echo ""; \
 	echo "Results: $$passed passed, $$failed failed, $$xfailed expected failures, $$skipped skipped"; \
 	[ $$failed -eq 0 ]
+	@echo "Running diagnostics tests..."
+	@bash tools/diag_test.sh
 
 .PHONY: all clean test runtime check-runtime

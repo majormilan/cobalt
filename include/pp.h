@@ -14,11 +14,12 @@ typedef struct {
     bool free_format;           // the source (and library texts) are in free format
 } PpOptions;
 
-// The text to compile. Lines of the result keep the line numbers of the
-// source: where copied text is inserted, the lexer finds a line marker
-// (PP_MARK line:column PP_MARK) that sets its position back. Returns NULL
-// after an error (reported).
-char *pp_process(const char *text, const char *filename, const PpOptions *opt);
+// The text to compile, of the source registered as file (diag_add_file).
+// Lines of the result keep the line numbers of the source; copied text
+// starts with a line marker (PP_MARK line:column:file PP_MARK) naming its
+// library text (registered too), and a marker after it sets the position
+// back. Returns NULL after an error (reported).
+char *pp_process(const char *text, int file, const PpOptions *opt);
 
 #define PP_MARK '\x01'
 #define PP_DEBUG_BEGIN '\x02'     // a debugging line of library text (pp.c)

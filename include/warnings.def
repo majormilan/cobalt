@@ -1,0 +1,18 @@
+/* include/warnings.def
+ * The named warnings: WARNING(id, -W name, only with -Wextra, what it reports)
+ */
+WARNING(W_UNUSED,             "unused",             0, "data items that are never referenced")
+WARNING(W_UNUSED_FILE,        "unused-file",        0, "files that are never opened")
+WARNING(W_UNUSED_PROCEDURE,   "unused-procedure",   1, "paragraphs and sections never reached")
+WARNING(W_TRUNCATE,           "truncate",           0, "literals that do not fit the item they are moved to")
+WARNING(W_NARROWING,          "narrowing",          1, "MOVE to a smaller item, losing characters or digits")
+WARNING(W_UNREACHABLE,        "unreachable",        0, "statements after GO TO, STOP RUN, EXIT PROGRAM")
+WARNING(W_CONSTANT_CONDITION, "constant-condition", 0, "conditions that are always true or always false")
+WARNING(W_DIVIDE_BY_ZERO,     "divide-by-zero",     0, "division by the literal zero")
+WARNING(W_PERFORM_RANGE,      "perform-range",      0, "PERFORM THRU whose last procedure comes before the first")
+WARNING(W_COLUMN,             "column-overflow",    0, "program text past column 72, which is ignored")
+WARNING(W_AREA,               "area",               0, "names and statements in the wrong area (A or B)")
+WARNING(W_EXTENSION,          "extension",          0, "elements outside COBOL-85 (by -X strictness)")
+WARNING(W_OBSOLETE,           "obsolete",           1, "obsolete elements of COBOL-85 (FIPS flagging)")
+WARNING(W_UNINITIALIZED,      "uninitialized",      1, "items read but never given a value")
+WARNING(W_UNCHECKED_IO,       "unchecked-io",       1, "I-O statements whose exceptions nothing handles")

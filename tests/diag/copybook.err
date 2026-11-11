@@ -1,0 +1,22 @@
+tests/diag/copybook.cbl:11:22: error: 'AFTER-COPY-X' is not defined
+    11 |            MOVE 1 TO AFTER-COPY-X.
+       |                      ^~~~~~~~~~~~
+tests/diag/copybook.cbl:8:12: note: did you mean 'AFTER-COPY'?
+     8 |        01  AFTER-COPY     PIC X(4).
+       |            ^~~~~~~~~~
+In text copied at tests/diag/copybook.cbl:7:8:
+tests/diag/copylib/BADREC.cpy:3:46: error: VALUE "TOO LONG" has 8 characters, but 'BAD-CODE' holds 3
+     3 |            05  BAD-CODE       PIC X(3) VALUE "TOO LONG".
+       |                                              ^~~~~~~~~~
+tests/diag/copylib/BADREC.cpy:3:35: note: the size of 'BAD-CODE' comes from PICTURE X(3)
+     3 |            05  BAD-CODE       PIC X(3) VALUE "TOO LONG".
+       |                                   ^
+In text copied at tests/diag/copylib/BADREC.cpy:5:12,
+                 from tests/diag/copybook.cbl:7:8:
+tests/diag/copylib/INNER.cpy:1:46: error: VALUE 1234 does not fit PICTURE '9(3)' of 'INNER-AMOUNT'
+     1 |            05  INNER-AMOUNT   PIC 9(3) VALUE 1234.
+       |                                              ^~~~
+tests/diag/copylib/INNER.cpy:1:35: note: 'INNER-AMOUNT' holds 3 integer digits and 0 decimal places
+     1 |            05  INNER-AMOUNT   PIC 9(3) VALUE 1234.
+       |                                   ^
+3 errors generated.

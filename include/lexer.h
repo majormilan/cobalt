@@ -287,6 +287,7 @@ typedef struct Lexer {
 
     bool pic_next;                  // next word is a PICTURE character-string
     bool decimal_comma;             // DECIMAL-POINT IS COMMA: ',' is the decimal point
+    bool quiet;                     // a lookahead copy: no diagnostics
 } Lexer;
 
 void lexer_init(Lexer *l, const char *source, const CompilerMode *mode, const char *filename);

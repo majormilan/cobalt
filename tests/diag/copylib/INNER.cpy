@@ -1,0 +1,1 @@
+           05  INNER-AMOUNT   PIC 9(3) VALUE 1234.

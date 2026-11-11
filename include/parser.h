@@ -7,4 +7,8 @@
 
 AstNode *parse_program(Lexer *l);
 
+// Errors for names that are not defined: they leave a sound syntax tree, so
+// the later stages run anyway (and find more)
+extern int parser_name_errors;
+
 #endif

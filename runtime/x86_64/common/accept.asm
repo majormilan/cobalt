@@ -269,7 +269,7 @@ put_digits:
 
 ; Current date or time (UTC) as digits.
 ; ARG0 = buffer, ARG1 = 0 DATE (YYMMDD), 1 DAY (YYDDD), 2 TIME (HHMMSShh),
-; 3 DAY-OF-WEEK (1 = Monday ... 7 = Sunday)
+; 3 DAY-OF-WEEK (1 = Monday ... 7 = Sunday), 4 DATE YYYYMMDD, 5 DAY YYYYDDD
 runtime_accept_date:
     push rbp
     mov rbp, rsp
@@ -368,9 +368,18 @@ runtime_accept_date:
 .year_ok:
     cmp r13, 1
     je .day
-    ; DATE: YYMMDD
+    cmp r13, 5
+    je .day
+    ; DATE: YYMMDD, or YYYYMMDD
     xor ecx, ecx
     mov rdi, r12
+    cmp r13, 4
+    jne .date_yy
+    mov rax, r10
+    mov r8, 4
+    call put_digits
+    jmp .date_mmdd
+.date_yy:
     mov rax, r10
     xor edx, edx
     push rcx
@@ -380,6 +389,7 @@ runtime_accept_date:
     mov rax, rdx
     mov r8, 2
     call put_digits
+.date_mmdd:
     mov rax, r11
     mov r8, 2
     call put_digits
@@ -412,14 +422,19 @@ runtime_accept_date:
     sub rax, rbx
     inc rax
     push rax
+    xor ecx, ecx
+    mov rdi, r12
     mov rax, r10
+    mov r8, 4
+    cmp r13, 5
+    je .day_year                        ; YYYYDDD
     xor edx, edx
     mov rcx, 100
     div rcx
     mov rax, rdx
     xor ecx, ecx
-    mov rdi, r12
     mov r8, 2
+.day_year:
     call put_digits
     pop rax
     mov r8, 3

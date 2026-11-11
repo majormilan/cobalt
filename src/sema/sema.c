@@ -32,6 +32,15 @@ typedef struct {
 static char pic_currency = '$';
 static bool pic_decimal_comma = false;
 
+static const char *usage_name(AstUsageType u) {
+    switch (u) {
+        case USAGE_COMP:  return "BINARY";
+        case USAGE_COMP3: return "PACKED-DECIMAL";
+        case USAGE_COMP5: return "COMP-5";
+        default:          return "DISPLAY";
+    }
+}
+
 static PicInfo analyze_pic(const char *pic) {
     PicInfo info = {0};
     // Symbols with their repeat factors; CR and DB become c r / d b
@@ -205,6 +214,7 @@ static void literal_digits(const char *lit, int *int_digits, int *frac_digits) {
 }
 
 static void sema_analyze_var_decl(AstNode *var_decl, SemaContext *ctx) {
+    (void)ctx;
     if (var_decl->text && atoi(var_decl->text) == 88) return; // condition-name: no storage
 
     var_decl->usage_type = USAGE_DISPLAY;
@@ -247,9 +257,13 @@ static void sema_analyze_var_decl(AstNode *var_decl, SemaContext *ctx) {
     PicInfo pic = analyze_pic(pic_str);
 
     if (pic.bad || pic.cls == PIC_INVALID) {
-        cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
-                         "PICTURE '%s' of '%s' is not valid (symbol '%c')",
-                         pic_str, var_decl->name, pic.bad ? pic.bad : '?');
+        if (pic.bad && pic.bad != '(')
+            diag_error(pic_node->loc, "Invalid PICTURE '%s' of '%s': '%c' cannot be used here",
+                       pic_str, var_decl->name, pic.bad);
+        else
+            diag_error(pic_node->loc, "Invalid PICTURE '%s' of '%s'", pic_str, var_decl->name);
+        if (pic.cls == PIC_INVALID && !pic.bad)
+            diag_note_plain("a numeric PICTURE needs at least one 9");
         return;
     }
 
@@ -257,16 +271,17 @@ static void sema_analyze_var_decl(AstNode *var_decl, SemaContext *ctx) {
         var_decl->data_size = pic.length;
         if (pic.cls == PIC_ALNUM_EDITED) var_decl->mask = strdup(pic.mask);
         if (var_decl->usage_type != USAGE_DISPLAY) {
-            cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
-                             "USAGE COMP cannot be used with alphanumeric PIC '%s'", pic_str);
+            diag_error(usage_clause_node ? usage_clause_node->loc : var_decl->loc,
+                       "USAGE %s requires a numeric PICTURE, but '%s' of '%s' is %s",
+                       usage_name(var_decl->usage_type), pic_str, var_decl->name,
+                       pic.cls == PIC_ALNUM ? "alphanumeric" : "alphanumeric edited");
         }
     } else if (pic.cls == PIC_NUMERIC_EDITED) {
         // Stored as characters: an alphanumeric item that numeric values are
         // edited into
         if (pic.digits > 18) {
-            cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
-                             "PICTURE '%s' of '%s' has %d digit positions; the maximum is 18",
-                             pic_str, var_decl->name, pic.digits);
+            diag_error(pic_node->loc, "PICTURE '%s' of '%s' has %d digit positions; the maximum is 18",
+                       pic_str, var_decl->name, pic.digits);
         }
         var_decl->data_size = pic.length;
         var_decl->mask = strdup(pic.mask);
@@ -276,9 +291,8 @@ static void sema_analyze_var_decl(AstNode *var_decl, SemaContext *ctx) {
         var_decl->is_signed = pic.is_signed;
     } else {
         if (pic.digits > 18) {
-            cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
-                             "PICTURE '%s' of '%s' has %d digits; the maximum is 18",
-                             pic_str, var_decl->name, pic.digits);
+            diag_error(pic_node->loc, "PICTURE '%s' of '%s' has %d digits; the maximum is 18",
+                       pic_str, var_decl->name, pic.digits);
         }
         var_decl->is_numeric = true;
         var_decl->is_signed = pic.is_signed;
@@ -305,8 +319,7 @@ static void sema_analyze_var_decl(AstNode *var_decl, SemaContext *ctx) {
         }
     }
     if (var_decl->blank_when_zero && !var_decl->mask) {
-        cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
-                         "BLANK WHEN ZERO requires a numeric DISPLAY or numeric edited item");
+        diag_error(var_decl->loc, "BLANK WHEN ZERO requires a numeric DISPLAY or numeric edited item");
     }
 
     // Semantic validation for VALUE clause
@@ -314,19 +327,28 @@ static void sema_analyze_var_decl(AstNode *var_decl, SemaContext *ctx) {
         if (value_literal_node->kind == AST_FIGURATIVE_CONSTANT) {
             if (strcasecmp(value_literal_node->name, "SPACES") == 0 || strcasecmp(value_literal_node->name, "SPACE") == 0) {
                 if (var_decl->is_numeric) {
-                    cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
-                                     "SPACES cannot be used with numeric variable '%s'", var_decl->name);
+                    diag_error(value_literal_node->loc, "VALUE SPACES is not valid for the numeric item '%s'", var_decl->name);
+                    diag_note(pic_node->loc, "'%s' is numeric (PICTURE %s)", var_decl->name, pic_str);
                 }
             }
         } else if (value_literal_node->kind == AST_STRING_LITERAL) {
             if (var_decl->is_numeric) {
-                cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
-                                 "String literal '%s' cannot be used with numeric variable '%s'", value_literal_node->name, var_decl->name);
+                diag_error(value_literal_node->loc, "The VALUE of the numeric item '%s' must be a numeric literal, not \"%s\"",
+                           var_decl->name, value_literal_node->name);
+                diag_note(pic_node->loc, "'%s' is numeric (PICTURE %s)", var_decl->name, pic_str);
+            }
+            else if (var_decl->data_size > 0 && (int)strlen(value_literal_node->name) > (int)var_decl->data_size &&
+                     !var_decl->is_group) {
+                diag_error(value_literal_node->loc, "VALUE \"%s\" has %d characters, but '%s' holds %d",
+                           value_literal_node->name, (int)strlen(value_literal_node->name), var_decl->name,
+                           (int)var_decl->data_size);
+                diag_note(pic_node->loc, "the size of '%s' comes from PICTURE %s", var_decl->name, pic_str);
             }
         } else if (value_literal_node->kind == AST_LITERAL_NUMBER) {
             if (!var_decl->is_numeric) {
-                cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
-                                 "Numeric literal '%s' cannot be used with alphanumeric variable '%s'", value_literal_node->name, var_decl->name);
+                diag_error(value_literal_node->loc, "The VALUE of the %s item '%s' must be a nonnumeric literal, not %s",
+                           var_decl->mask ? "numeric edited" : "alphanumeric", var_decl->name, value_literal_node->name);
+                diag_note_plain("write it in quotes: VALUE \"%s\"", value_literal_node->name);
             } else {
                 int int_digits, frac_digits;
                 literal_digits(value_literal_node->name, &int_digits, &frac_digits);
@@ -338,13 +360,16 @@ static void sema_analyze_var_decl(AstNode *var_decl, SemaContext *ctx) {
                 if (pic.scale < 0) int_capacity = pic.digits - pic.scale;
                 if (int_capacity < 0) int_capacity = 0;
                 if (int_digits > int_capacity || frac_digits > (pic.scale > 0 ? pic.scale : 0)) {
-                    cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
-                                     "VALUE %s does not fit PICTURE '%s' of '%s'",
-                                     value_literal_node->name, pic_str, var_decl->name);
+                    diag_error(value_literal_node->loc, "VALUE %s does not fit PICTURE '%s' of '%s'",
+                               value_literal_node->name, pic_str, var_decl->name);
+                    int dec = pic.scale > 0 ? pic.scale : 0;
+                    diag_note(pic_node->loc, "'%s' holds %d integer digit%s and %d decimal place%s",
+                              var_decl->name, int_capacity, int_capacity == 1 ? "" : "s", dec, dec == 1 ? "" : "s");
                 }
                 if (value_literal_node->name[0] == '-' && !pic.is_signed) {
-                    cobalt_error_loc(ctx->original_source, var_decl->loc.line, var_decl->loc.column,
-                                     "Negative VALUE %s for unsigned '%s'", value_literal_node->name, var_decl->name);
+                    diag_error(value_literal_node->loc, "VALUE %s is negative, but PICTURE '%s' of '%s' has no sign",
+                               value_literal_node->name, pic_str, var_decl->name);
+                    diag_note(pic_node->loc, "a signed PICTURE starts with S: S%s", pic_str);
                 }
             }
         }
@@ -402,8 +427,7 @@ static void sema_walk_ast(AstNode *node, SemaContext *ctx) {
             break;
         case AST_STATEMENT_ACCEPT:
             if (!node->children || node->children->kind != AST_IDENTIFIER) {
-                cobalt_error_loc(ctx->original_source, node->loc.line, node->loc.column,
-                                 "ACCEPT statement requires an identifier (variable name)");
+                diag_error(node->loc, "ACCEPT statement requires an identifier (variable name)");
             } else {
                 // Future: Check if the identifier is a declared variable.
                 // For now, just ensure it's an identifier.

@@ -1,0 +1,50 @@
+tests/diag/values.cbl:6:47: error: VALUE 1000 does not fit PICTURE '9(3)' of 'COUNTER'
+     6 |        01  COUNTER        PIC 9(3)      VALUE 1000.
+       |                                               ^~~~
+tests/diag/values.cbl:6:31: note: 'COUNTER' holds 3 integer digits and 0 decimal places
+     6 |        01  COUNTER        PIC 9(3)      VALUE 1000.
+       |                               ^
+tests/diag/values.cbl:7:47: error: VALUE 1.234 does not fit PICTURE '9V99' of 'RATE'
+     7 |        01  RATE           PIC 9V99      VALUE 1.234.
+       |                                               ^
+tests/diag/values.cbl:7:31: note: 'RATE' holds 1 integer digit and 2 decimal places
+     7 |        01  RATE           PIC 9V99      VALUE 1.234.
+       |                               ^~~~
+tests/diag/values.cbl:8:47: error: VALUE -12.50 is negative, but PICTURE '9(5)V99' of 'BALANCE' has no sign
+     8 |        01  BALANCE        PIC 9(5)V99   VALUE -12.50.
+       |                                               ^~~
+tests/diag/values.cbl:8:31: note: a signed PICTURE starts with S: S9(5)V99
+     8 |        01  BALANCE        PIC 9(5)V99   VALUE -12.50.
+       |                               ^
+tests/diag/values.cbl:9:47: error: VALUE "ABCD" has 4 characters, but 'CODE-X' holds 3
+     9 |        01  CODE-X         PIC X(3)      VALUE "ABCD".
+       |                                               ^~~~~~
+tests/diag/values.cbl:9:31: note: the size of 'CODE-X' comes from PICTURE X(3)
+     9 |        01  CODE-X         PIC X(3)      VALUE "ABCD".
+       |                               ^
+tests/diag/values.cbl:10:47: error: The VALUE of the numeric item 'AMOUNT' must be a numeric literal, not "12"
+    10 |        01  AMOUNT         PIC 9(5)      VALUE "12".
+       |                                               ^~~~
+tests/diag/values.cbl:10:31: note: 'AMOUNT' is numeric (PICTURE 9(5))
+    10 |        01  AMOUNT         PIC 9(5)      VALUE "12".
+       |                               ^
+tests/diag/values.cbl:11:47: error: The VALUE of the alphanumeric item 'NAME-X' must be a nonnumeric literal, not 42
+    11 |        01  NAME-X         PIC X(10)     VALUE 42.
+       |                                               ^~
+note: write it in quotes: VALUE "42"
+tests/diag/values.cbl:12:31: error: PICTURE '9(20)' of 'HUGE' has 20 digits; the maximum is 18
+    12 |        01  HUGE           PIC 9(20).
+       |                               ^
+tests/diag/values.cbl:13:31: error: Invalid PICTURE '9(3)Q' of 'BAD-PIC': 'Q' cannot be used here
+    13 |        01  BAD-PIC        PIC 9(3)Q.
+       |                               ^
+tests/diag/values.cbl:14:41: error: USAGE PACKED-DECIMAL requires a numeric PICTURE, but 'X(4)' of 'PACKED-NAME' is alphanumeric
+    14 |        01  PACKED-NAME    PIC X(4)      USAGE PACKED-DECIMAL.
+       |                                         ^~~~~
+tests/diag/values.cbl:15:47: error: VALUE SPACES is not valid for the numeric item 'NUM-SPACES'
+    15 |        01  NUM-SPACES     PIC 9(4)      VALUE SPACES.
+       |                                               ^~~~~~
+tests/diag/values.cbl:15:31: note: 'NUM-SPACES' is numeric (PICTURE 9(4))
+    15 |        01  NUM-SPACES     PIC 9(4)      VALUE SPACES.
+       |                               ^
+10 errors generated.

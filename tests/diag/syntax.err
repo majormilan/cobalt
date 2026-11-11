@@ -1,0 +1,30 @@
+tests/diag/syntax.cbl:10:28: error: Expected an operand after '+', found '.'
+    10 |            COMPUTE A = A + .
+       |                            ^
+tests/diag/syntax.cbl:11:30: error: Expected ')' in arithmetic expression, found '.'
+    11 |            COMPUTE B = (A * 2.
+       |                              ^
+tests/diag/syntax.cbl:11:24: note: to match this '('
+    11 |            COMPUTE B = (A * 2.
+       |                        ^
+tests/diag/syntax.cbl:13:12: error: ELSE without a matching IF
+    13 |            ELSE MOVE 2 TO B.
+       |            ^~~~
+note: a period ends every statement still open, including IF and EVALUATE
+tests/diag/syntax.cbl:14:42: error: 'END-IF' does not end any statement here
+    14 |            IF A = 1 DISPLAY "ONE" END-IF END-IF.
+       |                                          ^~~~~~
+tests/diag/syntax.cbl:15:19: error: Expected TO or GIVING in the ADD statement, found '.'
+    15 |            ADD 1 A.
+       |                   ^
+tests/diag/syntax.cbl:16:15: error: 'A' is not a condition-name, so it is not a condition by itself
+    16 |            IF A DISPLAY "A" END-IF.
+       |               ^
+tests/diag/syntax.cbl:16:17: note: expected a relational operator (=, >, <, ...), a class or a sign condition here, found 'DISPLAY'
+    16 |            IF A DISPLAY "A" END-IF.
+       |                 ^~~~~~~
+tests/diag/syntax.cbl:18:24: error: Nonnumeric literal is not closed
+    18 |            DISPLAY "X" "Y
+       |                        ^~
+note: a literal ends on its line; continue a long literal on the next line with '-' in the indicator area and a quote before the rest
+7 errors generated.

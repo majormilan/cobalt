@@ -119,23 +119,40 @@ static bool words_equal(const char *ta, const Word *a, const char *tb, const Wor
 }
 
 // Line (1-based) and column of offset p in t, counting line markers
-// Where offset p of t is (line and column from 1). A cursor carries on from
-// the previous position asked for, so walking forward through a text is linear
-typedef struct { size_t at, line_start; int line; } Cursor;
+// Where offset p of t is (line and column from 1, and the file). A cursor
+// carries on from the previous position asked for, so walking forward
+// through a text is linear. Line markers of copied text (PP_MARK
+// line:column:file PP_MARK) set the position.
+typedef struct { size_t at, line_start; int line; int file, base; bool set; } Cursor;
+
+static Cursor cursor(int file) { return (Cursor){ 0, 0, 1, file, file, true }; }
 
 static void position_at(const char *t, Cursor *cur, size_t p, int *line, int *col) {
-    if (p < cur->at) *cur = (Cursor){ 0, 0, 1 };
-    if (cur->line == 0) cur->line = 1;
-    for (size_t k = cur->at; k < p && t[k]; k++)
+    if (p < cur->at) *cur = cursor(cur->base);
+    for (size_t k = cur->at; k < p && t[k]; k++) {
         if (t[k] == '\n') { cur->line++; cur->line_start = k + 1; }
+        else if (t[k] == PP_MARK) {
+            char *e;
+            int l = (int)strtol(t + k + 1, &e, 10);
+            int c = *e == ':' ? (int)strtol(e + 1, &e, 10) : 1;
+            if (*e == ':') cur->file = (int)strtol(e + 1, &e, 10);
+            if (*e == PP_MARK) e++;
+            size_t end = (size_t)(e - t);
+            cur->line = l;
+            cur->line_start = end >= (size_t)(c - 1) ? end - (size_t)(c - 1) : 0;
+            k = end - 1;
+        }
+    }
     cur->at = p;
     *line = cur->line;
     *col = (int)(p - cur->line_start) + 1;
 }
 
-static void position(const char *t, size_t p, int *line, int *col) {
-    Cursor cur = {0};
-    position_at(t, &cur, p, line, col);
+static SourceLocation position(const char *t, int file, size_t p) {
+    Cursor cur = cursor(file);
+    int line, col;
+    position_at(t, &cur, p, &line, &col);
+    return (SourceLocation){ diag_file_name(cur.file), line, col };
 }
 
 // ── Comment entries ─────────────────────────────────────────────────────────
@@ -384,7 +401,7 @@ static void put_words(Buf *out, const char *t, const Word *w, int n) {
 
 // Apply patterns to t; with statements, REPLACE statements in t set the
 // patterns (and are removed). Returns the new text.
-static char *replace_text(const char *t, Patterns *fixed, bool statements, const char *filename) {
+static char *replace_text(const char *t, Patterns *fixed, bool statements, int file) {
     Words ws = {0};
     tokenize(t, &ws);
     Buf out = {0};
@@ -403,9 +420,7 @@ static char *replace_text(const char *t, Patterns *fixed, bool statements, const
             if (word_is(t, &ws.w[j], "OFF")) { j++; ok = true; }
             else ok = parse_pairs(t, &ws, &j, &np, true);
             if (!ok || j >= ws.n || ws.w[j].kind != W_PERIOD) {
-                int line, col;
-                position(t, w->start, &line, &col);
-                cobalt_error_loc(t, line, col, "Malformed REPLACE statement");
+                diag_error(position(t, file, w->start), "Malformed REPLACE statement");
                 patterns_free(&np);
                 i++;
                 continue;
@@ -436,7 +451,6 @@ static char *replace_text(const char *t, Patterns *fixed, bool statements, const
         if (!matched) i++;
     }
     put(&out, t + last, strlen(t + last));
-    (void)filename;
     patterns_free(&active);
     free(ws.w);
     return out.buf;
@@ -450,34 +464,41 @@ static char *word_text(const char *t, const Word *w) {
     return strndup(t + s, e - s);
 }
 
-static bool expand(Buf *out, const char *t, const char *filename, int depth, const PpOptions *opt);
+static bool expand(Buf *out, const char *t, int file, int depth, const PpOptions *opt);
 
-static char *load_text(const char *path, const PpOptions *opt) {
-    char *raw = read_whole(path);
-    if (!raw) return NULL;
-    if (opt->free_format) return raw;
+static char *load_text(const char *raw, const PpOptions *opt) {
+    if (opt->free_format) return strdup(raw);
     lexer_mark_debugging_lines(true);
     char *conv = lexer_reference_format(raw);
     lexer_mark_debugging_lines(false);
-    free(raw);
     return conv;
 }
 
-static bool expand(Buf *out, const char *t, const char *filename, int depth, const PpOptions *opt) {
+static void mark(Buf *out, int line, int col, int file) {
+    char m[64];
+    snprintf(m, sizeof(m), "%c%d:%d:%d%c", PP_MARK, line, col, file, PP_MARK);
+    puts_(out, m);
+}
+
+// The COPY statements of text t (of the given file), expanded into out. The
+// copied text starts with a line marker naming its file; a marker after it
+// returns to the position after the COPY statement.
+static bool expand(Buf *out, const char *t, int file, int depth, const PpOptions *opt) {
     Words ws = {0};
     tokenize(t, &ws);
     size_t last = 0;
     bool pseudo = false, ok = true;
-    Cursor cur = {0};
+    Cursor cur = cursor(file);
     for (int i = 0; i < ws.n; i++) {
         Word *w = &ws.w[i];
         if (w->kind == W_PSEUDO) { pseudo = !pseudo; continue; }
         if (pseudo || !word_is(t, w, "COPY")) continue;
         int line, col;
         position_at(t, &cur, w->start, &line, &col);
+        SourceLocation at = { diag_file_name(cur.file), line, col };
         int j = i + 1;
         if (j >= ws.n || (ws.w[j].kind != W_WORD && ws.w[j].kind != W_LIT)) {
-            cobalt_error_loc(depth ? NULL : t, line, col, "Expected a text-name after COPY");
+            diag_error(at, "Expected a text-name after COPY");
             ok = false;
             continue;
         }
@@ -496,44 +517,55 @@ static bool expand(Buf *out, const char *t, const char *filename, int depth, con
             good = parse_pairs(t, &ws, &j, &ps, false);
         }
         if (!good || j >= ws.n || ws.w[j].kind != W_PERIOD) {
-            cobalt_error_loc(depth ? NULL : t, line, col, "Malformed COPY statement");
+            diag_error(at, "Malformed COPY statement");
+            if (j < ws.n && ws.w[j].kind != W_PERIOD && good)
+                diag_note_plain("a COPY statement ends with a period; REPLACING operands are pseudo-text (==...==), "
+                                "identifiers, literals or words");
             free(name); free(library); patterns_free(&ps);
             ok = false;
             continue;
         }
-        char *path = find_text(name, library, filename, opt);
-        char *lib = path ? load_text(path, opt) : NULL;
-        if (!lib) {
-            cobalt_error_loc(depth ? NULL : t, line, col, "Cannot find text '%s'%s%s for COPY", name,
-                             library ? " in library " : "", library ? library : "");
+        char *path = find_text(name, library, diag_file_name(file), opt);
+        char *raw = path ? read_whole(path) : NULL;
+        if (!raw) {
+            diag_error(at, "Cannot find text '%s'%s%s for COPY", name,
+                       library ? " in library " : "", library ? library : "");
+            if (opt->ndirs) {
+                char dirs[512] = "";
+                for (int d = 0; d < opt->ndirs; d++)
+                    snprintf(dirs + strlen(dirs), sizeof(dirs) - strlen(dirs), "%s%s", d ? ", " : "", opt->dirs[d]);
+                diag_note_plain("searched the directory of the source and %s", dirs);
+            } else {
+                diag_note_plain("searched the directory of the source; add copy library directories with -I DIR");
+            }
             free(name); free(library); free(path); patterns_free(&ps);
             ok = false;
             i = j;
             continue;
         }
         if (depth > 50) {
-            cobalt_error_loc(depth ? NULL : t, line, col, "COPY nested too deeply (recursive COPY of '%s'?)", name);
-            free(name); free(library); free(path); free(lib); patterns_free(&ps);
+            diag_error(at, "COPY nested too deeply (recursive COPY of '%s'?)", name);
+            free(name); free(library); free(path); free(raw); patterns_free(&ps);
             free(ws.w);
             return false;
         }
+        char *lib = load_text(raw, opt);
+        int lib_file = diag_add_file(path, raw, cur.file, at);
+        free(raw);
         put(out, t + last, w->start - last);
         if (ps.n) {
-            char *r = replace_text(lib, &ps, false, path);
+            char *r = replace_text(lib, &ps, false, lib_file);
             free(lib);
             lib = r;
         }
         put(out, " ", 1);
-        ok = expand(out, lib, path, depth + 1, opt) && ok;
+        mark(out, 1, 1, lib_file);
+        ok = expand(out, lib, lib_file, depth + 1, opt) && ok;
         put(out, " ", 1);
         last = ws.w[j].end;
-        if (depth == 0) {
-            int l, c;
-            position_at(t, &cur, last, &l, &c);
-            char mark[48];
-            snprintf(mark, sizeof(mark), "%c%d:%d%c", PP_MARK, l, c, PP_MARK);
-            puts_(out, mark);
-        }
+        int l, c;
+        position_at(t, &cur, last, &l, &c);
+        mark(out, l, c, cur.file);
         free(name); free(library); free(path); free(lib); patterns_free(&ps);
         i = j;
     }
@@ -552,19 +584,19 @@ static bool mentions(const char *t, const char *w) {
     return false;
 }
 
-char *pp_process(const char *text, const char *filename, const PpOptions *opt) {
+char *pp_process(const char *text, int file, const PpOptions *opt) {
     char *t = strdup(text);
     if (!opt->free_format) blank_comment_entries(t);
     if (mentions(t, "COPY")) {
         Buf out = {0};
         put(&out, "", 0);
-        bool ok = expand(&out, t, filename, 0, opt);
+        bool ok = expand(&out, t, file, 0, opt);
         free(t);
         if (!ok) { free(out.buf); return NULL; }
         t = out.buf;
     }
     if (mentions(t, "REPLACE")) {
-        char *r = replace_text(t, NULL, true, filename);
+        char *r = replace_text(t, NULL, true, file);
         free(t);
         t = r;
     }
