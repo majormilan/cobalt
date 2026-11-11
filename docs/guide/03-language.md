@@ -31,8 +31,11 @@ treated; chapter 7 how programs behave when they run.
 - Lines may end with LF or CR LF.
 
 **Free format** (`-F`, an extension): the program text may start in column 1
-and run to the end of the line. There are no indicators, comments or
-debugging lines in free format.
+and run to the end of the line. There are no indicators or debugging lines
+in free format; comments are floating comments.
+
+**Floating comments** (`*>`, an extension from COBOL 2002): from `*>` to the
+end of the line, in either format, outside literals.
 
 Words are case-insensitive; literals keep their case.
 
@@ -188,7 +191,12 @@ are accepted silently, with a warning or rejected (chapter 4):
   than 160 characters;
 - the RETURN-CODE special register;
 - free-form reference format (`-F`);
-- ORGANIZATION LINE SEQUENTIAL.
+- ORGANIZATION LINE SEQUENTIAL;
+- from COBOL 2002 (IBM Enterprise COBOL has them too): floating comments
+  (`*>`); GOBACK, which returns from a called program and ends the run in
+  the main program; EXIT PERFORM, which leaves the inline PERFORM it is in,
+  and EXIT PERFORM CYCLE, which ends its current iteration; EXIT PARAGRAPH
+  and EXIT SECTION, which go to the end of the paragraph or section.
 
 ## Not supported
 
@@ -198,6 +206,12 @@ are accepted silently, with a warning or rejected (chapter 4):
 - ASSIGN to a data item (`ASSIGN TO identifier` names the file by the word
   itself, chapter 6).
 - USAGE COMP-1 and COMP-2 (floating point), EBCDIC data.
-- Comments within lines (`*>`) and comments in free format.
-- The elements of later standards: GOBACK, LOCAL-STORAGE, pointers,
-  object orientation, and so on (`-S` accepts only COBOL-85).
+- The other elements of later standards and vendor dialects. cobalt
+  recognizes the common ones and says what they are, instead of a syntax
+  error: LOCAL-STORAGE and SCREEN SECTION, level 78, USAGE POINTER,
+  NATIONAL, BINARY-LONG and the other COBOL 2002 usages, the intrinsic
+  functions of COBOL 2002 and 2014 (TRIM, CONCATENATE, ...), CALL ...
+  RETURNING, DISPLAY ... AT, ACCEPT ... FROM ENVIRONMENT or COMMAND-LINE,
+  ENTRY, the object-oriented statements, EXEC SQL / CICS blocks (which need a
+  precompiler), and compiler-directing lines (`>>SOURCE`, `$SET`, IBM
+  `PROCESS` / `CBL`).

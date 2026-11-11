@@ -20,6 +20,7 @@
 #define COBALT_DIAG_H
 
 #include <stdbool.h>
+#include <stddef.h>
 
 typedef struct {
     const char *filename; // File where the token/symbol is located
@@ -79,6 +80,13 @@ void diag_note_plain(const char *fmt, ...) __attribute__((format(printf, 1, 2)))
 // An element outside the standard: false when it is rejected (an error)
 bool diag_extension(ExtensionOwner owner, SourceLocation loc, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 bool diag_warning_enabled(Warning w);
+void diag_quiet_flow_warnings(void);
+
+// Elements of later standards and vendor dialects that cobalt does not
+// support (src/diag/later.c): an error naming what the word is, if it is one
+typedef enum { LATER_STATEMENT, LATER_USAGE, LATER_SECTION, LATER_FUNCTION, LATER_PHRASE } LaterContext;
+bool diag_later_element(SourceLocation loc, LaterContext where, const char *word, size_t len);
+bool diag_later_directive(SourceLocation loc, const char *text, size_t len);
 // Errors and warnings so far, printed at the end ("2 errors and 1 warning generated.")
 void diag_summary(void);
 

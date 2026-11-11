@@ -32,6 +32,10 @@ The extensions cobalt knows:
 | PICTURE character-strings longer than 30 characters | no |
 | Nonnumeric literals longer than 160 characters | no |
 | Free-form reference format (`-F`) | no |
+| Floating comments (`*>`) | yes |
+| GOBACK | yes |
+| EXIT PERFORM, EXIT PERFORM CYCLE | yes |
+| EXIT PARAGRAPH, EXIT SECTION | yes |
 
 Under `normal` an extension gives one warning where it first appears (a
 long word: once, not at every use):

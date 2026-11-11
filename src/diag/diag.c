@@ -130,6 +130,16 @@ void diag_print_warning_help(void) {
         printf("        %-20s %s%s\n", warnings[w].name, warnings[w].text, warnings[w].extra ? " (-Wextra)" : "");
 }
 
+// After statements were dropped by error recovery: the warnings that
+// depend on every statement being there (a dropped MOVE would make an item
+// "never given a value", a dropped PERFORM a paragraph "never reached")
+void diag_quiet_flow_warnings(void) {
+    init();
+    static const Warning flow[] = { W_UNUSED, W_UNUSED_FILE, W_UNUSED_PROCEDURE, W_UNINITIALIZED,
+                                    W_UNREACHABLE, W_UNCHECKED_IO, W_PERFORM_RANGE };
+    for (size_t k = 0; k < sizeof(flow) / sizeof(flow[0]); k++) enabled[flow[k]] = false;
+}
+
 bool diag_warning_enabled(Warning w) {
     init();
     return !no_warnings && enabled[w];
@@ -297,6 +307,9 @@ void diag_error(SourceLocation loc, const char *fmt, ...) {
     vsnprintf(text, sizeof(text), fmt, ap);
     va_end(ap);
     if (repeated(loc, text)) { last_shown = false; return; }
+    // A second error at a place that already has one follows from the first
+    // (a later stage tripping over what an earlier one rejected)
+    if (repeated(loc, "\1error here")) { last_shown = false; return; }
     error_count++;
     show_inclusion(loc);
     location_prefix(loc);

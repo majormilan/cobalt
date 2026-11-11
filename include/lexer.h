@@ -304,6 +304,15 @@ void lexer_set_format_file(const char *name);
 // and columns are kept; comment lines become empty and continuation lines
 // are joined to the line they continue. Returns a new buffer.
 char *lexer_reference_format(const char *src);
+
+// Floating comments (COBOL 2002, IBM): '*>' outside a literal, to the end of
+// the line, replaced by spaces in place (columns kept); reported once per
+// file as an extension
+void lexer_strip_floating_comments(char *text, const char *file);
+
+// Compiler-directing lines of later standards and vendors (>>SOURCE, $SET,
+// PROCESS / CBL before the program): reported, then blanked in place
+void lexer_check_directives(char *raw, const char *file, bool free_format);
 bool lexer_debugging_mode(const char *src);     // WITH DEBUGGING MODE in the source
 void lexer_set_debugging_lines(bool on);        // compile debugging lines (D)
 bool lexer_debugging_lines(void);

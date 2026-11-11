@@ -34,6 +34,10 @@ static void next(void) {
 // Just after the previous token: where something missing belongs
 #define AFTER_PREV ((SourceLocation){prev_tok.filename, prev_tok.line, prev_tok.column + (int)prev_tok.length})
 
+static bool is_statement_verb(void);
+static bool later_statement(const char *name, SourceLocation loc);
+static void skip_exec_block(void);
+
 // Function to synchronize parser after an error
 static void synchronize() {
     parser_panic_mode = true;
@@ -56,37 +60,16 @@ static void synchronize() {
             case TOK_PROCEDURE:
             // Section headers are also strong synchronization points
             case TOK_SECTION:
-            // Common statement keywords are good synchronization points
-            case TOK_DISPLAY:
-            case TOK_STOP:
-            case TOK_MOVE:
-            case TOK_ADD:
-            case TOK_SUBTRACT:
-            case TOK_MULTIPLY:
-            case TOK_DIVIDE:
-            case TOK_IF:
-            case TOK_PERFORM:
-            case TOK_ACCEPT:
-            case TOK_CONTINUE:
-            case TOK_COMPUTE:
-            case TOK_EVALUATE:
-            case TOK_GO:
-            case TOK_SET:
-            case TOK_INITIALIZE:
-            case TOK_SEARCH:
-            case TOK_INSPECT:
-            case TOK_ALTER:
-            case TOK_STRING_KW:
-            case TOK_UNSTRING:
-            case TOK_OPEN:
-            case TOK_CLOSE:
-            case TOK_READ:
-            case TOK_WRITE:
-            case TOK_REWRITE:
-                parser_panic_mode = false; // Reset panic mode
+                parser_panic_mode = false;
                 synced_in_sentence = true;
-                return; 
+                return;
             default:
+                // A statement verb starts the next statement
+                if (tok.kind != TOK_IDENT && tok.kind != TOK_STRING && tok.kind != TOK_NUMBER && is_statement_verb()) {
+                    parser_panic_mode = false;
+                    synced_in_sentence = true;
+                    return;
+                }
                 next(); // Keep consuming tokens
         }
     }
@@ -130,10 +113,18 @@ static char *tok_value(void) {
 // The verbs that start statements (for "did you mean")
 static const char *const statement_verbs[] = {
     "ACCEPT", "ADD", "ALTER", "CALL", "CANCEL", "CLOSE", "COMPUTE", "CONTINUE", "DELETE", "DISPLAY",
-    "DIVIDE", "EVALUATE", "EXIT", "GENERATE", "GO", "IF", "INITIALIZE", "INITIATE", "INSPECT", "MERGE",
+    "DIVIDE", "EVALUATE", "EXIT", "GENERATE", "GO", "GOBACK", "IF", "INITIALIZE", "INITIATE", "INSPECT", "MERGE",
     "MOVE", "MULTIPLY", "OPEN", "PERFORM", "READ", "RELEASE", "RETURN", "REWRITE", "SEARCH", "SET", "SORT",
     "START", "STOP", "STRING", "SUBTRACT", "SUPPRESS", "TERMINATE", "UNSTRING", "WRITE", NULL
 };
+
+// The current token is a statement verb
+static bool is_statement_verb(void) {
+    for (int k = 0; statement_verbs[k]; k++)
+        if (tok.length == strlen(statement_verbs[k]) && strncasecmp(tok.lexeme, statement_verbs[k], tok.length) == 0)
+            return true;
+    return false;
+}
 
 // The current token for a message: 'MOVE', '.', "end of file"
 static const char *tok_desc(void) {
@@ -475,7 +466,8 @@ static AstNode *parse_var_decl(void) {
             }
             {
                 if (!usage_from_token(tok.kind, &usage)) {
-                    diag_error(TOK_LOC, "Unknown USAGE %s", tok_desc());
+                    if (!diag_later_element(TOK_LOC, LATER_USAGE, tok.lexeme, tok.length))
+                        diag_error(TOK_LOC, "Unknown USAGE %s", tok_desc());
                     synchronize();
                     ast_free(var);
                     return NULL;
@@ -627,7 +619,8 @@ static AstNode *parse_var_decl(void) {
                 if (tok.kind == TOK_CHARACTER) next();
             }
         } else {
-            diag_error(TOK_LOC, "Unexpected %s in the data description entry of '%s'", tok_desc(), var->name);
+            if (!diag_later_element(TOK_LOC, LATER_USAGE, tok.lexeme, tok.length))
+                diag_error(TOK_LOC, "Unexpected %s in the data description entry of '%s'", tok_desc(), var->name);
             synchronize();
             ast_free(var);
             return NULL;
@@ -701,12 +694,21 @@ static AstNode *parse_function(void) {
 
 // A data-name that is not declared
 int parser_name_errors;
+int parser_statement_errors;
 
 static void undefined_name(SourceLocation loc, const char *name) {
     int before = error_count;
     diag_error(loc, "'%s' is not defined", name);
     parser_name_errors += error_count - before;
     const char *near = symtab_closest(current_symtab, name, SYM_VAR);
+    // A misspelled verb after a statement without its period reads as one
+    // more operand of that statement: say so
+    const char *verb = diag_closest(name, statement_verbs, -1);
+    if (verb && !near) {
+        diag_note_plain("did you mean the statement %s? Without a period or scope terminator before it, "
+                        "'%s' is read as an operand of the statement before it", verb, name);
+        return;
+    }
     if (near) {
         Symbol *s = symtab_resolve_symbol(current_symtab, near);
         if (s && s->loc.line) diag_note(s->loc, "did you mean '%s'?", near);
@@ -784,6 +786,14 @@ static AstNode *parse_identifier(void) {
     Symbol *sym = symtab_resolve_symbol(current_symtab, name);
     if ((!sym && strcasecmp(name, "RETURN-CODE") == 0) || (sym && sym->level == LEVEL_RETURN_CODE))
         sym = use_return_code(loc);
+    if (!sym && strcasecmp(name, "EXEC") == 0 &&
+        diag_later_element(loc, LATER_STATEMENT, name, 4)) {
+        // EXEC SQL in a sentence: read as an operand of the statement before it
+        diag_note_plain("without a period before it, it is read as part of the statement before it");
+        free(name);
+        skip_exec_block();
+        return id;
+    }
     if (sym) symtab_mark_symbol_as_used(sym);
     else undefined_name(loc, name);
     free(name);
@@ -1526,9 +1536,16 @@ static bool is_scope_terminator(TokenKind kind) {
 // True where a statement sequence ends: end of sentence, a phrase keyword of
 // an enclosing statement, a scope terminator, or a procedure name (a word or
 // an all-digit name; no statement starts with a number).
+// GOBACK (COBOL 2002, IBM) as a statement: not a reserved word of
+// COBOL-85, so in Area A of fixed format it is still a paragraph name
+static bool at_goback(void) {
+    return tok.kind == TOK_IDENT && tok.length == 6 && strncasecmp(tok.lexeme, "GOBACK", 6) == 0 &&
+           (current_lexer->mode->free_format || tok.column > 11);
+}
+
 static bool at_block_end(void) {
     return tok.kind == TOK_PERIOD || tok.kind == TOK_EOF || tok.kind == TOK_ELSE ||
-           tok.kind == TOK_NOT || tok.kind == TOK_WHEN || tok.kind == TOK_IDENT ||
+           tok.kind == TOK_NOT || tok.kind == TOK_WHEN || (tok.kind == TOK_IDENT && !at_goback()) ||
            tok.kind == TOK_INVALID || tok.kind == TOK_AT || tok.kind == TOK_END_OF_PAGE ||
            tok.kind == TOK_EXCEPTION || tok.kind == TOK_OVERFLOW ||
            tok.kind == TOK_NUMBER ||
@@ -2238,11 +2255,39 @@ static AstNode *parse_statement(void) {
         expect(TOK_SENTENCE, "SENTENCE");
         return ast_new(AST_STATEMENT_NEXT_SENTENCE, NULL, loc);
     }
+    else if (at_goback()) {
+        // GOBACK: EXIT PROGRAM in a called program, STOP RUN in the main one
+        diag_extension(EXT_IBM, loc, "GOBACK (COBOL 2002)");
+        next();
+        AstNode *exit_stmt = ast_new(AST_STATEMENT_EXIT, NULL, loc);
+        exit_stmt->name = strdup("GOBACK");
+        return exit_stmt;
+    }
     else if (tok.kind == TOK_EXIT) {
         next();
         AstNode *exit_stmt = ast_new(AST_STATEMENT_EXIT, NULL, loc);
         if (tok.kind == TOK_IDENT && tok.length == 7 && strncasecmp(tok.lexeme, "PROGRAM", 7) == 0) {
             exit_stmt->name = strdup("PROGRAM");
+            next();
+        } else if (tok.kind == TOK_PERFORM) {
+            // EXIT PERFORM [CYCLE] (COBOL 2002, IBM): leave the inline
+            // PERFORM, or end its iteration
+            next();
+            if (tok.kind == TOK_IDENT && tok.length == 5 && strncasecmp(tok.lexeme, "CYCLE", 5) == 0) {
+                diag_extension(EXT_IBM, loc, "EXIT PERFORM CYCLE (COBOL 2002)");
+                exit_stmt->name = strdup("CYCLE");
+                next();
+            } else {
+                diag_extension(EXT_IBM, loc, "EXIT PERFORM (COBOL 2002)");
+                exit_stmt->name = strdup("PERFORM");
+            }
+        } else if (tok.kind == TOK_SECTION ||
+                   (tok.kind == TOK_IDENT && tok.length == 9 && strncasecmp(tok.lexeme, "PARAGRAPH", 9) == 0)) {
+            // EXIT PARAGRAPH / EXIT SECTION (COBOL 2002, IBM): to the end of
+            // the paragraph or section
+            bool section = tok.kind == TOK_SECTION;
+            diag_extension(EXT_IBM, loc, "%s (COBOL 2002)", section ? "EXIT SECTION" : "EXIT PARAGRAPH");
+            exit_stmt->name = strdup(section ? "SECTION" : "PARAGRAPH");
             next();
         }
         return exit_stmt;
@@ -2884,6 +2929,12 @@ static AstNode *parse_statement(void) {
                     accept_stmt->name = strdup("DAY-OF-WEEK");
                 }
                 else if (tok.kind == TOK_TIME) accept_stmt->name = strdup("TIME");
+                else if (diag_later_element(TOK_LOC, LATER_PHRASE, tok.lexeme, tok.length)) {
+                    ast_free(accept_stmt);
+                    next();             // (ENVIRONMENT would stop the recovery)
+                    synchronize();
+                    return NULL;
+                }
                 else if (tok.kind != TOK_IDENT) { ast_free(accept_stmt); arith_error("Expected DATE, DAY, DAY-OF-WEEK, TIME or a device"); return NULL; }
                 next();
                 // DATE YYYYMMDD, DAY YYYYDDD: the year in four digits (an
@@ -2990,7 +3041,7 @@ static AstNode *parse_statement(void) {
         synchronize();
         return NULL;
     }
-    if (tok.kind != TOK_EOF) {
+    if (tok.kind != TOK_EOF && !later_statement(NULL, TOK_LOC)) {
         diag_error(TOK_LOC, "Expected a statement, found %s", tok_desc());
         synchronize(); // Try to recover
     }
@@ -3010,6 +3061,38 @@ static void check_statement_area(void) {
     if (!current_lexer->mode->free_format && tok.column >= 8 && tok.column <= 11 && tok.kind != TOK_EOF)
         diag_warning(W_AREA, TOK_LOC, "The statement %s begins in Area A (column %d); statements belong in Area B, from column 12",
                      tok_desc(), tok.column);
+}
+
+// Past an EXEC ... END-EXEC block (after its error)
+static void skip_exec_block(void) {
+    while (tok.kind != TOK_EOF && !is_division_start(tok.kind)) {
+        if (tok_is_word("END-EXEC")) { next(); return; }
+        next();
+    }
+}
+
+// A statement of a later standard or a vendor at the current token (or the
+// word already read, name / loc): reported as such, then skipped
+static bool later_statement(const char *name, SourceLocation loc) {
+    const char *word = name ? name : tok.lexeme;
+    size_t len = name ? strlen(name) : tok.length;
+    if (!name && (tok.kind == TOK_STRING || tok.kind == TOK_NUMBER || tok.kind == TOK_EOF)) return false;
+    if (!diag_later_element(name ? loc : TOK_LOC, LATER_STATEMENT, word, len)) return false;
+    if (len == 4 && strncasecmp(word, "EXEC", 4) == 0) skip_exec_block();
+    else synchronize();
+    return true;
+}
+
+// The token after statement last is a phrase of a later standard or a
+// vendor (CALL ... RETURNING, DISPLAY ... AT): reported as such
+static bool later_phrase_after(const AstNode *last) {
+    if (!last || tok.kind == TOK_EOF || tok.kind == TOK_STRING || tok.kind == TOK_NUMBER) return false;
+    bool call = last->kind == AST_STATEMENT_CALL;
+    bool console = last->kind == AST_STATEMENT_DISPLAY || last->kind == AST_STATEMENT_ACCEPT;
+    if (tok_is_word("RETURNING") && !call) return false;
+    if (tok.kind == TOK_AT && !console) return false;
+    if (!tok_is_word("RETURNING") && tok.kind != TOK_AT) return false;
+    return diag_later_element(TOK_LOC, LATER_PHRASE, tok.lexeme, tok.length);
 }
 
 // Sentence: statements up to a period. AST_SENTENCE with the statements as children.
@@ -3040,7 +3123,7 @@ static AstNode *parse_sentence(void) {
                 diag_error(TOK_LOC, "%s does not end any statement here", tok_desc());
             else if (tok.kind == TOK_WHEN)
                 diag_error(TOK_LOC, "WHEN outside an EVALUATE or SEARCH statement");
-            else
+            else if (!later_phrase_after(tail))
                 diag_error(TOK_LOC, "Unexpected %s in a sentence", tok_desc());
             if (prev_tok.kind == TOK_PERIOD &&
                 (tok.kind == TOK_ELSE || is_scope_terminator(tok.kind) || tok.kind == TOK_WHEN))
@@ -3050,7 +3133,8 @@ static AstNode *parse_sentence(void) {
         if (tok.kind != TOK_EOF && !sent->children && !parser_panic_mode && at_block_end() &&
             tok.kind != TOK_IDENT && !is_division_start(tok.kind)) next();
     } else if (error_count == errors_before && sent->children) {
-        diag_error(AFTER_PREV, "Expected '.' at the end of the sentence, before %s", tok_desc());
+        if (later_phrase_after(tail)) synchronize();
+        else diag_error(AFTER_PREV, "Expected '.' at the end of the sentence, before %s", tok_desc());
     }
     parser_panic_mode = false;
     return sent;
@@ -3159,7 +3243,7 @@ static void parse_procedure_body(AstNode *div) {
             sec = NULL;
             continue;
         }
-        if (is_procedure_name_token()) {
+        if (is_procedure_name_token() && !at_goback()) {
             SourceLocation loc = {tok.filename, tok.line, tok.column};
             char *name = tok_to_str();
             next();
@@ -3198,6 +3282,11 @@ static void parse_procedure_body(AstNode *div) {
                 // A word followed by something else: a misspelled statement
                 // rather than a paragraph name
                 const char *near = diag_closest(name, statement_verbs, -1);
+                if (later_statement(name, loc)) {
+                    free(name);
+                    parser_panic_mode = false;
+                    continue;
+                }
                 if (near || loc.column > 11 || current_lexer->mode->free_format) {
                     diag_error(loc, "Expected a statement, found '%s'", name);
                     if (near) diag_note_plain("did you mean '%s'?", near);
@@ -3788,7 +3877,8 @@ static AstNode *parse_section(void) {
         } else if (tok.kind == TOK_PERIOD) {
             next();
         } else {
-            diag_error(TOK_LOC, "Expected a data description entry, found %s", tok_desc());
+            if (!(peek_token().kind == TOK_SECTION && diag_later_element(TOK_LOC, LATER_SECTION, tok.lexeme, tok.length)))
+                diag_error(TOK_LOC, "Expected a data description entry, found %s", tok_desc());
             while (tok.kind != TOK_EOF && tok.kind != TOK_PERIOD && !is_division_start(tok.kind)) next();
         }
         if (tok.lexeme == before && tok.kind != TOK_EOF) next();   // always make progress
@@ -4367,7 +4457,9 @@ static AstNode *parse_division(void) {
         }
     }
     else if (strcasecmp(div->name, "PROCEDURE") == 0) {
+        int errors = error_count, names = parser_name_errors;
         parse_procedure_body(div);
+        parser_statement_errors += (error_count - errors) - (parser_name_errors - names);
     }
     else if (strcasecmp(div->name, "ENVIRONMENT") == 0) {
         // CONFIGURATION SECTION and I-O-CONTROL entries do not affect the

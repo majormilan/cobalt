@@ -11,4 +11,9 @@ AstNode *parse_program(Lexer *l);
 // the later stages run anyway (and find more)
 extern int parser_name_errors;
 
+// Syntax errors in the statements of the PROCEDURE DIVISION: recovery drops
+// the statement, the data and the rest of the tree are sound, so the later
+// stages run too (without the warnings a missing statement could make wrong)
+extern int parser_statement_errors;
+
 #endif

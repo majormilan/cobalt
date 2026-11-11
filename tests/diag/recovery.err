@@ -1,0 +1,17 @@
+tests/diag/recovery.cbl:10:12: error: 'DISPLY' is not defined
+    10 |            DISPLY A.
+       |            ^~~~~~
+note: did you mean the statement DISPLAY? Without a period or scope terminator before it, 'DISPLY' is read as an operand of the statement before it
+tests/diag/recovery.cbl:12:27: error: Expected an operand after '+', found '.'
+    12 |            COMPUTE A = A +.
+       |                           ^
+tests/diag/recovery.cbl:11:16: error: Operand 'B' must be numeric, but it is an alphanumeric item (PICTURE X(5))
+    11 |            ADD B TO A.
+       |                ^
+tests/diag/recovery.cbl:7:12: note: 'B' is declared here
+     7 |        01  B PIC X(5).
+       |            ^
+tests/diag/recovery.cbl:13:20: error: No paragraph or section is named 'NOPARA'
+    13 |            PERFORM NOPARA.
+       |                    ^~~~~~
+4 errors generated.

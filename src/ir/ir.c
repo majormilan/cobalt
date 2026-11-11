@@ -930,7 +930,8 @@ static void build_data(IrProgram *ir, AstNode *program) {
                     continue;
                 }
                 if (level != 1 && level != 77 && (level < 2 || level > 49)) {
-                    diag_error(decl->loc, "Level %d is not supported", level);
+                    if (level != 78 || !diag_later_element(decl->loc, LATER_SECTION, "78", 2))
+                        diag_error(decl->loc, "Level %d is not supported", level);
                     continue;
                 }
 
@@ -1317,7 +1318,8 @@ static int function_temp(const AstNode *f) {
     const FuncInfo *fi = function_info(f->name + 1);
     int idx;
     if (!fi) {
-        diag_error(f->loc, "Unknown function '%s'", f->name + 1);
+        if (!diag_later_element(f->loc, LATER_FUNCTION, f->name + 1, (size_t)-1))
+            diag_error(f->loc, "Unknown function '%s'", f->name + 1);
         idx = temp_numeric(0, f);
     } else {
         AstNode *args[1024];
@@ -2684,13 +2686,14 @@ static void check_constant_relation(AstNode *left, AstNode *right, const char *o
     // compare as scaled integers at the larger scale
     int scale = v->decimal_places > rs ? v->decimal_places : rs;
     if (scale > 18 || v->digits > 18) return;
-    long long max = 1;
+    // (128 bits: 18 digits at a scale of up to 18 more)
+    __int128 max = 1;
     for (int k = 0; k < v->digits; k++) max *= 10;
     max -= 1;                                           // at the item's scale
     for (int k = v->decimal_places; k < scale; k++) max *= 10;
-    long long lit = rv;
+    __int128 lit = rv;
     for (int k = rs; k < scale; k++) lit *= 10;
-    long long min = v->is_signed ? -max : 0;
+    __int128 min = v->is_signed ? -max : 0;
     int truth = -1;                                     // 0 always false, 1 always true
     bool eq = !strcmp(op, "="), ne = !strcmp(op, "<>");
     if (lit > max || lit < min) {
@@ -3312,6 +3315,51 @@ static void lower_varying_set(IrProgram *ir, AstNode *var, AstNode *value, bool 
     debug_item_event(ir, var, var->loc.line);
 }
 
+// The inline PERFORMs being lowered, innermost last, for EXIT PERFORM
+// [CYCLE]: where each leaves the loop and where it ends an iteration (the
+// labels are emitted only when used)
+typedef struct {
+    char exit_lbl[32], cycle_lbl[32];
+    char times_done[32];        // PERFORM TIMES: its own exit (restores its counter)
+    bool exit_used, cycle_used;
+} PerformExits;
+static PerformExits perform_exits[64];
+static int perform_depth;
+
+// EXIT PARAGRAPH / EXIT SECTION: the end of the current paragraph or section
+static int exit_para = -1, exit_sec = -1;       // the procedure, -1 outside one
+static bool exit_para_used, exit_sec_used;
+
+static void lower_exit_jump(IrProgram *ir, AstNode *node) {
+    const char *kind = node->name;
+    char lbl[48];
+    if (!strcmp(kind, "PERFORM") || !strcmp(kind, "CYCLE")) {
+        if (perform_depth == 0 || perform_depth > 64) {
+            diag_error(node->loc, "EXIT PERFORM%s is not inside an inline PERFORM", !strcmp(kind, "CYCLE") ? " CYCLE" : "");
+            return;
+        }
+        PerformExits *x = &perform_exits[perform_depth - 1];
+        if (!strcmp(kind, "CYCLE")) {
+            x->cycle_used = true;
+            emit_jump(ir, IR_JUMP, x->cycle_lbl);
+        } else {
+            x->exit_used = !x->times_done[0];
+            emit_jump(ir, IR_JUMP, x->times_done[0] ? x->times_done : x->exit_lbl);
+        }
+        return;
+    }
+    bool section = !strcmp(kind, "SECTION");
+    int proc = section ? exit_sec : exit_para;
+    if (proc < 0) {
+        diag_error(node->loc, "EXIT %s is not inside a %s", section ? "SECTION" : "PARAGRAPH",
+                   section ? "section" : "paragraph");
+        return;
+    }
+    snprintf(lbl, sizeof(lbl), "$exit_%s_%d", section ? "sec" : "para", proc);
+    if (section) exit_sec_used = true; else exit_para_used = true;
+    emit_jump(ir, IR_JUMP, lbl);
+}
+
 // The statements of one PERFORM iteration: the procedure range or the inline body
 static void lower_perform_body(IrProgram *ir, AstNode *node, int first, int last) {
     if (node->extra) {
@@ -3320,6 +3368,10 @@ static void lower_perform_body(IrProgram *ir, AstNode *node, int first, int last
         p->proc_end = last;
     } else {
         lower_block(ir, node->children);
+        if (perform_depth > 0 && perform_depth <= 64 && perform_exits[perform_depth - 1].cycle_used) {
+            emit_label(ir, perform_exits[perform_depth - 1].cycle_lbl);
+            perform_exits[perform_depth - 1].cycle_used = false;    // (each label once)
+        }
     }
 }
 
@@ -3430,7 +3482,28 @@ static void lower_varying(IrProgram *ir, AstNode *node, AstNode *clauses, int fi
     #undef COND
 }
 
+static void lower_perform_form(IrProgram *ir, AstNode *node);
+
 static void lower_perform(IrProgram *ir, AstNode *node) {
+    if (node->extra) {                  // a procedure range
+        lower_perform_form(ir, node);
+        return;
+    }
+    // An inline PERFORM: the exits of EXIT PERFORM [CYCLE]
+    if (perform_depth < 64) {
+        PerformExits *x = &perform_exits[perform_depth];
+        memset(x, 0, sizeof(*x));
+        new_label(x->exit_lbl, sizeof(x->exit_lbl), "perform_exit");
+        new_label(x->cycle_lbl, sizeof(x->cycle_lbl), "perform_cycle");
+    }
+    perform_depth++;
+    lower_perform_form(ir, node);
+    perform_depth--;
+    if (perform_depth < 64 && perform_exits[perform_depth].exit_used)
+        emit_label(ir, perform_exits[perform_depth].exit_lbl);
+}
+
+static void lower_perform_form(IrProgram *ir, AstNode *node) {
     int first = -1, last = -1;
     if (node->extra) {
         first = resolve_proc(node->extra);
@@ -3462,6 +3535,8 @@ static void lower_perform(IrProgram *ir, AstNode *node) {
         new_label(done_lbl, sizeof(done_lbl), "times_done");
         begin->var_name = strdup(loop_lbl);
         begin->jump_target = strdup(done_lbl);
+        if (!node->extra && perform_depth > 0 && perform_depth <= 64)
+            snprintf(perform_exits[perform_depth - 1].times_done, sizeof(perform_exits[0].times_done), "%s", done_lbl);
         lower_perform_body(ir, node, first, last);
         IrInstr *end = emit(ir, IR_TIMES_END);
         end->var_name = strdup(loop_lbl);
@@ -5953,7 +6028,16 @@ static void lower_node_kind(IrProgram *ir, AstNode *node) {
             lower_release_return(ir, node);
             break;
         case AST_STATEMENT_EXIT:        // marks the end of a procedure; does nothing
+            if (node->name && (!strcmp(node->name, "PERFORM") || !strcmp(node->name, "CYCLE") ||
+                               !strcmp(node->name, "PARAGRAPH") || !strcmp(node->name, "SECTION")))
+                lower_exit_jump(ir, node);
             if (node->name && strcmp(node->name, "PROGRAM") == 0) emit(ir, IR_EXIT_PROGRAM);
+            if (node->name && strcmp(node->name, "GOBACK") == 0) {
+                // returns from a called program; in the main one it has no
+                // effect, and the run ends
+                emit(ir, IR_EXIT_PROGRAM);
+                append_instr(ir, new_instr(IR_CALL_EXIT, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+            }
             break;
         case AST_STATEMENT_CONTINUE:
             break;
@@ -6519,12 +6603,14 @@ static bool proc_ends[MAX_PROCS];             // its last statement transfers co
 static bool is_transfer(const AstNode *st, bool subprogram) {
     if (st->kind == AST_STATEMENT_GOTO) return !st->extra;          // not GO TO ... DEPENDING
     if (st->kind == AST_STATEMENT_STOP) return true;                // STOP RUN
+    if (st->kind == AST_STATEMENT_EXIT && st->name && strcmp(st->name, "GOBACK") == 0) return true;
     if (st->kind == AST_STATEMENT_EXIT) return subprogram && st->name && strcmp(st->name, "PROGRAM") == 0;
     return false;
 }
 
 static const char *transfer_text(const AstNode *st) {
-    return st->kind == AST_STATEMENT_GOTO ? "GO TO" : st->kind == AST_STATEMENT_STOP ? "STOP RUN" : "EXIT PROGRAM";
+    return st->kind == AST_STATEMENT_GOTO ? "GO TO" : st->kind == AST_STATEMENT_STOP ? "STOP RUN" :
+           st->name && strcmp(st->name, "GOBACK") == 0 ? "GOBACK" : "EXIT PROGRAM";
 }
 
 // The sentences of one procedure: true if control does not fall out of them
@@ -6768,6 +6854,9 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
             entry->imm = proc;
             entry->var_name = strdup(n->name);
             current_section = (n->kind == AST_SECTION) ? n->name : NULL;
+            exit_sec = n->kind == AST_SECTION ? proc : -1;
+            exit_para = n->kind == AST_PARAGRAPH ? proc : -1;
+            exit_sec_used = exit_para_used = false;
             for (AstNode *c = n->children; c; c = c->next) {
                 if (c->kind != AST_PARAGRAPH) {
                     lower_node(ir, c);
@@ -6778,10 +6867,28 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
                 IrInstr *pe = emit(ir, IR_PROC_ENTRY);
                 pe->imm = para;
                 pe->var_name = strdup(c->name);
+                exit_para = para;
+                exit_para_used = false;
                 lower_block(ir, c->children);
+                if (exit_para_used) {
+                    char lbl[48];
+                    snprintf(lbl, sizeof(lbl), "$exit_para_%d", para);
+                    emit_label(ir, lbl);
+                }
                 emit(ir, IR_PROC_EXIT)->imm = para;
             }
+            if (exit_para_used && n->kind == AST_PARAGRAPH) {
+                char lbl[48];
+                snprintf(lbl, sizeof(lbl), "$exit_para_%d", proc);
+                emit_label(ir, lbl);
+            }
+            if (exit_sec_used) {
+                char lbl[48];
+                snprintf(lbl, sizeof(lbl), "$exit_sec_%d", proc);
+                emit_label(ir, lbl);
+            }
             emit(ir, IR_PROC_EXIT)->imm = proc;
+            exit_sec = exit_para = -1;
             current_section = NULL;
         }
     }

@@ -42,7 +42,6 @@ compilers:
 - An exponent with decimals (`2 ** 0.5`) is a size error.
 - In the Report Writer, the data-name of a SUM entry names its printed
   field, not the sum counter (chapter 3).
-- The free-form reference format has no comments: `*>` is not recognized.
 - Accepted with no effect: CODE-SET (data are ASCII), SYNCHRONIZED, RERUN,
   MEMORY SIZE, BLOCK CONTAINS, RESERVE.
 - DISPLAY UPON SYSERR writes to standard output, as all DISPLAY does.

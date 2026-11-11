@@ -194,8 +194,6 @@ DEBUGGING MODE.
 
 The language and both platforms are done; what is left:
 
-- error recovery after syntax errors, and clear messages for elements of
-  later standards and vendor extensions;
 - release notes with the known limitations;
 - continuous integration on Linux and Windows;
 - a fuzzing pass over the compiler (no crash on any input);

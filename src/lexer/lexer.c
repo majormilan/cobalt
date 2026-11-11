@@ -155,6 +155,62 @@ char *lexer_reference_format(const char *src) {
     return all.buf;
 }
 
+void lexer_check_directives(char *raw, const char *file, bool free_format) {
+    bool program_started = false;
+    int line = 1;
+    for (char *p = raw; *p; line++) {
+        char *end = strchr(p, '\n');
+        size_t len = end ? (size_t)(end - p) : strlen(p);
+        // the text of the line: from column 7 in fixed format (a directive
+        // may start in the indicator area), anywhere in free format; PROCESS
+        // and CBL may start in column 1
+        size_t from = 0;
+        while (from < len && (p[from] == ' ' || p[from] == '\t')) from++;
+        bool is_comment = !free_format && len > 6 && (p[6] == '*' || p[6] == '/');
+        size_t text = from;
+        if (!free_format && from < 6 && !program_started) text = from;          // PROCESS / CBL
+        else if (!free_format && len > 6) {
+            text = 6;
+            while (text < len && p[text] == ' ') text++;
+        }
+        if (!is_comment && text < len) {
+            const char *t = p + text;
+            size_t tl = len - text;
+            bool directive = (tl >= 2 && t[0] == '>' && t[1] == '>') || (tl >= 4 && strncasecmp(t, "$SET", 4) == 0);
+            bool options = !program_started &&
+                           ((tl >= 7 && strncasecmp(t, "PROCESS", 7) == 0 && (tl == 7 || t[7] == ' ')) ||
+                            (tl >= 3 && strncasecmp(t, "CBL", 3) == 0 && (tl == 3 || t[3] == ' ')));
+            if ((directive || options) &&
+                diag_later_directive((SourceLocation){ file, line, (int)text + 1 }, t, tl)) {
+                for (size_t k = 0; k < len; k++) if (p[k] != '\r') p[k] = ' ';
+            } else if (!directive && !options) {
+                program_started = true;
+            }
+        }
+        if (!end) break;
+        p = end + 1;
+    }
+}
+
+void lexer_strip_floating_comments(char *text, const char *file) {
+    bool reported = false;
+    int line = 1, col = 1;
+    char quote = 0;
+    for (char *p = text; *p; p++, col++) {
+        if (*p == '\n') { line++; col = 0; quote = 0; continue; }
+        if (quote) { if (*p == quote) quote = 0; continue; }
+        if (*p == '"' || *p == '\'') { quote = *p; continue; }
+        if (p[0] == '*' && p[1] == '>') {
+            if (!reported)
+                diag_extension(EXT_IBM, (SourceLocation){ file, line, col }, "The floating comment indicator *> (COBOL 2002)");
+            reported = true;
+            while (*p && *p != '\n') *p++ = ' ';
+            if (!*p) break;
+            p--;
+        }
+    }
+}
+
 static void advance(Lexer *l) {
     if (*l->src == '\n') {
         l->current_line++;
@@ -415,7 +471,8 @@ Token lexer_next(Lexer *l) {
         negative = true;
         advance(l);
     } else if (*l->src == '+' && (isdigit((unsigned char)l->src[1]) ||
-                                  l->src[1] == (l->decimal_comma ? ',' : '.'))) {
+                                  (l->src[1] == (l->decimal_comma ? ',' : '.') &&
+                                   isdigit((unsigned char)l->src[2])))) {
         char plus_point = l->decimal_comma ? ',' : '.';
         advance(l);
         if (*l->src == plus_point) { *(char *)l->src = '.'; advance(l); }
@@ -571,7 +628,11 @@ void lexer_check_columns(const char *raw, const char *filename) {
         size_t len = end ? (size_t)(end - p) : strlen(p);
         if (len > 0 && p[len - 1] == '\r') len--;
         // a word or literal cut at column 72: columns 72 and 73 both hold text
-        if (len > 72 && p[6] != '*' && p[6] != '/' && is_ident_char(p[71]) && is_ident_char(p[72])) {
+        // (not in a floating comment, which runs to the end of the line)
+        bool floating = false;
+        for (size_t k = 7; k + 1 < 72 && k + 1 < len; k++)
+            if (p[k] == '*' && p[k + 1] == '>') { floating = true; break; }
+        if (len > 72 && !floating && p[6] != '*' && p[6] != '/' && is_ident_char(p[71]) && is_ident_char(p[72])) {
             int end73 = 72, start = 71;
             while (end73 < (int)len && end73 < 80 && is_ident_char(p[end73])) end73++;
             while (start > 7 && is_ident_char(p[start - 1])) start--;

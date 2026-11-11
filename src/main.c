@@ -445,6 +445,7 @@ int main(int argc, char **argv) {
         char *source = read_file(sources[k]);
         int file = diag_add_file(sources[k], source, -1, (SourceLocation){0});
         const char *filename = diag_file_name(file);
+        lexer_check_directives(source, filename, mode.free_format);
         if (!mode.free_format) lexer_check_columns(source, filename);
         lexer_set_debugging_lines(!mode.free_format && lexer_debugging_mode(source));
         if (!mode.free_format) {
@@ -453,6 +454,7 @@ int main(int argc, char **argv) {
             free(source);
             source = converted;
         }
+        lexer_strip_floating_comments(source, filename);
         // COPY and REPLACE; the lexer reads the result, diagnostics show the
         // lines of the source
         PpOptions pp = { copy_dirs, ncopy_dirs, mode.free_format };
@@ -507,7 +509,8 @@ int main(int argc, char **argv) {
     current_filename = input_file;
     // Undefined names leave a sound syntax tree: the later stages still run,
     // and report what they find too
-    if (error_count > parser_name_errors) return 1;
+    if (error_count > parser_name_errors + parser_statement_errors) return 1;
+    if (parser_statement_errors) diag_quiet_flow_warnings();
     if (dump_ast) return 0;
 
     // Output file name: as given, or the input's name without its extension

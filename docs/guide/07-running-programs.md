@@ -94,6 +94,8 @@ matter.
   it back to its initial state for the next CALL; an INITIAL program starts
   in that state at every CALL.
 - EXIT PROGRAM returns to the caller (in the main program it does nothing);
+  GOBACK (an extension) returns to the caller, or ends the run in the main
+  program;
   STOP RUN ends the run unit, in any program.
 - Nested programs are called by their containing program, or, if COMMON, by
   their siblings. GLOBAL items and files are visible in the contained

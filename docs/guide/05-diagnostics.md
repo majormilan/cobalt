@@ -30,9 +30,19 @@ ledger.cbl:11:12: note: did you mean 'TOTAL-AMOUNT'?
   INNER.cpy:1:46: error: VALUE 1234 does not fit PICTURE '9(3)' of 'INNER-AMOUNT'
   ```
 
-- Every stage reports what it finds: a name that is not defined does not
-  stop the checks that follow, and an error found again by a later stage is
-  shown once.
+- Every stage reports what it finds. After a syntax error in a statement,
+  the statement is left out and the compilation goes on to the next one;
+  when the data and the rest of the program are sound, the later checks
+  run too, so one compilation reports the errors of the whole program. (The
+  warnings that need every statement, such as `-Wuninitialized` and
+  `-Wunused`, are then left out.) A second error at the place of an error,
+  and an error found again by a later stage, are not shown.
+- A misspelled statement gets the closest verb (`did you mean 'DISPLAY'?`),
+  also when the statement before has no period and the word reads as one of
+  its operands.
+- Elements of later standards and vendor dialects that cobalt does not
+  support are named as such: `FUNCTION TRIM is COBOL 2002, not COBOL-85;
+  cobalt does not support it`.
 - The last line counts the errors and warnings (`2 errors and 1 warning
   generated.`).
 
