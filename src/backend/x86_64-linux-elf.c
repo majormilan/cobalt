@@ -186,6 +186,8 @@ static unsigned long long pow10_ull(int n) {
 // Store V at mem when it fits; else jump to slow. bound is the largest
 // magnitude V can have, nonneg tells that V is known not to be negative: a
 // value that provably fits needs no check.
+static bool slow_used;          // the last check jumps to its slow path
+
 static void emit_binary_check(FILE *f, const IrInstr *i, RegName v, const char *slow,
                               unsigned long long bound, bool nonneg) {
     bool sign = i->flags & IR_NUM_SIGNED;
@@ -202,10 +204,12 @@ static void emit_binary_check(FILE *f, const IrInstr *i, RegName v, const char *
             fprintf(f, "    mov rcx, %lld\n", limit);
             fprintf(f, "    cmp rax, rcx\n");
             fprintf(f, "    jae %s\n", slow);
+            slow_used = true;
         } else if (!(nonneg && bound < (unsigned long long)limit)) {
             fprintf(f, "    mov rcx, %lld\n", limit);
             fprintf(f, "    cmp %s, rcx\n", v.q);
             fprintf(f, "    jae %s\n", slow);
+            slow_used = true;
         }
     } else if (sign && i->size < 8) {
         // limited by the bytes: the value survives sign extension
@@ -214,6 +218,7 @@ static void emit_binary_check(FILE *f, const IrInstr *i, RegName v, const char *
             else fprintf(f, "    movsx rax, %s\n", v.w);
             fprintf(f, "    cmp rax, %s\n", v.q);
             fprintf(f, "    jne %s\n", slow);
+            slow_used = true;
         }
     } else if (!sign) {
         bool fits = nonneg && (i->size == 8 || bound < (i->size == 4 ? 0x100000000ULL : 0x10000ULL));
@@ -222,11 +227,13 @@ static void emit_binary_check(FILE *f, const IrInstr *i, RegName v, const char *
         } else if (i->size == 8) {
             fprintf(f, "    test %s, %s\n", v.q, v.q);
             fprintf(f, "    js %s\n", slow);
+            slow_used = true;
         } else {
             if (i->size == 4) fprintf(f, "    mov eax, %s\n", v.d);
             else fprintf(f, "    movzx eax, %s\n", v.w);
             fprintf(f, "    cmp rax, %s\n", v.q);
             fprintf(f, "    jne %s\n", slow);
+            slow_used = true;
         }
     }
 }
@@ -334,6 +341,27 @@ static int vs_n;
 static bool vs_reserved[VS_NREGS];  // held by promoted fields
 static bool tgt_zero;           // cobrt_tgt_err is known to be 0
 static bool val_zero;           // cobrt_val_err is known to be 0
+static bool tgt_pending;        // cobrt_tgt_err is known to be 0 for the code,
+                                // though memory has not been cleared yet: a
+                                // clear is written only before code that can
+                                // set it, or a path that may read it
+static bool val_pending;        // ... though memory has not been cleared yet:
+                                // IR_ERR_SAVE of a zero target byte writes
+                                // nothing while its RESTORE knows it is zero
+
+// Instructions that neither branch nor read cobrt_val_err: a pending clear
+// of it can wait past them
+static bool val_pending_ok(IrOpcode op) {
+    switch (op) {
+        case IR_NUM_LOAD: case IR_NUM_CONST: case IR_NUM_RESCALE: case IR_NUM_ADD: case IR_NUM_SUB:
+        case IR_NUM_MUL: case IR_NUM_DIV: case IR_NUM_NEG: case IR_NUM_DUP: case IR_NUM_DROP:
+        case IR_NUM_SWAP: case IR_NUM_TRUNC: case IR_NUM_DEEDIT: case IR_NUM_STORE:
+        case IR_ERR_SAVE: case IR_ERR_RESTORE: case IR_SIZE_ERR_CLEAR:
+            return true;
+        default:
+            return false;
+    }
+}
 
 static void vs_push_entry(FILE *f, const VEntry *e) {
     if (e->is_const) {
@@ -761,11 +789,74 @@ static void emit_num_store_args_call(FILE *f, const IrInstr *st, int flags) {
 }
 
 // dst = the field's value in memory
+// Descriptors of items for the runtime's _d entry points: the item's address
+// and the packed arguments of one kind of call, 8 bytes in .rodata emitted
+// once per item and kind; a call then loads one register (edi)
+static NameMap desc_names;
+static char **desc_text;
+static int num_desc, cap_desc;
+
+// "mov edi, descriptor" for a static item, or false (an item reached
+// through an address slot: the caller passes its arguments as before)
+static bool emit_desc(FILE *f, const char *var_name, char kind, unsigned packed) {
+    if (!var_name || var_name[0] == '*') return false;
+    char *label = sanitize_label_name(var_name);
+    char key[192];
+    snprintf(key, sizeof(key), "%c%u:%s", kind, packed, label);
+    int k = namemap_get(&desc_names, key, strlen(key));
+    if (k < 0) {
+        if (num_desc == cap_desc) {
+            cap_desc = cap_desc ? cap_desc * 2 : 256;
+            desc_text = realloc(desc_text, (size_t)cap_desc * sizeof(char *));
+        }
+        char line[192];
+        snprintf(line, sizeof(line), "Q_%d: dd %s, %u\n", num_desc, label, packed);
+        desc_text[num_desc] = strdup(line);
+        k = num_desc++;
+        namemap_put(&desc_names, key, strlen(key), k);
+    }
+    free(label);
+    fprintf(f, "    mov edi, Q_%d\n", k);
+    return true;
+}
+
+static void emit_descriptors(FILE *f) {
+    if (num_desc) fprintf(f, "\nsection .rodata\nalign 4\n");
+    for (int k = 0; k < num_desc; k++) {
+        fputs(desc_text[k], f);
+        free(desc_text[k]);
+    }
+    free(desc_text);
+    desc_text = NULL;
+    num_desc = cap_desc = 0;
+    namemap_free(&desc_names);
+    memset(&desc_names, 0, sizeof(desc_names));
+}
+
+static bool packs_in_byte(int v) { return v >= 0 && v <= 255; }
+
+// A load of the item of i into rax through its descriptor, if it has one
+static bool emit_load_desc(FILE *f, const IrInstr *i) {
+    if (inline_packed(i)) {
+        if (!emit_desc(f, i->var_name, 'p', (unsigned)i->size)) return false;
+        fprintf(f, "    call runtime_packed_load_d\n");
+        return true;
+    }
+    if (!(i->size >= 0 && i->size <= 255 && packs_in_byte(i->usage_type) && packs_in_byte(i->flags))) return false;
+    if (!emit_desc(f, i->var_name, 'l', (unsigned)(i->size | i->usage_type << 16 | i->flags << 24))) return false;
+    fprintf(f, "    call runtime_num_load_d\n");
+    return true;
+}
+
 static void field_load_to(FILE *f, const IrInstr *i, RegName dst) {
     if (inline_binary(i)) {
         char mem[96];
         field_mem(f, i->var_name, mem, sizeof(mem));
         emit_binary_load(f, i, mem, dst);
+        return;
+    }
+    if (emit_load_desc(f, i)) {
+        fprintf(f, "    mov %s, rax\n", dst.q);
         return;
     }
     emit_addr(f, "rdi", i->var_name);
@@ -858,6 +949,14 @@ static void emit_ovf_block(int L) {
 
 // The general store: runtime_num_store of entry v into the field of st
 static void emit_num_store_call(FILE *f, const IrInstr *st, const VEntry *v) {
+    if (st->size >= 0 && st->size <= 255 && packs_in_byte(st->digits) && packs_in_byte(st->usage_type) &&
+        packs_in_byte(st->flags) && st->var_name && st->var_name[0] != '*') {
+        vs_to(f, v, "rsi");
+        emit_desc(f, st->var_name, 's',
+                  (unsigned)(st->size | st->digits << 8 | st->usage_type << 16 | st->flags << 24));
+        fprintf(f, "    call runtime_num_store_d\n");
+        return;
+    }
     vs_to(f, v, "r9");
     emit_addr(f, "rdi", st->var_name);
     emit_num_store_args_call(f, st, st->flags);
@@ -1525,6 +1624,7 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     }
     vs_n = 0;
     tgt_zero = val_zero = !ir->subprogram;     // .bss starts zeroed
+    val_pending = tgt_pending = false;
 
     i = ir->head;
 
@@ -1537,6 +1637,47 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
         if (i->var_name) sanitized_var_name = sanitize_label_name(i->var_name);
         if (i->lit_name) sanitized_lit_name = sanitize_label_name(i->lit_name);
         if (i->jump_target) sanitized_jump = sanitize_label_name(i->jump_target);
+        if (val_pending && !val_pending_ok(i->op)) {
+            // only a RESTORE of the same statement reads it: is one ahead
+            // (before the next SAVE, which sets it again)?
+            bool needed = true;
+            int budget = 400;
+            for (const IrInstr *j = i; j && budget-- > 0; j = j->next) {
+                if (j->op == IR_ERR_RESTORE) break;
+                if (j->op == IR_ERR_SAVE || j->op == IR_PROC_ENTRY || j->op == IR_PROC_EXIT ||
+                    j->op == IR_CALL_EXIT) { needed = false; break; }
+            }
+            if (needed) fprintf(f, "    mov byte [rel cobrt_val_err], 0\n");
+            else val_zero = false;      // (memory left as it was)
+            val_pending = false;
+        }
+        // A pending clear of the target byte: needed before control leaves
+        // the straight line if a path ahead reads it before it is cleared
+        bool resets = !vs_handles(i->op) && !keeps_err_state(i->op);
+        // (a promoted loop's head and back jump rely on the byte being zero
+        // in memory: always written there)
+        bool loop_edge = promo.loop && i == promo.loop->back;
+        for (int p = 0; p < plan.nloops && !loop_edge; p++)
+            if (plan.loops[p].head == i) loop_edge = true;
+        if (tgt_pending && (resets || i->jump_target || i->op == IR_PROC_EXIT || loop_edge)) {
+            if (loop_edge || !ir_tgt_err_dead_after(flow, pos - 1))
+                fprintf(f, "    mov byte [rel cobrt_tgt_err], 0\n");
+            tgt_pending = false;
+        }
+        // Code that may set the target byte while a clear is pending:
+        // buffered, and the clear written first if it does
+        FILE *direct = f;
+        char *pend_buf = NULL;
+        size_t pend_len = 0;
+        bool buffered = tgt_pending && tgt_zero &&
+                        (i->op == IR_NUM_ADD || i->op == IR_NUM_SUB || i->op == IR_NUM_MUL ||
+                         i->op == IR_NUM_DIV || i->op == IR_NUM_RESCALE || i->op == IR_NUM_NEG ||
+                         i->op == IR_NUM_TRUNC || i->op == IR_NUM_DEEDIT || i->op == IR_ERR_RESTORE ||
+                         i->op == IR_NUM_STORE || i->op == IR_ERR_SAVE);
+        if (buffered) {
+            f = mem_stream_open(&pend_buf, &pend_len);
+            if (!f) { f = direct; buffered = false; }
+        }
         if (!vs_handles(i->op)) vs_flush(f);
         if (promo.loop && i == promo.loop->back) {
             if (promo.head_tgt && !tgt_zero) fprintf(f, "    mov byte [rel cobrt_tgt_err], 0\n");
@@ -1851,12 +1992,14 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                     vs_push_reg(f, r, field_bound(i), !(i->flags & IR_NUM_SIGNED));
                     break;
                 }
-                emit_addr(f, "rdi", i->var_name);
-                if (inline_packed(i)) {
-                    fprintf(f, "    mov esi, %d\n", i->size);
-                    fprintf(f, "    call runtime_packed_load\n");
-                } else {
-                    emit_num_load_call(f, i);
+                if (!emit_load_desc(f, i)) {
+                    emit_addr(f, "rdi", i->var_name);
+                    if (inline_packed(i)) {
+                        fprintf(f, "    mov esi, %d\n", i->size);
+                        fprintf(f, "    call runtime_packed_load\n");
+                    } else {
+                        emit_num_load_call(f, i);
+                    }
                 }
                 int r = vs_alloc(f);
                 fprintf(f, "    mov %s, rax\n", vs_regs[r].q);
@@ -2244,13 +2387,14 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 // SAVE then RESTORE: the target byte stays as it is
                 if (i->next && i->next->op == IR_ERR_RESTORE) skip_restore = true;
                 if (tgt_zero) {
-                    if (!val_zero) fprintf(f, "    mov byte [rel cobrt_val_err], 0\n");
+                    if (!val_zero) val_pending = true;  // written only if needed
                     val_zero = true;
                     break;
                 }
                 fprintf(f, "    mov al, [rel cobrt_tgt_err]\n");
                 fprintf(f, "    mov [rel cobrt_val_err], al\n");
                 val_zero = false;
+                val_pending = false;
                 break;
             case IR_ERR_RESTORE:
                 if (skip_restore) {
@@ -2299,7 +2443,10 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 }
                 RegName vr = v.is_const ? vs_regs[VS_R9] : vs_regs[v.reg];
                 bool packed = inline_packed(i) && i->digits >= 1 && i->digits <= 18;
-                if (i->lit_name || (pk < 0 && !inline_binary(i) && !packed)) {
+                // a packed value that may not fit: runtime_packed_store_c checks it
+                bool packed_check = packed && pk < 0 && v.bound >= pow10_ull(i->digits) &&
+                                    i->size <= 255 && i->flags >= 0 && i->flags <= 255;
+                if (i->lit_name || (pk < 0 && !inline_binary(i) && (!packed || packed_check))) {
                     // No fast path: the runtime stores (or edits) the value
                     if (i->lit_name) {
                         vs_to(f, &v, "rcx");
@@ -2308,10 +2455,21 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                         fprintf(f, "    mov rdx, %d\n", i->size);
                         fprintf(f, "    mov r8, %d\n", i->flags);
                         fprintf(f, "    call runtime_edit_numeric\n");
+                    } else if (packed_check && i->var_name[0] != '*') {
+                        vs_to(f, &v, "rsi");
+                        emit_desc(f, i->var_name, 'c', (unsigned)(i->size | i->digits << 8 | i->flags << 16));
+                        fprintf(f, "    call runtime_packed_store_cd\n");
+                    } else if (packed_check) {
+                        vs_to(f, &v, "rdx");
+                        emit_addr(f, "rdi", i->var_name);
+                        fprintf(f, "    mov esi, %d\n", i->size | i->digits << 8 | i->flags << 16);
+                        fprintf(f, "    call runtime_packed_store_c\n");
                     } else {
                         emit_num_store_call(f, i, &v);
                     }
-                    fprintf(f, "    or [rel %s], al\n", err);
+                    // (no ON SIZE ERROR reads the statement's byte: not needed)
+                    if (!known || !ir_size_err_dead_after(flow, pos))
+                        fprintf(f, "    or [rel %s], al\n", err);
                     if (!known) {
                         fprintf(f, "L_store_%d:\n", L);
                         fprintf(f, "    mov al, [rel cobrt_tgt_err]\n");
@@ -2329,7 +2487,8 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 char slow[32];
                 snprintf(slow, sizeof(slow), "L_store_slow_%d", L);
                 if (v.is_const) fprintf(f, "    mov r9, %lld\n", v.imm);
-                fprintf(cold, "%s:\n", slow);
+                slow_used = pk >= 0;    // (promoted fields: always written)
+                if (pk >= 0) fprintf(cold, "%s:\n", slow);
                 // ON SIZE ERROR and a value that is too large (not one that is
                 // only negative for an unsigned item): a size error, the
                 // receiver unchanged, no store needed
@@ -2379,21 +2538,30 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                             fprintf(f, "    cmp rax, rcx\n");
                             fprintf(f, "    jae %s\n", slow);
                         }
-                        emit_addr(f, "rdi", i->var_name);
-                        fprintf(f, "    mov esi, %d\n", i->size);
-                        fprintf(f, "    mov rdx, %s\n", vr.q);
-                        fprintf(f, "    mov ecx, %d\n", i->flags);
-                        fprintf(f, "    call runtime_packed_store\n");
+                        if (i->var_name[0] != '*' && i->flags >= 0 && i->flags < 65536) {
+                            fprintf(f, "    mov rsi, %s\n", vr.q);
+                            emit_desc(f, i->var_name, 'f', (unsigned)(i->size | i->flags << 16));
+                            fprintf(f, "    call runtime_packed_store_d\n");
+                        } else {
+                            emit_addr(f, "rdi", i->var_name);
+                            fprintf(f, "    mov esi, %d\n", i->size);
+                            fprintf(f, "    mov rdx, %s\n", vr.q);
+                            fprintf(f, "    mov ecx, %d\n", i->flags);
+                            fprintf(f, "    call runtime_packed_store\n");
+                        }
                     }
-                    if (keep_short) {
-                        fprintf(cold, "    or byte [rel %s], 1\n", err);
-                    } else {
-                        emit_num_store_call(cold, i, &v);
-                        fprintf(cold, "    or [rel %s], al\n", err);
+                    if (slow_used) {
+                        fprintf(cold, "%s:\n", slow);
+                        if (keep_short) {
+                            fprintf(cold, "    or byte [rel %s], 1\n", err);
+                        } else {
+                            emit_num_store_call(cold, i, &v);
+                            fprintf(cold, "    or [rel %s], al\n", err);
+                        }
                     }
                 }
                 if (known) {
-                    fprintf(cold, "    jmp L_store_done_%d\n", L);
+                    if (slow_used) fprintf(cold, "    jmp L_store_done_%d\n", L);
                 } else {
                     fprintf(cold, "L_store_%d:\n", L);
                     fprintf(cold, "    mov al, [rel cobrt_tgt_err]\n");
@@ -2690,9 +2858,10 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 fprintf(f, "    call runtime_set_collation\n");
                 break;
             case IR_SIZE_ERR_CLEAR:
-                // (not when no store reads it before it is cleared again)
+                // written later, only if something can set it before it is
+                // read or cleared again (tgt_pending)
                 if (!tgt_zero && !ir_tgt_err_dead_after(flow, pos)) {
-                    fprintf(f, "    mov byte [rel cobrt_tgt_err], 0\n");
+                    tgt_pending = true;
                     tgt_zero = true;
                 }
                 // no ON SIZE ERROR reads it: no need to clear it
@@ -2706,6 +2875,16 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
             default:
                 // Handle other IR opcodes if necessary, or do nothing for IR_DATA_VAR/IR_DATA_LIT as they are handled in .bss/.data sections
                 break;
+        }
+        if (buffered) {
+            mem_stream_close(f);
+            f = direct;
+            if (!tgt_zero) {            // it may set the byte: clear it first
+                fprintf(f, "    mov byte [rel cobrt_tgt_err], 0\n");
+                tgt_pending = false;
+            }
+            fwrite(pend_buf, 1, pend_len, f);
+            free(pend_buf);
         }
         if (!vs_handles(i->op) && !keeps_err_state(i->op)) tgt_zero = val_zero = false;
         if (promo.loop && i == promo.test) fprintf(f, "L_loop_body_%d:\n", promo.id);
@@ -2732,6 +2911,7 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     cold = NULL;
     fwrite(cold_buf, 1, cold_len, f);
     free(cold_buf);
+    emit_descriptors(f);
     return ferror(f) ? 1 : 0;
 }
 

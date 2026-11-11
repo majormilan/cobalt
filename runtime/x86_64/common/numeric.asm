@@ -17,6 +17,12 @@ global runtime_num_store
 global runtime_num_load_p
 extern runtime_check_data_fail
 global runtime_num_store_p
+global runtime_packed_store_c
+global runtime_num_load_d
+global runtime_num_store_d
+global runtime_packed_load_d
+global runtime_packed_store_cd
+global runtime_packed_store_d
 global runtime_packed_load
 global runtime_packed_store
 global runtime_num_rescale
@@ -385,6 +391,75 @@ runtime_packed_load:
     cmp r8d, 0x0b
     cmove rax, rdx
     ret
+
+; The same routines called with a descriptor of the item (8 bytes the
+; compiler emits once per item and kind of call: its address, dd, then the
+; packed arguments, dd) in ARG0, and the value to store in ARG1: one
+; register to load at each call.
+runtime_num_load_d:
+    mov esi, [ARG0 + 4]
+    mov edi, [ARG0]
+    jmp runtime_num_load_p
+
+runtime_num_store_d:
+    mov r9, ARG1
+    mov esi, [ARG0 + 4]
+    mov edi, [ARG0]
+    jmp runtime_num_store_p
+
+runtime_packed_load_d:
+    mov esi, [ARG0 + 4]
+    mov edi, [ARG0]
+    jmp runtime_packed_load
+
+runtime_packed_store_cd:                ; checked: size | digits << 8 | flags << 16
+    mov rdx, ARG1
+    mov esi, [ARG0 + 4]
+    mov edi, [ARG0]
+    jmp runtime_packed_store_c
+
+runtime_packed_store_d:                 ; known to fit: size | flags << 16
+    mov rdx, ARG1
+    mov esi, [ARG0 + 4]
+    mov ecx, esi
+    shr ecx, 16
+    and esi, 0xFFFF
+    mov edi, [ARG0]
+    jmp runtime_packed_store
+
+; A packed decimal store that checks the value: ARG0 = the item, ARG1 =
+; size | digits << 8 | flags << 16, ARG2 = value (at the item's scale).
+; A value below 10^digits goes to runtime_packed_store; another to
+; runtime_num_store, which truncates it (or keeps the item, NUM_KEEP) and
+; reports the size error. Returns RET0 = 1 on size error, else 0.
+runtime_packed_store_c:
+    mov r10, ARG2
+    neg r10
+    cmovs r10, ARG2                     ; |value|
+    mov ecx, esi
+    shr ecx, 8
+    and ecx, 0xFF                       ; digits
+    lea r11, [rel pow10]
+    cmp r10, [r11 + rcx*8]
+    jae .too_large
+    mov ecx, esi
+    shr ecx, 16                         ; flags
+    and esi, 0xFF                       ; size
+    sub rsp, 8
+    call runtime_packed_store
+    add rsp, 8
+    xor eax, eax
+    ret
+.too_large:
+    mov r9, ARG2                        ; value
+    mov r8d, esi
+    shr r8d, 16                         ; flags
+    mov edx, esi
+    shr edx, 8
+    and edx, 0xFF                       ; digits
+    mov ecx, USAGE_COMP3
+    and esi, 0xFF                       ; size
+    jmp runtime_num_store
 
 ; ARG0 = COMP-3 item, ARG1 = its size (1 to 10 bytes), ARG2 = value,
 ; ARG3 = flags (NUM_SIGNED: sign nibble C or D, else F and the magnitude).
