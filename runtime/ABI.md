@@ -23,10 +23,34 @@ in sync):
 | Triple | Arch | OS | ABI | nasm `-f` | Entry symbol | Status |
 |---|---|---|---|---|---|---|
 | `x86_64-linux-elf` | x86_64 | linux | SysV | `elf64` | `_start` | [implemented] |
-| `x86_64-pc-windows-msvc` | x86_64 | windows | Win64 | `win64` | `mainCRTStartup` | [planned] |
+| `x86_64-pc-windows-msvc` | x86_64 | windows | SysV inside, Win64 to kernel32 | `elf64` | `mainCRTStartup` | [implemented] |
 
-The runtime is built as a static library, `obj/runtime/<triple>/libcobrt.a`,
-so a program links only the routines it uses.
+The runtime objects of every target are embedded in cobalt (`cobalt embed`
+writes them as C tables, see `docs/linker.md`), and the linker takes only the
+objects a program needs, as from an archive.
+
+### Windows
+
+Generated code and the arch layer use the System V convention on Windows
+too: the calling convention is internal to the program, so one code
+generator and one arch layer serve both systems. Only the OS layer,
+`runtime/x86_64/windows/os.asm`, meets the Win64 convention, where it calls
+`kernel32.dll`: it puts the arguments in `rcx`, `rdx`, `r8`, `r9` (then the
+stack), reserves the 32 bytes of shadow space and aligns the stack; kernel32
+keeps `rbx`, `rbp`, `rsi`, `rdi` and `r12`-`r15`, more than System V needs.
+It calls imported functions through their import address table slots,
+`[rel __imp_<name>]`. The entry point realigns the stack (Windows enters it
+8 bytes below a 16-byte boundary). Notes on behaviour:
+
+- The standard handles come from `GetStdHandle`; carriage returns are
+  dropped from the standard input (CR LF lines read as LF lines).
+- Files are opened with `CreateFileA`, shared for reading, writing and
+  deletion; `cobrt_os_pread` / `pwrite` read and write at an offset with an
+  OVERLAPPED structure and put the file position back.
+- `getenv` returns a value of its own (from `GetEnvironmentVariableA`), so
+  several stay valid at once.
+- Programs started from WSL see only the Linux environment variables named in
+  `WSLENV` (the NIST harness names COB_SWITCH_1 and COB_SET_DEBUG).
 
 ### Adding a target
 
@@ -42,8 +66,8 @@ so a program links only the routines it uses.
 
 ## 2. Calling convention
 
-Runtime routines are called like C functions in the target's native ABI
-(x86_64 Linux: System V AMD64). All integer arguments are passed as full
+Runtime routines are called like C functions in the System V AMD64
+convention, on every target (on Windows the OS layer converts, section 1). All integer arguments are passed as full
 64-bit values. Arch-layer code reads arguments only through `ARG0..ARG5` and
 returns values in `RET0`, so it can be assembled for another ABI on the same
 architecture.

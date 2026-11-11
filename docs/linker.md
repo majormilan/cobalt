@@ -32,12 +32,36 @@ the program must fit below 2 GiB. Unless `--strip` is given, the executable
 has section headers and a symbol table (every label of the objects), so
 `gdb` and `objdump` show names.
 
+## Windows (PE)
+
+With `-t x86_64-pc-windows-msvc` the linker writes a PE32+ console
+executable from the same ELF objects:
+
+| Section | Contents |
+|---|---|
+| headers | DOS header, PE signature, COFF and optional headers, section table (0x400 bytes) |
+| `.text` | code (execute, read) |
+| `.rdata` | read-only data |
+| `.data` | data, then the bss as uninitialized memory at its end |
+| `.idata` | imports: the directory, lookup and address tables, hint/name entries, `KERNEL32.dll` |
+
+The image is based at 0x400000 with no base relocations (relocations
+stripped), so the absolute 32-bit addresses of the generated code stay valid;
+the sections are aligned to 0x1000 in memory and 0x200 in the file. A
+reference to an undefined symbol `__imp_<name>` imports the function `<name>`
+from `KERNEL32.dll`: it resolves to the function's slot in the import address
+table, which the Windows loader fills. The stack reserve is 8 MiB. Objects
+from `-c` stay ELF: cobalt links them for either system.
+
 ## The embedded runtime
 
 The build (Makefile) assembles the runtime with the first-stage cobalt
-(`cobalt as`), writes a file that includes each object with `incbin` behind a
-table `cobalt_runtime_<target>` of `{data, size}` pairs ending with `{0, 0}`,
-assembles it and links it into the final cobalt. Each target gets its own
+(`cobalt as`; the first stage is cobalt without runtimes, `main.c` built with
+`COBALT_STAGE0`), then `cobalt embed` writes C source of a table
+`cobalt_runtime_<target>` of `{data, size}` pairs ending with `{0, 0}`, which
+is compiled and linked into the final cobalt (C, so any compiler builds
+cobalt for any host: `make windows` cross-builds `bin/cobalt.exe` with
+MinGW-w64). Each target gets its own
 table, so a cobalt built for several targets carries each target's runtime.
 A cobalt without the table (the first stage) still produces assembly (`-A`)
 and objects (`-c`).

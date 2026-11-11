@@ -1,5 +1,6 @@
 /* src/backend/x86_64-linux-elf.c */
 #include "backend.h"
+#include "util.h"
 #include "ir.h"
 #include "promote.h"
 #include <stdio.h>
@@ -1215,7 +1216,7 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     int pos = -1;                   // position of the instruction being emitted
     char *cold_buf = NULL;
     size_t cold_len = 0;
-    cold = open_memstream(&cold_buf, &cold_len);
+    cold = mem_stream_open(&cold_buf, &cold_len);
     if (!cold) return 1;
     ovf_store = -1;
     skip_neg = false;
@@ -1388,6 +1389,8 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     if (!ir->subprogram) {
         fprintf(f, "global %s\n", target->entry_symbol);
         fprintf(f, "%s:\n", target->entry_symbol);
+        // Windows calls the entry point, so rsp is 8 below a 16-byte boundary
+        if (target->os == OS_WINDOWS) fprintf(f, "    and rsp, -16\n");
         fprintf(f, "    mov rdi, rsp\n");  // entry stack: argc, argv, environment
         fprintf(f, "    mov rsi, %d\n", ir->runtime_flags);
         fprintf(f, "    call runtime_init\n\n");
@@ -2567,7 +2570,7 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     ir_flow_free(flow);
     // Out-of-line paths; control never falls into them
     fprintf(f, "\n    call runtime_exit\n\n; out-of-line paths\n");
-    fclose(cold);
+    mem_stream_close(cold);
     cold = NULL;
     fwrite(cold_buf, 1, cold_len, f);
     free(cold_buf);

@@ -22,6 +22,8 @@ TEST_TIMEOUT=${TEST_TIMEOUT:-10}
 
 case "$TARGET" in
     x86_64-linux-elf) NASM_FMT=elf64 ;;
+    # Windows executables run through WSL interop (or Wine, with binfmt)
+    x86_64-pc-windows-msvc) NASM_FMT=win64 ;;
     *)
         echo "Error: Unsupported TARGET '$TARGET'"
         exit 1

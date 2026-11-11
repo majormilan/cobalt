@@ -32,6 +32,10 @@ typedef struct {
     const char *file;           // position for messages
     int line;
     int nincluded;
+    // %macro definitions: name, number of parameters, body (lines)
+    struct { char *name; int nargs; char *body; } *macros;
+    int nmacros, cmacros;
+    int expansions;             // for the %%labels of each expansion
 } Asm;
 
 static void error_at(Asm *as, const char *fmt, ...) {
@@ -934,8 +938,62 @@ static void include_file(Asm *as, const char *name, size_t len, int depth) {
     free(text);
 }
 
+// ── Macros ───────────────────────────────────────────────────────────────────
+// %macro name nargs ... %endmacro (a NASM subset): in the body %1..%9 are the
+// arguments, %0 their number, %%name a label of its own in each expansion.
+
+static int find_macro(Asm *as, const char *p, size_t len) {
+    for (int k = 0; k < as->nmacros; k++)
+        if (strlen(as->macros[k].name) == len && strncasecmp(as->macros[k].name, p, len) == 0) return k;
+    return -1;
+}
+
+static void expand_macro(Asm *as, int m, const char *args, const char *args_end, const char *file, int depth) {
+    const char *starts[16], *ends[16];
+    int nargs = 0;
+    const char *a = skip_ws(args);
+    if (a < args_end) nargs = split_commas(a, args_end, starts, ends, 16);
+    if (nargs != as->macros[m].nargs) {
+        error_at(as, "macro '%s' takes %d argument%s, %d given", as->macros[m].name, as->macros[m].nargs,
+                 as->macros[m].nargs == 1 ? "" : "s", nargs);
+        return;
+    }
+    int id = ++as->expansions;
+    size_t cap = strlen(as->macros[m].body) * 2 + 256, n = 0;
+    char *out = malloc(cap);
+    for (const char *p = as->macros[m].body; *p; p++) {
+        char piece[512];
+        size_t plen = 0;
+        const char *add = NULL;
+        if (p[0] == '%' && p[1] == '%') {
+            plen = (size_t)snprintf(piece, sizeof(piece), "..@%d.", id);
+            add = piece;
+            p++;
+        } else if (p[0] == '%' && p[1] >= '0' && p[1] <= '9') {
+            int k = p[1] - '0';
+            if (k == 0) { plen = (size_t)snprintf(piece, sizeof(piece), "%d", nargs); add = piece; }
+            else if (k <= nargs) {
+                const char *s0 = skip_ws(starts[k - 1]), *s1 = trim_end(s0, ends[k - 1]);
+                plen = (size_t)(s1 - s0);
+                add = s0;
+            } else { plen = 0; add = ""; }
+            p++;
+        }
+        if (!add) { add = p; plen = 1; }
+        if (n + plen + 2 > cap) { cap = (n + plen) * 2 + 256; out = realloc(out, cap); }
+        memcpy(out + n, add, plen);
+        n += plen;
+    }
+    out[n] = '\0';
+    int line = as->line;
+    assemble_text(as, out, file, depth + 1);
+    as->file = file;
+    as->line = line;
+    free(out);
+}
+
 static void assemble_text(Asm *as, const char *text, const char *file, int depth) {
-    if (depth > 32) { error_at(as, "%%include nested too deeply"); return; }
+    if (depth > 32) { error_at(as, "%%include or macro expansion nested too deeply"); return; }
     // conditional stack: active state of each open %if
     bool active[64];
     bool taken[64];
@@ -943,6 +1001,11 @@ static void assemble_text(Asm *as, const char *text, const char *file, int depth
     as->file = file;
     as->line = 0;
     char *buf = malloc(65536), *buf2 = malloc(65536);
+    int recording = -1;                 // the macro whose body is being read (-2: skipped)
+    size_t body_len = 0, body_cap = 0;
+    char *body = NULL;
+    int start_line = as->line;
+    as->line = start_line;
     for (const char *p = text; *p;) {
         const char *eol = strchr(p, '\n');
         if (!eol) eol = p + strlen(p);
@@ -951,6 +1014,41 @@ static void assemble_text(Asm *as, const char *text, const char *file, int depth
         if (end > p && end[-1] == '\r') end--;
         const char *s = skip_ws(p);
         bool on = nif == 0 || active[nif - 1];
+        if (recording != -1) {
+            // the body of a macro, up to %endmacro
+            if (*s == '%' && strncasecmp(s, "%endmacro", 9) == 0) {
+                if (recording >= 0) {
+                    if (!body) body = strdup("");
+                    as->macros[recording].body = body;
+                    body = NULL;
+                } else {
+                    free(body);
+                    body = NULL;
+                }
+                body_len = body_cap = 0;
+                recording = -1;
+            } else {
+                size_t len = (size_t)(eol - p);
+                if (body_len + len + 2 > body_cap) { body_cap = (body_len + len) * 2 + 256; body = realloc(body, body_cap); }
+                memcpy(body + body_len, p, len);
+                body_len += len;
+                body[body_len++] = '\n';
+                body[body_len] = '\0';
+            }
+            p = *eol ? eol + 1 : eol;
+            continue;
+        }
+        if (on && *s != '%' && s < end) {
+            // a macro invocation: its name first on the line
+            const char *ne = s;
+            while (ne < end && ident_char(*ne)) ne++;
+            int m = ne > s ? find_macro(as, s, (size_t)(ne - s)) : -1;
+            if (m >= 0) {
+                expand_macro(as, m, ne, end, file, depth);
+                p = *eol ? eol + 1 : eol;
+                continue;
+            }
+        }
         if (*s == '%' && s < end) {
             const char *d = s + 1, *de = d;
             while (de < end && isalpha((unsigned char)*de)) de++;
@@ -992,6 +1090,21 @@ static void assemble_text(Asm *as, const char *text, const char *file, int depth
                 else
                     error_at(as, "expected a quoted file name after %%include");
                 as->file = file;
+            } else if (word_is(d, dl, "macro")) {
+                if (ne == arg) { error_at(as, "expected a name after %%macro"); recording = -2; }
+                else {
+                    if (as->nmacros == as->cmacros) {
+                        as->cmacros = as->cmacros ? as->cmacros * 2 : 16;
+                        as->macros = realloc(as->macros, (size_t)as->cmacros * sizeof(*as->macros));
+                    }
+                    int m = as->nmacros++;
+                    as->macros[m].name = strndup(arg, (size_t)(ne - arg));
+                    as->macros[m].nargs = (int)strtol(skip_ws(ne), NULL, 10);
+                    as->macros[m].body = strdup("");
+                    recording = m;
+                }
+            } else if (word_is(d, dl, "endmacro")) {
+                error_at(as, "%%endmacro without %%macro");
             } else if (word_is(d, dl, "error")) {
                 error_at(as, "%.*s", (int)(arg_end - arg), arg);
             } else {
@@ -1014,6 +1127,7 @@ static void assemble_text(Asm *as, const char *text, const char *file, int depth
         p = *eol ? eol + 1 : eol;
     }
     if (nif) error_at(as, "%%if without %%endif");
+    if (recording != -1) { error_at(as, "%%macro without %%endmacro"); free(body); }
     free(buf);
     free(buf2);
 }

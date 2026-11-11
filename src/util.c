@@ -63,3 +63,51 @@ void namemap_free(NameMap *m) {
     free(m->values);
     memset(m, 0, sizeof(*m));
 }
+
+// ── Memory streams ───────────────────────────────────────────────────────────
+
+#ifdef _WIN32
+#include <windows.h>
+static struct { FILE *f; char **buf; size_t *len; } mem_streams[8];
+
+// A temporary file in %TEMP%, deleted when closed (tmpfile() of the C
+// library writes to the root of the drive, which users may not write to)
+static FILE *temp_file(void) {
+    char dir[MAX_PATH], path[MAX_PATH];
+    if (!GetTempPathA(sizeof(dir), dir) || !GetTempFileNameA(dir, "cob", 0, path)) return NULL;
+    return fopen(path, "w+bTD");        // T: short-lived, D: deleted on close
+}
+
+FILE *mem_stream_open(char **buf, size_t *len) {
+    for (int k = 0; k < 8; k++) {
+        if (mem_streams[k].f) continue;
+        FILE *f = temp_file();
+        if (!f) return NULL;
+        mem_streams[k].f = f;
+        mem_streams[k].buf = buf;
+        mem_streams[k].len = len;
+        return f;
+    }
+    return NULL;
+}
+
+int mem_stream_close(FILE *f) {
+    for (int k = 0; k < 8; k++) {
+        if (mem_streams[k].f != f) continue;
+        mem_streams[k].f = NULL;
+        long n = ftell(f);
+        char *b = malloc(n > 0 ? (size_t)n + 1 : 1);
+        if (!b) { fclose(f); return EOF; }
+        rewind(f);
+        size_t got = n > 0 ? fread(b, 1, (size_t)n, f) : 0;
+        b[got] = '\0';
+        *mem_streams[k].buf = b;
+        *mem_streams[k].len = got;
+        return fclose(f) == 0 && got == (size_t)(n > 0 ? n : 0) ? 0 : EOF;
+    }
+    return fclose(f);
+}
+#else
+FILE *mem_stream_open(char **buf, size_t *len) { return open_memstream(buf, len); }
+int mem_stream_close(FILE *f) { return fclose(f); }
+#endif

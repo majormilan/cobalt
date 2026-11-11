@@ -43,27 +43,28 @@ is not supported (1.3).
 
 ## 2. Platforms
 
-- [ ] **2.1 Windows runtime layer.** `runtime/x86_64/windows/os.asm` for
-  the OS contract (`runtime/routines.def`): console, files, time, memory,
-  environment, exit, through kernel32.
-  Done when: the routines have the same behavior as on Linux.
-- [ ] **2.2 Win64 calling convention** in the runtime ABI layer
-  (`runtime/x86_64/abi/win64.inc`) and the code generator.
-  Done when: generated code and runtime agree (shadow space, argument
-  registers, callee-saved registers, stack alignment).
-- [ ] **2.3 PE/COFF output.** COFF objects from the built-in assembler, PE
-  executables with an import table from the built-in linker.
-  Done when: `cobalt hello.cbl` on Windows gives `hello.exe` with no other
-  tool installed.
-- [ ] **2.4 cobalt builds on Windows** (MinGW-w64 gcc or clang; MSVC
-  optional).
-  Done when: a documented build command produces `cobalt.exe`.
-- [ ] **2.5 Windows sources.** CRLF line endings, `\` and drive letters in
-  paths, copybook search (`-I`, COBCPY with `;`), file names in ASSIGN.
-  Done when: covered by tests.
-- [ ] **2.6 Cross-checks.** The test suite and NIST pass on Windows as on
-  Linux.
-  Done when: CI (5.1) shows it.
+- [x] **2.1 Windows runtime layer.** `runtime/x86_64/windows/os.asm`: the OS
+  contract on kernel32 (console, files, time, memory, environment, exit).
+- [x] **2.2 Calling convention.** Generated code and the arch layer keep the
+  System V convention on Windows (it is internal to the program); the OS
+  layer converts to Win64 at the kernel32 boundary (shadow space, argument
+  registers, stack alignment), and the entry point realigns the stack
+  (`runtime/ABI.md` section 1). Calling C code or being called from it
+  (Win64) is for later.
+- [x] **2.3 PE output.** The built-in linker writes PE32+ executables with
+  an import table (`docs/linker.md`); `cobalt hello.cbl` gives `hello.exe`
+  with no other tool. The assembler gained `%macro`. Objects (`-c`) stay
+  ELF, which cobalt links for either system; COFF objects for other linkers
+  are for later.
+- [x] **2.4 cobalt builds for Windows:** `make windows` cross-builds
+  `bin/cobalt.exe` with MinGW-w64 (the runtimes are embedded as C, see
+  `cobalt embed`). A native build on Windows (MSYS2) is untested.
+- [x] **2.5 Windows sources.** CR LF sources and copybooks, `\` and drive
+  letters in COPY paths, COBCPY with `;`; carriage returns dropped from the
+  standard input.
+- [x] **2.6 Cross-checks.** The test programs (`make test-windows`), the
+  run-time error tests and the NIST suite give the same results as on Linux
+  (run on Windows through WSL). CI (5.1) still to come.
 
 ## 3. Runtime
 

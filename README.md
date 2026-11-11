@@ -46,8 +46,12 @@ what is left.
 
 | Platform | Status |
 |---|---|
-| Linux x86-64 | supported |
-| Windows x86-64 | in progress (for 0.1.0-alpha) |
+| Linux x86-64 | supported: `cobalt` runs on it and builds for it |
+| Windows x86-64 | supported: `cobalt.exe` runs on it; executables for it come from either (`-t x86_64-pc-windows-msvc`) |
+
+Executables are self-contained on both: static ELF on Linux, PE using only
+`KERNEL32.dll` on Windows. The test programs and the NIST suite give the same
+results on both.
 
 ## Building
 
@@ -60,8 +64,10 @@ make            # builds bin/cobalt
 make test       # runs the test programs and the diagnostics tests
 ```
 
-The build makes `bin/cobalt`, a single executable with the runtime inside;
-copy it anywhere on your PATH.
+The build makes `bin/cobalt`, a single executable with the runtimes inside;
+copy it anywhere on your PATH. `make windows` cross-builds `bin/cobalt.exe`
+for Windows with MinGW-w64 (`x86_64-w64-mingw32-gcc`); `make test-windows`
+runs the test programs as Windows executables (on WSL, or with Wine).
 
 ## Using it
 

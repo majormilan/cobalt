@@ -5,7 +5,8 @@
 static BackendEmitFn backend_for(const TargetInfo *target) {
     if (!target) return NULL;
     switch (target->triple) {
-        case TARGET_LINUX_X86_64_ELF: return x86_64_linux_emit;
+        case TARGET_LINUX_X86_64_ELF:
+        case TARGET_WINDOWS_X86_64_PE: return x86_64_linux_emit;   // (the same code; the OS layer differs)
         default:                      return NULL;
     }
 }

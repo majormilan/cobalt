@@ -97,7 +97,7 @@ for cbl in "$SRC"/$MODULE*.CBL; do
         done
     fi
     (cd "$FILES" && rm -f report.log &&
-     COB_SET_DEBUG=$debug_switch COB_SWITCH_1=ON timeout 10 "$ROOT/$dir/$name" < "$input" > "$ROOT/$dir/run.log" 2>&1
+     WSLENV=COB_SET_DEBUG:COB_SWITCH_1 COB_SET_DEBUG=$debug_switch COB_SWITCH_1=ON timeout 10 "$ROOT/$dir/$name" < "$input" > "$ROOT/$dir/run.log" 2>&1
      [ -f report.log ] && mv report.log "$ROOT/$dir/")
     for h in $hidden; do mv -f "$FILES/$h.hidden" "$FILES/$h"; done
     if [ -f "$dir/report.log" ]; then

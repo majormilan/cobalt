@@ -7,8 +7,8 @@
 #include <stdint.h>
 
 // The COBALT linker: links ELF64 x86-64 relocatable objects into a static,
-// non-PIE Linux executable (docs/linker.md). It replaces ld for the objects
-// COBALT produces: the program's object and the runtime's.
+// non-PIE Linux executable or a Windows PE executable (docs/linker.md). It
+// replaces ld for the objects COBALT produces: the program's and the runtime's.
 
 typedef struct {
     const uint8_t *data;        // an ELF64 relocatable object in memory
@@ -19,6 +19,8 @@ typedef struct {
 typedef struct {
     const char *entry;          // entry symbol, normally "_start"
     bool strip;                 // no section headers or symbol table
+    bool pe;                    // a Windows PE executable (else ELF): references to
+                                //   __imp_<name> import <name> from KERNEL32.dll
 } LinkOptions;
 
 // Link every object of `objects`, and each object of `library` that defines a

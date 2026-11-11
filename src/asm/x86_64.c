@@ -17,7 +17,7 @@ enum {
     M_INC, M_DEC, M_NOT, M_NEG, M_MUL, M_IMUL, M_DIV, M_IDIV,
     M_PUSH, M_POP, M_CALL, M_JMP, M_BT, M_XCHG, M_BSWAP,
     M_RET, M_LEAVE, M_CQO, M_CDQ, M_CDQE, M_SYSCALL, M_CLD, M_STD, M_NOP,
-    M_MOVSB, M_MOVSQ, M_STOSB, M_STOSQ, M_HLT, M_CMPSB, M_SCASB,
+    M_MOVSB, M_MOVSQ, M_STOSB, M_STOSQ, M_HLT, M_CMPSB, M_SCASB, M_INT3,
     M_X87_FLD1, M_X87_FLDZ, M_X87_FLDPI, M_X87_FLDL2E, M_X87_FLDLN2, M_X87_FLDLG2, M_X87_FCHS, M_X87_FABS, M_X87_FSQRT, M_X87_FSIN, M_X87_FCOS, M_X87_FPTAN, M_X87_FPATAN, M_X87_FYL2X, M_X87_F2XM1, M_X87_FSCALE, M_X87_FRNDINT, M_X87_FPREM, M_X87_FTST, M_X87_FNINIT, M_X87_FADDP, M_X87_FSUBP, M_X87_FSUBRP, M_X87_FMULP, M_X87_FDIVP, M_X87_FDIVRP, M_X87_FLD, M_X87_FSTP, M_X87_FXCH, M_X87_FCOMIP, M_X87_FUCOMIP, M_X87_FILD, M_X87_FISTP, M_X87_FISTTP, M_X87_FLDCW, M_X87_FNSTCW,
     M_FIXED_COUNT
 };
@@ -32,7 +32,7 @@ static const char *const fixed_names[M_FIXED_COUNT] = {
     "inc", "dec", "not", "neg", "mul", "imul", "div", "idiv",
     "push", "pop", "call", "jmp", "bt", "xchg", "bswap",
     "ret", "leave", "cqo", "cdq", "cdqe", "syscall", "cld", "std", "nop",
-    "movsb", "movsq", "stosb", "stosq", "hlt", "cmpsb", "scasb",
+    "movsb", "movsq", "stosb", "stosq", "hlt", "cmpsb", "scasb", "int3",
     "fld1", "fldz", "fldpi", "fldl2e", "fldln2", "fldlg2", "fchs", "fabs", "fsqrt", "fsin", "fcos", "fptan", "fpatan", "fyl2x", "f2xm1", "fscale", "frndint", "fprem", "ftst", "fninit", "faddp", "fsubp", "fsubrp", "fmulp", "fdivp", "fdivrp",
     "fld", "fstp", "fxch", "fcomip", "fucomip", "fild", "fistp", "fisttp", "fldcw", "fnstcw",
 };
@@ -519,6 +519,7 @@ int x86_encode(const Stmt *st, uint8_t *out, Fixup *fixups, int *nfixups, const 
         case M_STD:     NEED(0); put(&e, 0xFD); break;
         case M_NOP:     NEED(0); put(&e, 0x90); break;
         case M_HLT:     NEED(0); put(&e, 0xF4); break;
+        case M_INT3:    NEED(0); put(&e, 0xCC); break;
         case M_X87_FLD1: NEED(0); put(&e, 0xD9); put(&e, 0xE8); break;
         case M_X87_FLDZ: NEED(0); put(&e, 0xD9); put(&e, 0xEE); break;
         case M_X87_FLDPI: NEED(0); put(&e, 0xD9); put(&e, 0xEB); break;

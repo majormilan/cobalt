@@ -72,6 +72,12 @@ typedef struct {
     char **global_names;
     int nglobals, cglobals;
     int errors;
+    // PE: the functions imported from KERNEL32.dll (__imp_<name> symbols),
+    // each with its slot in the import address table at iat
+    NameMap imports;
+    char **import_names;
+    int nimports;
+    uint64_t iat;
 } Linker;
 
 static void link_error(Linker *lk, const char *fmt, ...) {
@@ -217,6 +223,11 @@ static bool symbol_address(Linker *lk, const InObject *o, int i, uint64_t *addr)
     Sym s = symbol(o, i);
     if (s.shndx == SHN_UNDEF) {
         int g = namemap_get(&lk->globals, s.name, strlen(s.name));
+        int imp = lk->nimports ? namemap_get(&lk->imports, s.name, strlen(s.name)) : -1;
+        if ((g < 0 || lk->def_obj[g] < 0) && imp >= 0) {
+            *addr = lk->iat + 8 * (uint64_t)imp;
+            return true;
+        }
         if (g < 0 || lk->def_obj[g] < 0) {
             if (s.bind == STB_WEAK) { *addr = 0; return true; }
             link_error(lk, "undefined reference to '%s' (in %s)", s.name, o->in->name);
@@ -387,6 +398,153 @@ static void append_section_headers(Linker *lk, Bytes *img, const Layout *L, uint
     free(shstr.data);
 }
 
+// ── PE (Windows) ─────────────────────────────────────────────────────────────
+// A PE32+ console executable: the image at PE_BASE with no base relocations
+// (the code uses absolute 32-bit addresses), sections .text (code), .rdata
+// (read-only data), .data (data, then bss as its uninitialized tail) and
+// .idata (the imports from KERNEL32.dll).
+
+#define PE_BASE      0x400000ULL
+#define PE_SECTION   0x1000ULL
+#define PE_FILE      0x200ULL
+#define PE_HEADERS   0x400ULL       // DOS header, PE headers and the section table
+
+typedef struct {
+    uint64_t rva[5], vsize[5], raw[5], rawsize[5];  // .text .rdata .data .idata (and bss in .data)
+    uint64_t idt, ilt, iat, names, dll;             // RVAs in .idata
+    uint64_t idata_size;
+    uint64_t image_size, file_size;
+} PeLayout;
+
+enum { PE_TEXT, PE_RDATA, PE_DATA, PE_IDATA, PE_NSEC };
+
+// The imports: every symbol still undefined whose name is __imp_<function>
+static void pe_collect_imports(Linker *lk) {
+    for (int g = 0; g < lk->nglobals; g++) {
+        const char *n = lk->global_names[g];
+        if (lk->def_obj[g] >= 0 || strncmp(n, "__imp_", 6) != 0) continue;
+        namemap_put(&lk->imports, n, strlen(n), lk->nimports);
+        lk->import_names = realloc(lk->import_names, (size_t)(lk->nimports + 1) * sizeof(char *));
+        lk->import_names[lk->nimports++] = lk->global_names[g];
+    }
+}
+
+static void pe_layout(Linker *lk, Layout *L, PeLayout *P) {
+    memset(P, 0, sizeof(*P));
+    uint64_t rva = PE_SECTION, raw = PE_HEADERS;
+    // .text and .rdata
+    for (int c = CLS_TEXT; c <= CLS_RODATA; c++) {
+        int k = c == CLS_TEXT ? PE_TEXT : PE_RDATA;
+        P->rva[k] = rva;
+        P->vsize[k] = L->size[c];
+        P->raw[k] = raw;
+        P->rawsize[k] = align_up(L->size[c], PE_FILE);
+        L->addr[c] = PE_BASE + rva;
+        L->file_off[c] = raw;
+        rva = align_up(rva + (L->size[c] ? L->size[c] : 1), PE_SECTION);
+        raw += P->rawsize[k];
+    }
+    // .data with the bss after the data
+    P->rva[PE_DATA] = rva;
+    L->addr[CLS_DATA] = PE_BASE + rva;
+    L->file_off[CLS_DATA] = raw;
+    uint64_t bss = align_up(L->size[CLS_DATA], L->align[CLS_BSS]);
+    L->addr[CLS_BSS] = PE_BASE + rva + bss;
+    L->file_off[CLS_BSS] = raw + L->size[CLS_DATA];
+    P->vsize[PE_DATA] = bss + L->size[CLS_BSS];
+    P->raw[PE_DATA] = raw;
+    P->rawsize[PE_DATA] = align_up(L->size[CLS_DATA], PE_FILE);
+    rva = align_up(rva + (P->vsize[PE_DATA] ? P->vsize[PE_DATA] : 1), PE_SECTION);
+    raw += P->rawsize[PE_DATA];
+    // .idata: the import directory (one DLL), lookup table, address table,
+    // hint/name entries, the DLL name
+    uint64_t n = (uint64_t)lk->nimports, off = 0;
+    P->rva[PE_IDATA] = rva;
+    P->idt = rva + off; off += 40;
+    P->ilt = rva + off; off += 8 * (n + 1);
+    P->iat = rva + off; off += 8 * (n + 1);
+    P->names = rva + off;
+    for (int k = 0; k < lk->nimports; k++) off += align_up(2 + strlen(lk->import_names[k] + 6) + 1, 2);
+    P->dll = rva + off; off += 16;
+    P->idata_size = off;
+    P->vsize[PE_IDATA] = off;
+    P->raw[PE_IDATA] = raw;
+    P->rawsize[PE_IDATA] = align_up(off, PE_FILE);
+    raw += P->rawsize[PE_IDATA];
+    P->image_size = align_up(rva + off, PE_SECTION);
+    P->file_size = raw;
+    lk->iat = PE_BASE + P->iat;
+}
+
+static void pe_headers(Linker *lk, uint8_t *img, const PeLayout *P, uint64_t entry_addr) {
+    // DOS header: "MZ", e_lfanew
+    img[0] = 'M'; img[1] = 'Z';
+    wr32(img + 0x3C, 0x40);
+    uint8_t *pe = img + 0x40;
+    memcpy(pe, "PE\0\0", 4);
+    uint8_t *coff = pe + 4;
+    int nsec = PE_NSEC;
+    wr16(coff, 0x8664);                         // AMD64
+    wr16(coff + 2, (uint16_t)nsec);
+    wr16(coff + 16, 240);                       // the optional header
+    wr16(coff + 18, 0x0001 | 0x0002 | 0x0020);  // relocations stripped, executable, large address aware
+    uint8_t *o = coff + 20;
+    wr16(o, 0x20B);                             // PE32+
+    o[2] = 1;                                   // linker version
+    wr32(o + 4, (uint32_t)P->rawsize[PE_TEXT]);
+    wr32(o + 8, (uint32_t)(P->rawsize[PE_RDATA] + P->rawsize[PE_DATA] + P->rawsize[PE_IDATA]));
+    wr32(o + 12, 0);
+    wr32(o + 16, (uint32_t)(entry_addr - PE_BASE));
+    wr32(o + 20, (uint32_t)P->rva[PE_TEXT]);
+    wr64(o + 24, PE_BASE);
+    wr32(o + 32, (uint32_t)PE_SECTION);
+    wr32(o + 36, (uint32_t)PE_FILE);
+    wr16(o + 40, 6);                            // operating system 6.0
+    wr16(o + 48, 6);                            // subsystem 6.0
+    wr32(o + 56, (uint32_t)P->image_size);
+    wr32(o + 60, (uint32_t)PE_HEADERS);
+    wr16(o + 68, 3);                            // IMAGE_SUBSYSTEM_WINDOWS_CUI (console)
+    wr16(o + 70, 0x0100 | 0x8000);              // NX compatible, terminal server aware
+    wr64(o + 72, 0x800000);                     // stack reserve (8 MiB, as on Linux)
+    wr64(o + 80, 0x10000);                      // stack commit
+    wr64(o + 88, 0x100000);                     // heap reserve
+    wr64(o + 96, 0x1000);                       // heap commit
+    wr32(o + 108, 16);                          // data directories
+    uint8_t *dd = o + 112;
+    wr32(dd + 8, (uint32_t)P->idt);             // [1] imports
+    wr32(dd + 12, 40);
+    wr32(dd + 12 * 8, (uint32_t)P->iat);        // [12] import address table
+    wr32(dd + 12 * 8 + 4, (uint32_t)(8 * (lk->nimports + 1)));
+    // the section table
+    static const char *names[PE_NSEC] = { ".text", ".rdata", ".data", ".idata" };
+    static const uint32_t flags[PE_NSEC] = { 0x60000020, 0x40000040, 0xC0000040, 0xC0000040 };
+    uint8_t *sh = o + 240;
+    for (int k = 0; k < nsec; k++, sh += 40) {
+        memcpy(sh, names[k], strlen(names[k]));
+        wr32(sh + 8, (uint32_t)(P->vsize[k] ? P->vsize[k] : 1));
+        wr32(sh + 12, (uint32_t)P->rva[k]);
+        wr32(sh + 16, (uint32_t)P->rawsize[k]);
+        wr32(sh + 20, P->rawsize[k] ? (uint32_t)P->raw[k] : 0);
+        wr32(sh + 36, flags[k]);
+    }
+    // .idata contents
+    uint8_t *id = img + P->raw[PE_IDATA];
+    #define AT(r) (id + ((r) - P->rva[PE_IDATA]))
+    wr32(AT(P->idt), (uint32_t)P->ilt);         // OriginalFirstThunk
+    wr32(AT(P->idt) + 12, (uint32_t)P->dll);    // Name
+    wr32(AT(P->idt) + 16, (uint32_t)P->iat);    // FirstThunk
+    uint64_t name = P->names;
+    for (int k = 0; k < lk->nimports; k++) {
+        const char *fn = lk->import_names[k] + 6;
+        wr64(AT(P->ilt) + 8 * (uint64_t)k, name);
+        wr64(AT(P->iat) + 8 * (uint64_t)k, name);
+        memcpy(AT(name) + 2, fn, strlen(fn) + 1);
+        name += align_up(2 + strlen(fn) + 1, 2);
+    }
+    memcpy(AT(P->dll), "KERNEL32.dll", 13);
+    #undef AT
+}
+
 bool link_executable(const LinkObject *objects, int nobjects,
                      const LinkObject *library, int nlibrary,
                      const LinkOptions *opts, const char *path) {
@@ -422,6 +580,7 @@ bool link_executable(const LinkObject *objects, int nobjects,
         }
     }
     namemap_free(&provides);
+    if (opts->pe) pe_collect_imports(&lk);
     int entry = namemap_get(&lk.globals, opts->entry, strlen(opts->entry));
     if (entry < 0 || lk.def_obj[entry] < 0) link_error(&lk, "entry symbol '%s' is not defined", opts->entry);
     if (lk.errors) goto done;
@@ -442,8 +601,13 @@ bool link_executable(const LinkObject *objects, int nobjects,
             L.size[s->cls] = s->out_off + s->size;
         }
     }
+    PeLayout P;
     const int nphdr = 3;
     uint64_t headers = 64 + (uint64_t)nphdr * 56;
+    if (opts->pe) {
+        pe_layout(&lk, &L, &P);
+        goto laid_out;
+    }
     L.file_off[CLS_TEXT] = align_up(headers, L.align[CLS_TEXT]);
     L.file_off[CLS_RODATA] = align_up(L.file_off[CLS_TEXT] + L.size[CLS_TEXT], L.align[CLS_RODATA]);
     L.rx_end = L.file_off[CLS_RODATA] + L.size[CLS_RODATA];
@@ -455,6 +619,7 @@ bool link_executable(const LinkObject *objects, int nobjects,
     L.file_off[CLS_BSS] = L.file_off[CLS_DATA] + L.size[CLS_DATA];
     L.rw_filesz = L.file_off[CLS_DATA] + L.size[CLS_DATA] - L.rw_off;
     L.rw_memsz = L.addr[CLS_BSS] + L.size[CLS_BSS] - L.rw_addr;
+laid_out:
     if (L.addr[CLS_BSS] + L.size[CLS_BSS] > 0x7FFFFFFFULL) {
         link_error(&lk, "the program is larger than the 2 GiB its absolute addresses allow");
         goto done;
@@ -468,7 +633,7 @@ bool link_executable(const LinkObject *objects, int nobjects,
 
     // The image: headers, code, read-only data, data
     Bytes img = {0};
-    uint64_t file_size = L.rw_filesz ? L.rw_off + L.rw_filesz : L.rx_end;
+    uint64_t file_size = opts->pe ? P.file_size : L.rw_filesz ? L.rw_off + L.rw_filesz : L.rx_end;
     img.data = calloc(1, file_size);
     img.len = img.cap = file_size;
     for (int k = 0; k < lk.nobjs; k++) {
@@ -531,6 +696,11 @@ bool link_executable(const LinkObject *objects, int nobjects,
     if (!lk.errors) symbol_address(&lk, &lk.objs[lk.def_obj[entry]], lk.def_sym[entry], &entry_addr);
     if (lk.errors) { free(img.data); goto done; }
 
+    if (opts->pe) {
+        pe_headers(&lk, img.data, &P, entry_addr);
+        goto write;
+    }
+
     // ELF and program headers
     uint8_t *h = img.data;
     static const uint8_t ident[16] = { 0x7F, 'E', 'L', 'F', 2, 1, 1 };
@@ -548,6 +718,7 @@ bool link_executable(const LinkObject *objects, int nobjects,
     put_phdr(h + 64 + 112, 0x6474E551, 6, 0, 0, 0, 0, 16);                                 // GNU_STACK
     if (!opts->strip) append_section_headers(&lk, &img, &L, h);
 
+write:;
     FILE *f = fopen(path, "wb");
     if (!f || fwrite(img.data, 1, img.len, f) != img.len) link_error(&lk, "cannot write %s", path);
     if (f && fclose(f) != 0) link_error(&lk, "cannot write %s", path);
@@ -562,6 +733,8 @@ done:
     free(lk.def_obj);
     free(lk.def_sym);
     namemap_free(&lk.globals);
+    namemap_free(&lk.imports);
+    free(lk.import_names);
     return lk.errors == 0;
 }
 

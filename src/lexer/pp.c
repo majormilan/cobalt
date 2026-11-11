@@ -238,6 +238,10 @@ static char *find_text(const char *name, const char *library, const char *includ
     char incdir[1024];
     snprintf(incdir, sizeof(incdir), "%s", including ? including : "");
     char *slash = strrchr(incdir, '/');
+#ifdef _WIN32
+    char *bslash = strrchr(incdir, '\\');     // either separator on Windows
+    if (bslash && (!slash || bslash > slash)) slash = bslash;
+#endif
     if (slash) *slash = '\0';
     else strcpy(incdir, ".");
     dirs[nd++] = incdir;
@@ -246,9 +250,18 @@ static char *find_text(const char *name, const char *library, const char *includ
     const char *env = getenv("COBCPY");
     if (env) {
         snprintf(cobcpy, sizeof(cobcpy), "%s", env);
-        for (char *d = strtok(cobcpy, ":"); d && nd < 63; d = strtok(NULL, ":")) dirs[nd++] = d;
+#ifdef _WIN32
+        const char *sep = ";";                      // (drive letters have ':')
+#else
+        const char *sep = ":";
+#endif
+        for (char *d = strtok(cobcpy, sep); d && nd < 63; d = strtok(NULL, sep)) dirs[nd++] = d;
     }
-    if (name[0] == '/') {
+    bool absolute = name[0] == '/';
+#ifdef _WIN32
+    absolute |= name[0] == '\\' || (isalpha((unsigned char)name[0]) && name[1] == ':');
+#endif
+    if (absolute) {
         for (int e = 0; exts[e]; e++) {
             char path[2048];
             snprintf(path, sizeof(path), "%s%s", name, exts[e]);

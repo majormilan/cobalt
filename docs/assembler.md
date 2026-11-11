@@ -60,8 +60,10 @@ an empty `.note.GNU-stack` (non-executable stack).
 - **Preprocessor**: `%define NAME [text]` (text substituted for the name
   outside strings, repeatedly), `%undef`, `%include "file"` (searched next to
   the including file, then in each `-I` directory, which is a prefix as in
-  nasm), `%ifdef` / `%ifndef` / `%else` / `%endif`, `%error text`.
-  `-D NAME[=value]` defines a name.
+  nasm), `%ifdef` / `%ifndef` / `%else` / `%endif`, `%error text`,
+  `%macro NAME n` ... `%endmacro` (in the body `%1`..`%9` are the arguments,
+  `%0` their number, `%%label` a label of its own in each expansion; used as
+  `NAME arg, arg`). `-D NAME[=value]` defines a name.
 - **Expressions**: decimal, `0x` / `h` hexadecimal, `0o` / `q` octal, `0b`
   binary, character constants (`'COB_SWIT'`, little-endian), `$` (the current
   position), symbols, `+ - * / % << >> & | ^ ~`, parentheses. A value may add
