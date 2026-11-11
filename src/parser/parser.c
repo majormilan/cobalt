@@ -130,9 +130,9 @@ static char *tok_value(void) {
 // The verbs that start statements (for "did you mean")
 static const char *const statement_verbs[] = {
     "ACCEPT", "ADD", "ALTER", "CALL", "CANCEL", "CLOSE", "COMPUTE", "CONTINUE", "DELETE", "DISPLAY",
-    "DIVIDE", "EVALUATE", "EXIT", "GO", "IF", "INITIALIZE", "INSPECT", "MERGE", "MOVE", "MULTIPLY",
-    "OPEN", "PERFORM", "READ", "RELEASE", "RETURN", "REWRITE", "SEARCH", "SET", "SORT", "START", "STOP",
-    "STRING", "SUBTRACT", "UNSTRING", "WRITE", NULL
+    "DIVIDE", "EVALUATE", "EXIT", "GENERATE", "GO", "IF", "INITIALIZE", "INITIATE", "INSPECT", "MERGE",
+    "MOVE", "MULTIPLY", "OPEN", "PERFORM", "READ", "RELEASE", "RETURN", "REWRITE", "SEARCH", "SET", "SORT",
+    "START", "STOP", "STRING", "SUBTRACT", "SUPPRESS", "TERMINATE", "UNSTRING", "WRITE", NULL
 };
 
 // The current token for a message: 'MOVE', '.', "end of file"
@@ -298,6 +298,7 @@ static AstNode *parse_imperative_block(void);
 static Token peek_token(void);
 static bool tok_is_word(const char *word);
 static bool tok_spelled(const char *word);
+static void parse_report_section(AstNode *div, AstNode **sec_tail);
 static AstNode *parse_forward_identifier(void);
 static bool end_program_follows(void);
 static void arith_error(const char *msg);
@@ -2800,6 +2801,44 @@ static AstNode *parse_statement(void) {
         next();
         return ast_new(AST_STATEMENT_CONTINUE, NULL, loc);
     }
+    // ─── Report Writer: INITIATE report..., GENERATE name, TERMINATE report...,
+    //     SUPPRESS PRINTING. Report and report group names are resolved in IR
+    //     lowering.
+    else if (tok.kind == TOK_INITIATE || tok.kind == TOK_TERMINATE) {
+        AstNode *st = ast_new(tok.kind == TOK_INITIATE ? AST_STATEMENT_INITIATE : AST_STATEMENT_TERMINATE, NULL, loc);
+        const char *verb = tok.kind == TOK_INITIATE ? "INITIATE" : "TERMINATE";
+        next();
+        AstNode *tail = NULL;
+        while (tok.kind == TOK_IDENT) {
+            char *name = tok_to_str();
+            list_append(&st->children, &tail, ast_new(AST_IDENTIFIER, name, TOK_LOC));
+            free(name);
+            next();
+        }
+        if (!st->children) {
+            ast_free(st);
+            char msg[64];
+            snprintf(msg, sizeof(msg), "Expected a report name after %s", verb);
+            arith_error(msg);
+            return NULL;
+        }
+        return st;
+    }
+    else if (tok.kind == TOK_GENERATE) {
+        next();
+        if (tok.kind != TOK_IDENT) { arith_error("Expected a detail report group or a report name after GENERATE"); return NULL; }
+        AstNode *st = ast_new(AST_STATEMENT_GENERATE, NULL, loc);
+        char *name = tok_to_str();
+        st->extra = ast_new(AST_IDENTIFIER, name, TOK_LOC);
+        free(name);
+        next();
+        return st;
+    }
+    else if (tok.kind == TOK_SUPPRESS) {
+        next();
+        if (tok_spelled("PRINTING")) next();
+        return ast_new(AST_STATEMENT_SUPPRESS, NULL, loc);
+    }
     // ─── COMPUTE ─────────────────────────────────────────────────────────────
     // COMPUTE dest+ [ROUNDED] = expression
     // children: [expression, dest1,...]
@@ -3073,6 +3112,523 @@ static void parse_procedure_body(AstNode *div) {
 // COMMUNICATION SECTION or REPORT SECTION: another section of the DATA DIVISION
 static bool data_section_header(void) {
     return (tok_spelled("COMMUNICATION") || tok_spelled("REPORT")) && peek_token().kind == TOK_SECTION;
+}
+
+// ── Report Writer: the REPORT SECTION ───────────────────────────────────────
+// Each RD becomes an AST_REPORT (see ast.h). The storage is declared in the
+// WORKING-STORAGE SECTION as ordinary records, so the PICTURE, VALUE and
+// editing of report fields work as for any item:
+//   01 report-name.  05 PAGE-COUNTER PIC 9(6).  05 LINE-COUNTER PIC 9(6).
+//   01 $RWL<n>: each line of a report group, its fields at their COLUMNs
+//               (FILLER VALUE SPACES between them)
+//   01 $RWH<n>: the entries of a group that are not printed (no COLUMN)
+// and the FD that names the report gets 01 $RWR-<file> PIC X(widest line).
+
+static struct { AstNode *fd; char *report; } fd_reports[64];
+static int num_fd_reports;
+static int rw_counter;
+
+// Character positions of a PICTURE (S, V and P take none; CR and DB two)
+static int pic_positions(const char *pic) {
+    int n = 0;
+    for (const char *p = pic; *p; ) {
+        char c = (char)toupper((unsigned char)*p++);
+        int rep = 1;
+        if (*p == '(') {
+            rep = atoi(p + 1);
+            while (*p && *p != ')') p++;
+            if (*p == ')') p++;
+        }
+        if (c == 'S' || c == 'V' || c == 'P') continue;
+        n += rep;
+    }
+    return n;
+}
+
+static AstNode *rw_decl(const char *name, const char *level, const char *pic, AstNode *value, SourceLocation loc) {
+    AstNode *d = ast_new(AST_VAR_DECL, name, loc);
+    d->text = strdup(level);
+    AstNode *tail = NULL;
+    if (pic) list_append(&d->children, &tail, ast_new(AST_PIC_CLAUSE, pic, loc));
+    if (value) list_append(&d->children, &tail, value);
+    Symbol *sym = symtab_resolve_symbol(current_symtab, name);
+    if (!sym && strcmp(name, "FILLER") != 0) sym = symtab_declare_symbol(current_symtab, name, SYM_VAR, loc);
+    if (sym) {
+        sym->level = atoi(level);
+        symtab_mark_symbol_as_used(sym);
+    }
+    return d;
+}
+
+// The WORKING-STORAGE SECTION of a DATA DIVISION (made if there is none)
+static AstNode *rw_working_storage(AstNode *div) {
+    AstNode *last = NULL;
+    for (AstNode *c = div->children; c; c = c->next) {
+        if (c->kind == AST_SECTION && c->name && strcasecmp(c->name, "WORKING-STORAGE") == 0) return c;
+        last = c;
+    }
+    AstNode *ws = ast_new(AST_SECTION, "WORKING-STORAGE", div->loc);
+    if (last) last->next = ws;
+    else div->children = ws;
+    return ws;
+}
+
+static void rw_add_record(AstNode *ws, AstNode *decls) {
+    AstNode **tail = &ws->children;
+    while (*tail) tail = &(*tail)->next;
+    *tail = decls;
+}
+
+static int rw_int(void) {
+    if (tok.kind != TOK_NUMBER) { arith_error("Expected an integer"); return 0; }
+    int v = atoi(tok_value_tmp());
+    next();
+    return v;
+}
+
+// LINE NUMBER or NEXT GROUP operand: integer [ON NEXT PAGE] | PLUS integer | NEXT PAGE
+static void rw_position(int *kind, int *value) {
+    if (tok.kind == TOK_IS) next();
+    if (tok_spelled("PLUS")) {
+        next();
+        *kind = RW_AT_PLUS;
+        *value = rw_int();
+    } else if (tok.kind == TOK_NEXT) {
+        next();
+        if (tok.kind == TOK_PAGE) next();
+        *kind = RW_AT_NEXT_PAGE;
+        *value = 0;
+    } else {
+        *kind = RW_AT_LINE;
+        *value = rw_int();
+        if (tok.kind == TOK_ON && peek_token().kind == TOK_NEXT) {
+            next(); next();
+            if (tok.kind == TOK_PAGE) next();
+            *kind = RW_AT_NEXT_PAGE;            // (the line on the next page)
+        }
+    }
+}
+
+typedef struct {
+    int level;
+    char *name;                 // data-name, or NULL
+    SourceLocation loc;
+    char *pic;
+    AstNode *value;             // VALUE literal
+    bool justified, blank_zero, has_pic;
+    RwDesc rw;                  // LINE, NEXT GROUP, TYPE, COLUMN, SOURCE, SUM...
+} RwEntry;
+
+// One report group description entry, up to its period
+static bool rw_entry(RwEntry *e) {
+    memset(e, 0, sizeof(*e));
+    e->loc = TOK_LOC;
+    e->level = rw_int();
+    if (tok.kind == TOK_IDENT && !tok_spelled("LINE") && !tok_spelled("TYPE") && !tok_spelled("COLUMN") &&
+        !tok_spelled("SOURCE") && !tok_spelled("SUM") && !tok_spelled("GROUP") && !tok_spelled("NEXT")) {
+        e->name = tok_to_str();
+        e->loc = TOK_LOC;
+        next();
+    } else if (tok.kind == TOK_FILLER) {
+        next();
+    }
+    AstNode *sum_tail = NULL;
+    while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF && !is_division_start(tok.kind)) {
+        if (tok.kind == TOK_LINE || tok_spelled("LINE")) {
+            next();
+            if (tok_spelled("NUMBER")) next();
+            rw_position(&e->rw.line_kind, &e->rw.line);
+        } else if (tok.kind == TOK_NEXT) {
+            next();
+            if (tok_spelled("GROUP")) next();
+            rw_position(&e->rw.next_kind, &e->rw.next);
+        } else if (tok_spelled("TYPE")) {
+            next();
+            if (tok.kind == TOK_IS) next();
+            bool control = false;
+            if (tok_spelled("REPORT")) {
+                next();
+                e->rw.type = tok_spelled("HEADING") ? RW_RH : RW_RF;
+                next();
+            } else if (tok.kind == TOK_PAGE) {
+                next();
+                e->rw.type = tok_spelled("HEADING") ? RW_PH : RW_PF;
+                next();
+            } else if (tok_spelled("CONTROL")) {
+                next();
+                e->rw.type = tok_spelled("HEADING") ? RW_CH : RW_CF;
+                next();
+                control = true;
+            } else if (tok_spelled("DETAIL") || tok_spelled("DE")) { e->rw.type = RW_DE; next(); }
+            else if (tok_spelled("RH")) { e->rw.type = RW_RH; next(); }
+            else if (tok_spelled("RF")) { e->rw.type = RW_RF; next(); }
+            else if (tok_spelled("PH")) { e->rw.type = RW_PH; next(); }
+            else if (tok_spelled("PF")) { e->rw.type = RW_PF; next(); }
+            else if (tok_spelled("CH")) { e->rw.type = RW_CH; next(); control = true; }
+            else if (tok_spelled("CF")) { e->rw.type = RW_CF; next(); control = true; }
+            else { arith_error("Expected a report group type (REPORT HEADING, PAGE HEADING, CONTROL HEADING, "
+                               "DETAIL, CONTROL FOOTING, PAGE FOOTING or REPORT FOOTING)"); return false; }
+            if (control) {
+                if (tok.kind != TOK_IDENT) { arith_error("Expected a control data-name or FINAL"); return false; }
+                e->rw.control = tok_to_str();
+                next();
+            }
+        } else if (tok.kind == TOK_USAGE) {
+            next();
+            if (tok.kind == TOK_IS) next();
+            if (tok.kind == TOK_DISPLAY) next();
+        } else if (tok.kind == TOK_DISPLAY) {
+            next();
+        } else if (tok_spelled("COLUMN")) {
+            next();
+            if (tok_spelled("NUMBER")) next();
+            if (tok.kind == TOK_IS) next();
+            e->rw.column = rw_int();
+        } else if (tok.kind == TOK_PIC) {
+            next();
+            if (tok.kind == TOK_IS) next();
+            if (tok.kind != TOK_PIC_STRING) { arith_error("Expected a PICTURE character-string"); return false; }
+            e->pic = tok_to_str();
+            e->has_pic = true;
+            next();
+        } else if (tok_spelled("SOURCE")) {
+            next();
+            if (tok.kind == TOK_IS) next();
+            e->rw.source = parse_identifier();
+        } else if (tok_spelled("SUM")) {
+            next();
+            while (tok.kind == TOK_IDENT && !tok_spelled("UPON") && !tok_spelled("RESET") && !tok_spelled("LINE") &&
+                   !tok_spelled("COLUMN") && !tok_spelled("SOURCE") && !tok_spelled("GROUP") && !tok_spelled("TYPE"))
+                list_append(&e->rw.sum, &sum_tail, parse_identifier());
+            if (tok.kind == TOK_UPON) {
+                next();
+                if (tok.kind == TOK_IDENT) { e->rw.upon = tok_to_str(); next(); }
+            }
+        } else if (tok_spelled("RESET")) {
+            next();
+            if (tok.kind == TOK_ON) next();
+            if (tok.kind == TOK_IDENT) { e->rw.reset = tok_to_str(); next(); }
+        } else if (tok_spelled("GROUP")) {
+            next();
+            if (tok_spelled("INDICATE")) next();
+            e->rw.group_indicate = true;
+        } else if (tok.kind == TOK_VALUE) {
+            next();
+            if (tok.kind == TOK_IS) next();
+            SourceLocation vloc = TOK_LOC;
+            char *val = tok_value();
+            if (tok.kind == TOK_STRING) e->value = ast_new(AST_STRING_LITERAL, val, vloc);
+            else if (tok.kind == TOK_NUMBER) e->value = ast_new(AST_LITERAL_NUMBER, val, vloc);
+            else if (is_figurative(tok.kind)) e->value = ast_new(AST_FIGURATIVE_CONSTANT, val, vloc);
+            else if (tok.kind == TOK_ALL) {
+                free(val);
+                e->value = parse_all_literal();
+                if (!e->value) return false;
+                continue;
+            }
+            else { free(val); arith_error("Expected a literal after VALUE"); return false; }
+            free(val);
+            next();
+        } else if (tok.kind == TOK_JUSTIFIED) {
+            next();
+            if (tok.kind == TOK_RIGHT) next();
+            e->justified = true;
+        } else if (tok.kind == TOK_BLANK) {
+            next();
+            if (tok.kind == TOK_WHEN) next();
+            if (tok.kind == TOK_ZEROS) next();
+            e->blank_zero = true;
+        } else {
+            diag_error(TOK_LOC, "Unexpected %s in a report group description entry", tok_desc());
+            synchronize();
+            return false;
+        }
+    }
+    if (tok.kind == TOK_PERIOD) next();
+    return true;
+}
+
+// The data item of a report field, named for the entry
+static AstNode *rw_field_decl(RwEntry *e, const char *name) {
+    AstNode *d = rw_decl(name, "05", e->pic, e->value ? ast_clone(e->value) : NULL, e->loc);
+    if (e->justified) {
+        AstNode **t = &d->children;
+        while (*t) t = &(*t)->next;
+        *t = ast_new(AST_JUSTIFIED, NULL, e->loc);
+    }
+    d->blank_when_zero = e->blank_zero;
+    return d;
+}
+
+// One report group: its entries become lines and fields
+static AstNode *rw_group(RwEntry *entries, int n, AstNode *ws) {
+    RwEntry *g = &entries[0];
+    AstNode *group = ast_new(AST_REPORT_GROUP, g->name, g->loc);
+    group->rw = calloc(1, sizeof(RwDesc));
+    *group->rw = g->rw;
+    g->rw.control = NULL;
+    group->rw->source = NULL;           // (fields only)
+    group->rw->sum = NULL;
+    group->rw->upon = NULL;
+    group->rw->reset = NULL;
+    AstNode *unprinted = NULL, *unprinted_tail = NULL;
+    if (group->rw->type == RW_NONE) {
+        diag_error(g->loc, "The report group '%s' has no TYPE clause", g->name ? g->name : "(unnamed)");
+        group->rw->type = RW_DE;
+    }
+    AstNode *line_tail = NULL, *line = NULL, *hidden = NULL, *hidden_tail = NULL;
+    AstNode *line_decls = NULL, *line_decl_tail = NULL;
+    int line_end = 0;               // the last column of the current line
+    int pending_kind = RW_AT_NONE, pending_line = 0;  // an empty line's position
+    for (int k = 0; k < n; k++) {
+        RwEntry *e = &entries[k];
+        if (e->rw.line_kind != RW_AT_NONE) {
+            // a new line (an empty one before it only gives its position)
+            if (line && !line->children) {
+                pending_kind = line->rw->line_kind;
+                pending_line = line->rw->line;
+            }
+            if (line_decls) { rw_add_record(ws, line_decls); line_decls = NULL; line_decl_tail = NULL; }
+            if (line && line->children) list_append(&group->children, &line_tail, line);
+            else if (line) ast_free(line);
+            char lname[32];
+            snprintf(lname, sizeof(lname), "$RWL%d", ++rw_counter);
+            line = ast_new(AST_REPORT_LINE, NULL, e->loc);
+            line->text = strdup(lname);
+            line->rw = calloc(1, sizeof(RwDesc));
+            line->rw->line_kind = e->rw.line_kind;
+            line->rw->line = e->rw.line;
+            if (pending_kind == RW_AT_LINE && e->rw.line_kind == RW_AT_PLUS) {
+                line->rw->line_kind = RW_AT_LINE;
+                line->rw->line = pending_line + e->rw.line;
+            }
+            pending_kind = RW_AT_NONE;
+            line_decls = rw_decl(lname, "01", NULL, NULL, e->loc);
+            line_decl_tail = line_decls;
+            line_end = 0;
+        }
+        if (!e->has_pic) {
+            if (e->rw.column || e->rw.source || e->rw.sum || e->value)
+                diag_error(e->loc, "A report entry with %s needs a PICTURE clause",
+                           e->rw.column ? "COLUMN" : e->rw.source ? "SOURCE" : e->rw.sum ? "SUM" : "VALUE");
+            continue;
+        }
+        char fname[64];
+        if (e->name) snprintf(fname, sizeof(fname), "%s", e->name);
+        else snprintf(fname, sizeof(fname), "$RWF%d", ++rw_counter);
+        AstNode *field = ast_new(AST_REPORT_FIELD, fname, e->loc);
+        field->rw = calloc(1, sizeof(RwDesc));
+        *field->rw = e->rw;
+        e->rw.source = NULL; e->rw.sum = NULL; e->rw.upon = NULL; e->rw.reset = NULL; e->rw.control = NULL;
+        if (e->value) field->children = ast_clone(e->value);
+        int width = pic_positions(e->pic);
+        if (e->rw.column > 0) {
+            if (!line) {
+                diag_error(e->loc, "The report field at COLUMN %d is not on a line: no LINE clause comes before it",
+                           e->rw.column);
+                ast_free(field);
+                continue;
+            }
+            if (e->rw.column <= line_end) {
+                diag_error(e->loc, "COLUMN %d overlaps the field before it, which ends at column %d", e->rw.column, line_end);
+                ast_free(field);
+                continue;
+            }
+            if (e->rw.column > line_end + 1) {
+                char gap[32];
+                snprintf(gap, sizeof(gap), "X(%d)", e->rw.column - line_end - 1);
+                AstNode *f = rw_decl("FILLER", "05", gap, ast_new(AST_FIGURATIVE_CONSTANT, "SPACES", e->loc), e->loc);
+                line_decl_tail->next = f;
+                line_decl_tail = f;
+            }
+            AstNode *d = rw_field_decl(e, fname);
+            line_decl_tail->next = d;
+            line_decl_tail = d;
+            line_end = e->rw.column + width - 1;
+            AstNode **t = &line->children;
+            while (*t) t = &(*t)->next;
+            *t = field;
+        } else {
+            // not printed (a sum counter used by other entries, say)
+            if (!hidden) {
+                char hname[32];
+                snprintf(hname, sizeof(hname), "$RWH%d", ++rw_counter);
+                hidden = rw_decl(hname, "01", NULL, NULL, e->loc);
+                hidden_tail = hidden;
+            }
+            AstNode *d = rw_field_decl(e, fname);
+            hidden_tail->next = d;
+            hidden_tail = d;
+            list_append(&unprinted, &unprinted_tail, field);
+        }
+    }
+    if (line_decls) rw_add_record(ws, line_decls);
+    if (line && line->children) list_append(&group->children, &line_tail, line);
+    else if (line) ast_free(line);
+    if (hidden) rw_add_record(ws, hidden);
+    // unprinted fields after the lines
+    if (unprinted) list_append(&group->children, &line_tail, unprinted);
+    if (!group->children)
+        diag_error(g->loc, "The report group '%s' has nothing to print: no LINE clause, or no field with COLUMN",
+                   g->name ? g->name : "(unnamed)");
+    for (int k = 0; k < n; k++) {
+        free(entries[k].name);
+        free(entries[k].pic);
+        ast_free(entries[k].value);
+        ast_free(entries[k].rw.source);
+        ast_free(entries[k].rw.sum);
+        free(entries[k].rw.upon);
+        free(entries[k].rw.reset);
+        free(entries[k].rw.control);
+    }
+    return group;
+}
+
+// Lines of a record: the longest line record of a report (for the FD)
+static int rw_line_width(AstNode *ws, const char *line_name) {
+    int width = 0;
+    bool in = false;
+    for (AstNode *d = ws->children; d; d = d->next) {
+        if (d->text && atoi(d->text) == 1) { if (in) break; in = d->name && strcmp(d->name, line_name) == 0; continue; }
+        if (!in) continue;
+        for (AstNode *c = d->children; c; c = c->next)
+            if (c->kind == AST_PIC_CLAUSE) width += pic_positions(c->name);
+    }
+    return width;
+}
+
+static void parse_report_section(AstNode *div, AstNode **sec_tail) {
+    SourceLocation loc = TOK_LOC;
+    next();                                     // REPORT
+    next();                                     // SECTION
+    expect(TOK_PERIOD, ".");
+    parser_panic_mode = false;
+    AstNode *sec = ast_new(AST_SECTION, "REPORT", loc);
+    AstNode *ws = rw_working_storage(div);
+    AstNode *rd_tail = NULL;
+    while (tok_spelled("RD")) {
+        next();
+        SourceLocation rloc = TOK_LOC;          // (at the report name)
+        if (tok.kind != TOK_IDENT) { arith_error("Expected a report name after RD"); break; }
+        char *name = tok_to_str();
+        AstNode *rd = ast_new(AST_REPORT, name, rloc);
+        rd->rw = calloc(1, sizeof(RwDesc));
+        next();
+        AstNode *ctl_tail = NULL;
+        bool page_seen = false;
+        while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF && !is_division_start(tok.kind)) {
+            if (tok_spelled("CODE")) {
+                next();
+                if (tok.kind == TOK_IS) next();
+                next();
+            } else if (tok_spelled("CONTROL") || tok_spelled("CONTROLS")) {
+                next();
+                if (tok.kind == TOK_IS) next();
+                while (tok.kind == TOK_IDENT && !tok_spelled("PAGE") && !tok_spelled("CODE")) {
+                    if (tok_spelled("FINAL")) { rd->rw->final_control = true; next(); continue; }
+                    list_append(&rd->extra, &ctl_tail, parse_identifier());
+                }
+            } else if (tok.kind == TOK_PAGE) {
+                next();
+                if (tok_spelled("LIMIT") || tok_spelled("LIMITS")) next();
+                if (tok.kind == TOK_IS) next();
+                rd->rw->page = rw_int();
+                if (tok.kind == TOK_LINE || tok.kind == TOK_LINES || tok_spelled("LINE") || tok_spelled("LINES")) next();
+                page_seen = true;
+            } else if (tok_spelled("HEADING")) {
+                next(); rd->rw->heading = rw_int();
+            } else if (tok_spelled("FIRST")) {
+                next(); if (tok_spelled("DETAIL")) next(); rd->rw->first_detail = rw_int();
+            } else if (tok_spelled("LAST")) {
+                next(); if (tok_spelled("DETAIL")) next(); rd->rw->last_detail = rw_int();
+            } else if (tok_spelled("FOOTING")) {
+                next(); rd->rw->footing = rw_int();
+            } else {
+                diag_error(TOK_LOC, "Unexpected %s in the RD entry of '%s'", tok_desc(), name);
+                synchronize();
+                break;
+            }
+        }
+        if (tok.kind == TOK_PERIOD) next();
+        // Defaults of the PAGE clause
+        RwDesc *r = rd->rw;
+        if (page_seen) {
+            if (!r->heading) r->heading = 1;
+            if (!r->first_detail) r->first_detail = r->heading;
+            if (!r->last_detail) r->last_detail = r->footing ? r->footing : r->page;
+            if (!r->footing) r->footing = r->last_detail;
+            if (!(r->heading <= r->first_detail && r->first_detail <= r->last_detail &&
+                  r->last_detail <= r->footing && r->footing <= r->page))
+                diag_error(rloc, "The PAGE clause of '%s' needs HEADING <= FIRST DETAIL <= LAST DETAIL <= FOOTING <= PAGE LIMIT",
+                           name);
+        }
+        // PAGE-COUNTER and LINE-COUNTER
+        AstNode *ctr = rw_decl(name, "01", NULL, NULL, rloc);
+        ctr->next = rw_decl("PAGE-COUNTER", "05", "9(6)", ast_new(AST_FIGURATIVE_CONSTANT, "ZERO", rloc), rloc);
+        ctr->next->next = rw_decl("LINE-COUNTER", "05", "9(6)", ast_new(AST_FIGURATIVE_CONSTANT, "ZERO", rloc), rloc);
+        rw_add_record(ws, ctr);
+        for (int k = 0; k < num_fd_reports; k++)
+            if (strcasecmp(fd_reports[k].report, name) == 0) r->file = strdup(fd_reports[k].fd->name);
+        if (!r->file) diag_error(rloc, "No FD names the report '%s' in a REPORT clause", name);
+        // Its report groups
+        AstNode *group_tail = NULL;
+        while (tok.kind == TOK_NUMBER) {
+            RwEntry entries[256];
+            int n = 0;
+            do {
+                if (n == 256) { diag_error(TOK_LOC, "A report group has more than 256 entries"); break; }
+                const char *before = tok.lexeme;
+                if (!rw_entry(&entries[n])) { if (tok.lexeme == before) next(); continue; }
+                n++;
+            } while (tok.kind == TOK_NUMBER && atoi(tok_value_tmp()) != 1);
+            if (n == 0) continue;
+            if (entries[0].level != 1)
+                diag_error(entries[0].loc, "A report group description starts with level 01");
+            list_append(&rd->children, &group_tail, rw_group(entries, n, ws));
+        }
+        list_append(&sec->children, &rd_tail, rd);
+        free(name);
+    }
+    if (tok.kind != TOK_EOF && !is_division_start(tok.kind) && tok.kind != TOK_PROCEDURE)
+        diag_error(TOK_LOC, "Expected an RD entry or the end of the REPORT SECTION, found %s", tok_desc());
+    // The record of each report file: as wide as its widest line
+    for (int k = 0; k < num_fd_reports; k++) {
+        int width = 1;
+        for (AstNode *rd = sec->children; rd; rd = rd->next) {
+            if (strcasecmp(rd->name, fd_reports[k].report) != 0) continue;
+            for (AstNode *g = rd->children; g; g = g->next)
+                for (AstNode *l = g->children; l; l = l->next)
+                    if (l->kind == AST_REPORT_LINE) {
+                        int w = rw_line_width(ws, l->text);
+                        if (w > width) width = w;
+                    }
+        }
+        AstNode *fd = fd_reports[k].fd;
+        bool has = false;
+        for (AstNode *c = fd->children; c; c = c->next) has |= c->kind == AST_VAR_DECL;
+        char rname[96], pic[32];
+        snprintf(rname, sizeof(rname), "$RWR-%s", fd->name);
+        snprintf(pic, sizeof(pic), "X(%d)", width);
+        // one record per file: the widest of its reports
+        AstNode *rec = NULL;
+        for (AstNode *c = fd->children; c; c = c->next) if (c->name && strcmp(c->name, rname) == 0) rec = c;
+        if (rec) {
+            for (AstNode *c = rec->children; c; c = c->next)
+                if (c->kind == AST_PIC_CLAUSE && pic_positions(c->name) < width) { free(c->name); c->name = strdup(pic); }
+        } else if (!has) {
+            AstNode **t = &fd->children;
+            while (*t) t = &(*t)->next;
+            *t = rw_decl(rname, "01", pic, NULL, fd->loc);
+        } else {
+            diag_error(fd->loc, "The FD of '%s' names a report, so it cannot have record descriptions", fd->name);
+        }
+    }
+    num_fd_reports = 0;
+    AstNode *last = div->children;
+    while (last && last->next) last = last->next;
+    if (last) last->next = sec;
+    else div->children = sec;
+    *sec_tail = sec;
 }
 
 // DATA DIVISION section body: data description entries
@@ -3477,6 +4033,20 @@ static AstNode *parse_file_section(void) {
                 next();
                 continue;
             }
+            if (tok_spelled("REPORT") || tok_spelled("REPORTS")) {
+                // REPORT IS / REPORTS ARE report-name...: the Report Writer
+                next();
+                if (tok.kind == TOK_IS) next();
+                while (tok.kind == TOK_IDENT && !tok_spelled("LABEL") && !tok_spelled("GLOBAL") &&
+                       !tok_spelled("EXTERNAL") && !tok_spelled("BLOCK") && !tok_spelled("CODE-SET")) {
+                    if (num_fd_reports < 64) {
+                        fd_reports[num_fd_reports].fd = fd;
+                        fd_reports[num_fd_reports++].report = tok_to_str();
+                    }
+                    next();
+                }
+                continue;
+            }
             if (tok_is_word("GLOBAL") || tok_is_word("EXTERNAL")) {
                 if (tok_is_word("GLOBAL")) fd->is_global = true;
                 else fd->is_external = true;
@@ -3685,6 +4255,10 @@ static AstNode *parse_division(void) {
                 AstNode *sec = parse_section();
                 if (sec) sec->name = strdup("LINKAGE");
                 if (sec) list_append(&div->children, &sec_tail, sec);
+                continue;
+            }
+            if (tok_spelled("REPORT") && peek_token().kind == TOK_SECTION) {
+                parse_report_section(div, &sec_tail);
                 continue;
             }
             if (tok_is_word("COMMUNICATION")) {

@@ -74,6 +74,15 @@ void ast_free(AstNode *node) {
     ast_free(node->extra);
     ast_free(node->loop);
     ast_free(node->next);
+    if (node->rw) {
+        free(node->rw->file);
+        free(node->rw->control);
+        free(node->rw->upon);
+        free(node->rw->reset);
+        ast_free(node->rw->source);
+        ast_free(node->rw->sum);
+        free(node->rw);
+    }
 
     free(node);
 }

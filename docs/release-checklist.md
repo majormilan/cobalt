@@ -5,16 +5,19 @@ The goal: a **feature complete alpha for COBOL-85** on Linux and Windows
 is done when its "Done when" holds; tick it in the same commit.
 
 Status as of 2026-11-11: NIST CCVS85 passes on NC, SM, SQ, RL, IX, ST, IC,
-IF, SG and DB with no failures (IX110A and ST301M excluded, see 1.6); RW is
-not implemented; CM is not supported (1.3).
+IF, SG, DB and RW with no failures (IX110A and ST301M excluded, see 1.6); CM
+is not supported (1.3).
 
 ## 1. Language (COBOL-85)
 
-- [ ] **1.1 Report Writer (RW module).** RD entries, report groups
-  (TYPE, LINE, NEXT GROUP, COLUMN, SOURCE, SUM, RESET, GROUP INDICATE),
-  INITIATE, GENERATE, TERMINATE, USE BEFORE REPORTING, PAGE-COUNTER,
-  LINE-COUNTER.
-  Done when: the NIST RW programs compile and pass.
+- [x] **1.1 Report Writer (RW module).** RD entries (CONTROL, PAGE with
+  HEADING, FIRST / LAST DETAIL, FOOTING), report groups of every TYPE, LINE,
+  NEXT GROUP, COLUMN, SOURCE, VALUE, SUM with UPON and RESET (sum counters
+  rolled into higher ones), GROUP INDICATE, INITIATE, GENERATE (detail and
+  summary), TERMINATE, USE BEFORE REPORTING, SUPPRESS PRINTING,
+  PAGE-COUNTER, LINE-COUNTER. The NIST RW programs pass (43 tests);
+  `tests/report_writer`, `tests/report_summary`, `tests/diag/report*`;
+  `runtime/ABI.md` section 16.
 - [x] **1.2 Debug module (DB).** The 6 failing tests fixed (PERFORM UNTIL
   evaluations, sending operands of arithmetic statements, WRITE / REWRITE
   before the record is written, DEBUG-CONTENTS of 2048 characters).

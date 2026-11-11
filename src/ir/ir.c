@@ -177,6 +177,7 @@ typedef struct {
     char *symbol;           // USE GLOBAL of a containing program: its entry
     int global_index;       // USE GLOBAL of this program: its number, else -1
 } UseDecl;
+#define USE_REPORTING 5     // mode of a USE BEFORE REPORTING procedure (file: the report group)
 static UseDecl uses[64];
 static int num_uses = 0;
 static bool has_declaratives = false;
@@ -216,6 +217,12 @@ static void collect_program_uses(AstNode *program, const char *owner, bool own) 
             AstNode *u = n->extra;
             if (own && u && u->name && strcmp(u->name, "DEBUGGING") == 0 && num_debug_uses < 32)
                 debug_uses[num_debug_uses++] = (DebugUse){ n, u, -1, -1 };
+            if (own && u && u->name && strcmp(u->name, "REPORTING") == 0) {
+                // USE BEFORE REPORTING report-group (the Report Writer)
+                for (AstNode *g = u->children; g; g = g->next)
+                    if (num_uses < 64) uses[num_uses++] = (UseDecl){ n, g->name, USE_REPORTING, -1, -1, NULL, -1 };
+                continue;
+            }
             if (!u || !u->name || strcmp(u->name, "ERROR") != 0) continue;
             int gi = u->is_signed ? global_count++ : -1;
             if (!own && gi < 0) continue;
@@ -254,7 +261,7 @@ static void collect_uses(AstNode *program) {
 // The USE procedure for the file itself, or -1
 static int use_for_file(const char *file) {
     for (int k = 0; k < num_uses; k++)
-        if (uses[k].file && strcasecmp(uses[k].file, file) == 0) return k;
+        if (uses[k].file && uses[k].mode != USE_REPORTING && strcasecmp(uses[k].file, file) == 0) return k;
     return -1;
 }
 
@@ -5192,6 +5199,622 @@ static void lower_node(IrProgram *ir, AstNode *node) {
     where_stmt = saved_stmt;
 }
 
+// ── Report Writer (runtime/ABI.md section 16) ─────────────────────────────────
+// A report is produced by code generated from its description: INITIATE,
+// GENERATE and TERMINATE become ordinary moves, comparisons and WRITE
+// statements of the lines (records the parser declared) to the report file.
+// The state of a report is kept in temporary items.
+
+static FieldRef var_field(int idx);
+
+typedef struct {
+    AstNode *rd;
+    int file;               // its file
+    char rec_name[96];      // the file's record ("$RWR-file")
+    int pc, lc;             // PAGE-COUNTER and LINE-COUNTER
+    int state;              // 0 not initiated, 1 initiated, 2 a GENERATE was done
+    int pl;                 // the physical line of the file (LINE-COUNTER less NEXT GROUP PLUS)
+    int eject;              // 1: the next line starts a new page
+    int body;               // 1: a body group is on the page
+    int force;              // 1: the next body group goes on a new page (NEXT GROUP NEXT PAGE)
+    int level;              // the level of a control break
+    int tg, adv;            // the line being presented, the lines to advance
+    int nctl;
+    AstNode *ctl[16];       // the CONTROL data-names, major first
+    int saved[16], swap[16];// their values at the last GENERATE; a copy during CF
+    AstNode *rh, *ph, *pf, *rf, *chf, *cff;    // (chf, cff: CONTROL HEADING / FOOTING FINAL)
+    AstNode *ch[16], *cf[16];
+} RwReport;
+
+typedef struct {
+    AstNode *field;
+    int report;
+    AstNode *group;
+    int var;                // the printed item
+    int acc;                // the sum counter
+    int reset_level;        // the control level whose CONTROL FOOTING resets it (-1: FINAL, -2: never)
+} RwSum;
+
+static RwReport rw_reports[16];
+static void rw_suggest(const char *name, bool details);
+static int rw_num_reports;
+static RwSum rw_sums[256];
+static int rw_num_sums;
+static struct { AstNode *group; int flag; } rw_gi[64];      // GROUP INDICATE: 1 until printed
+static int rw_num_gi;
+static int rw_blank = -1;                   // a space, written for the first line of a page
+static int rw_suppress = -1;                // SUPPRESS PRINTING was executed
+
+static AstNode *rw_id(int var) {
+    char b[24];
+    snprintf(b, sizeof(b), "#%d", var);
+    return ast_new(AST_IDENTIFIER, b, (SourceLocation){0});
+}
+
+static AstNode *rw_lit(long long v) {
+    char b[32];
+    snprintf(b, sizeof(b), "%lld", v);
+    return ast_new(AST_LITERAL_NUMBER, b, (SourceLocation){0});
+}
+
+static void rw_set(IrProgram *ir, int var, AstNode *tree) {
+    emit(ir, IR_SIZE_ERR_CLEAR);
+    AstNode *r = rw_id(var);
+    lower_assign(ir, tree, r, false);
+    ast_free(tree);
+    ast_free(r);
+}
+
+static void rw_set_const(IrProgram *ir, int var, long long v) { rw_set(ir, var, rw_lit(v)); }
+static void rw_set_var(IrProgram *ir, int var, int from) { rw_set(ir, var, rw_id(from)); }
+static void rw_add_const(IrProgram *ir, int var, long long v) { rw_set(ir, var, mk_bin(AST_EXPR_ADD, rw_id(var), rw_lit(v))); }
+
+// Jump to label when (left op right); the operands are freed
+static void rw_jump_if(IrProgram *ir, AstNode *left, const char *op, AstNode *right, const char *label) {
+    AstNode *c = make_relation(left, op, right);
+    emit_cond_jump(ir, c, label, true);
+    ast_free(c);
+}
+
+static void rw_move(IrProgram *ir, AstNode *src, int dest) {
+    char lit[32] = {0};
+    if (src->kind == AST_STRING_LITERAL || src->kind == AST_LITERAL_NUMBER)
+        emit_data_lit(ir, "lit", src->name ? src->name : "", lit, sizeof(lit));
+    emit(ir, IR_SIZE_ERR_CLEAR);
+    AstNode *d = rw_id(dest);
+    lower_move(ir, src, d, lit);
+    ast_free(d);
+}
+
+static int rw_var_named(const char *name) {
+    for (int i = 0; i < num_vars; i++)
+        if (!vars[i].is_filler && vars[i].name && strcasecmp(vars[i].name, name) == 0) return i;
+    return -1;
+}
+
+static int rw_gi_flag(const AstNode *group) {
+    for (int k = 0; k < rw_num_gi; k++) if (rw_gi[k].group == group) return rw_gi[k].flag;
+    return -1;
+}
+
+// WRITE the report's record FROM line AFTER ADVANCING count LINES (count
+// NULL: PAGE)
+static void rw_write(IrProgram *ir, RwReport *r, int line, AstNode *count) {
+    SourceLocation none = {0};
+    AstNode *w = ast_new(AST_STATEMENT_WRITE, NULL, none);
+    w->extra = ast_new(AST_IDENTIFIER, r->rec_name, none);
+    w->loop = rw_id(line);
+    w->name = strdup("AFTER");
+    w->children = count ? count : ast_new(AST_BOOL_LITERAL, "PAGE", none);
+    lower_node(ir, w);
+    ast_free(w);
+}
+
+// Present a line on line tg of the page
+static void rw_present(IrProgram *ir, RwReport *r, int line) {
+    char eject[32], done[32], first[32];
+    new_label(eject, sizeof(eject), "rw_eject");
+    new_label(done, sizeof(done), "rw_presented");
+    new_label(first, sizeof(first), "rw_first");
+    rw_jump_if(ir, rw_id(r->eject), "=", rw_lit(1), eject);
+    rw_set(ir, r->adv, mk_bin(AST_EXPR_SUB, rw_id(r->tg), rw_id(r->pl)));
+    rw_write(ir, r, line, rw_id(r->adv));
+    emit_jump(ir, IR_JUMP, done);
+    emit_label(ir, eject);
+    rw_set_const(ir, r->eject, 0);
+    rw_jump_if(ir, rw_id(r->tg), "=", rw_lit(1), first);
+    rw_write(ir, r, rw_blank, NULL);            // line 1 of the new page, then down to tg
+    rw_set(ir, r->adv, mk_bin(AST_EXPR_SUB, rw_id(r->tg), rw_lit(1)));
+    rw_write(ir, r, line, rw_id(r->adv));
+    emit_jump(ir, IR_JUMP, done);
+    emit_label(ir, first);
+    rw_write(ir, r, line, NULL);
+    emit_label(ir, done);
+    rw_set_var(ir, r->pl, r->tg);
+}
+
+static bool rw_body(int type) { return type == RW_CH || type == RW_DE || type == RW_CF; }
+
+static void rw_print_group(IrProgram *ir, RwReport *r, AstNode *g);
+
+// The end of a page: PAGE FOOTING, then PAGE HEADING on the next page
+static void rw_page_break(IrProgram *ir, RwReport *r) {
+    if (r->pf) rw_print_group(ir, r, r->pf);
+    rw_set_const(ir, r->eject, 1);
+    rw_set_const(ir, r->lc, 0);
+    rw_set_const(ir, r->pl, 0);
+    rw_add_const(ir, r->pc, 1);
+    rw_set_const(ir, r->body, 0);
+    for (int k = 0; k < rw_num_gi; k++)
+        for (AstNode *g = r->rd->children; g; g = g->next)
+            if (rw_gi[k].group == g) rw_set_const(ir, rw_gi[k].flag, 1);
+    if (r->ph) rw_print_group(ir, r, r->ph);
+}
+
+// The fields of a line take their values: SOURCE, SUM, and (GROUP INDICATE)
+// spaces or their value
+static void rw_fill(IrProgram *ir, RwReport *r, AstNode *g, AstNode *line) {
+    int gi = rw_gi_flag(g);
+    for (AstNode *f = line->children; f; f = f->next) {
+        int var = rw_var_named(f->name);
+        if (var < 0) continue;
+        char skip[32] = "", done[32] = "";
+        if (f->rw->group_indicate && gi >= 0) {
+            new_label(skip, sizeof(skip), "rw_gi_blank");
+            new_label(done, sizeof(done), "rw_gi_done");
+            rw_jump_if(ir, rw_id(gi), "=", rw_lit(0), skip);
+        }
+        if (f->rw->source) rw_move(ir, f->rw->source, var);
+        else if (f->rw->sum) {
+            for (int k = 0; k < rw_num_sums; k++)
+                if (rw_sums[k].field == f) rw_move(ir, rw_id(rw_sums[k].acc), var);
+        } else if (f->children && f->rw->group_indicate) rw_move(ir, f->children, var);
+        if (*skip) {
+            emit_jump(ir, IR_JUMP, done);
+            emit_label(ir, skip);
+            AstNode *sp = ast_new(AST_FIGURATIVE_CONSTANT, "SPACES", (SourceLocation){0});
+            rw_move(ir, sp, var);
+            ast_free(sp);
+            emit_label(ir, done);
+        }
+    }
+    (void)r;
+}
+
+static int rw_use_before(const char *group) {
+    for (int k = 0; k < num_uses; k++)
+        if (uses[k].mode == USE_REPORTING && uses[k].file && group && strcasecmp(uses[k].file, group) == 0)
+            return k;
+    return -1;
+}
+
+// Present a report group: USE BEFORE REPORTING, page control, its lines,
+// NEXT GROUP
+static void rw_print_group(IrProgram *ir, RwReport *r, AstNode *g) {
+    RwDesc *gr = g->rw, *rd = r->rd->rw;
+    int type = gr->type;
+    bool paged = rd->page > 0;
+    char skip[32];
+    new_label(skip, sizeof(skip), "rw_group_end");
+    int use = rw_use_before(g->name);
+    if (use >= 0) {
+        rw_set_const(ir, rw_suppress, 0);
+        emit_perform_use(ir, use);
+        rw_jump_if(ir, rw_id(rw_suppress), "=", rw_lit(1), skip);
+    }
+    AstNode *lines[64];
+    int n = 0;
+    for (AstNode *l = g->children; l && n < 64; l = l->next)
+        if (l->kind == AST_REPORT_LINE) lines[n++] = l;
+    if (n == 0) { emit_label(ir, skip); return; }
+    int limit = type == RW_CF ? rd->footing : rd->last_detail;
+    if (paged && rw_body(type)) {
+        // NEXT GROUP NEXT PAGE of the group before, LINE NEXT PAGE of this one
+        char no_force[32];
+        new_label(no_force, sizeof(no_force), "rw_no_force");
+        if (lines[0]->rw->line_kind != RW_AT_NEXT_PAGE)
+            rw_jump_if(ir, rw_id(r->force), "=", rw_lit(0), no_force);
+        rw_page_break(ir, r);
+        rw_set_const(ir, r->force, 0);
+        char fitted[32];
+        new_label(fitted, sizeof(fitted), "rw_fitted");
+        emit_jump(ir, IR_JUMP, fitted);
+        emit_label(ir, no_force);
+        // Does the group fit on this page?
+        if (lines[0]->rw->line_kind == RW_AT_LINE) {
+            // an absolute first line: on this page if it is below the last line
+            rw_jump_if(ir, rw_id(r->eject), "=", rw_lit(1), fitted);
+            rw_jump_if(ir, rw_id(r->lc), "<", rw_lit(lines[0]->rw->line), fitted);
+        } else {
+            int total = 0;
+            for (int k = 0; k < n && lines[k]->rw->line_kind == RW_AT_PLUS; k++) total += lines[k]->rw->line;
+            rw_jump_if(ir, rw_id(r->body), "=", rw_lit(0), fitted);
+            rw_jump_if(ir, mk_bin(AST_EXPR_ADD, rw_id(r->lc), rw_lit(total)), "<=", rw_lit(limit), fitted);
+        }
+        rw_page_break(ir, r);
+        emit_label(ir, fitted);
+    }
+    for (int k = 0; k < n; k++) {
+        RwDesc *l = lines[k]->rw;
+        if (l->line_kind == RW_AT_LINE || l->line_kind == RW_AT_NEXT_PAGE) {
+            rw_set_const(ir, r->tg, l->line ? l->line : (paged ? rd->first_detail : 1));
+        } else if (k == 0 && paged && type != RW_RF) {
+            // the first line of a group that is relative: at the first line of
+            // its area if the page has nothing of the area yet
+            int start = type == RW_PH || type == RW_RH ? rd->heading :
+                        type == RW_PF ? rd->footing + 1 : rd->first_detail;
+            char normal[32], go[32];
+            new_label(normal, sizeof(normal), "rw_rel");
+            new_label(go, sizeof(go), "rw_line");
+            if (rw_body(type)) rw_jump_if(ir, rw_id(r->body), "=", rw_lit(1), normal);
+            rw_jump_if(ir, rw_id(r->lc), ">=", rw_lit(start), normal);
+            rw_set_const(ir, r->tg, start);
+            emit_jump(ir, IR_JUMP, go);
+            emit_label(ir, normal);
+            rw_set(ir, r->tg, mk_bin(AST_EXPR_ADD, rw_id(r->lc), rw_lit(l->line)));
+            emit_label(ir, go);
+        } else {
+            rw_set(ir, r->tg, mk_bin(AST_EXPR_ADD, rw_id(r->lc), rw_lit(l->line)));
+        }
+        // LINE-COUNTER is the line being presented while its fields take their values
+        rw_set_var(ir, r->lc, r->tg);
+        rw_fill(ir, r, g, lines[k]);
+        rw_present(ir, r, rw_var_named(lines[k]->text));
+    }
+    if (paged && rw_body(type)) rw_set_const(ir, r->body, 1);
+    int gi = rw_gi_flag(g);
+    if (gi >= 0) rw_set_const(ir, gi, 0);
+    // NEXT GROUP
+    if (gr->next_kind == RW_AT_PLUS) rw_add_const(ir, r->lc, gr->next);
+    else if (gr->next_kind == RW_AT_NEXT_PAGE) { if (paged) rw_set_const(ir, r->force, 1); }
+    else if (gr->next_kind == RW_AT_LINE) {
+        char later[32], done[32];
+        new_label(later, sizeof(later), "rw_next_line");
+        new_label(done, sizeof(done), "rw_next_done");
+        rw_jump_if(ir, rw_id(r->lc), "<", rw_lit(gr->next), later);
+        if (paged) rw_set_const(ir, r->force, 1);
+        emit_jump(ir, IR_JUMP, done);
+        emit_label(ir, later);
+        rw_set_const(ir, r->lc, gr->next);
+        emit_label(ir, done);
+    }
+    emit_label(ir, skip);
+}
+
+// A CONTROL FOOTING: presented, then its sum counters roll into the
+// counters that sum them, then the counters of this level are reset
+static void rw_control_footing(IrProgram *ir, RwReport *r, AstNode *g, int level) {
+    if (g) {
+        rw_print_group(ir, r, g);
+        for (int k = 0; k < rw_num_sums; k++) {
+            if (rw_sums[k].report != (int)(r - rw_reports)) continue;
+            for (AstNode *op = rw_sums[k].field->rw->sum; op; op = op->next)
+                for (int j = 0; j < rw_num_sums; j++)
+                    if (rw_sums[j].group == g && op->name && strcasecmp(op->name, rw_sums[j].field->name) == 0)
+                        rw_set(ir, rw_sums[k].acc, mk_bin(AST_EXPR_ADD, rw_id(rw_sums[k].acc), rw_id(rw_sums[j].acc)));
+        }
+    }
+    for (int k = 0; k < rw_num_sums; k++)
+        if (rw_sums[k].report == (int)(r - rw_reports) && rw_sums[k].reset_level == level)
+            rw_set_const(ir, rw_sums[k].acc, 0);
+}
+
+// The values of the controls: copies made and compared as their bytes
+static void rw_copy(IrProgram *ir, int dest_var, AstNode *ctl, bool to_control, int temp) {
+    FieldRef c, t = var_field(temp);
+    if (!resolve_ref(ir, ctl, &c)) return;
+    if (to_control) emit_move_alpha(ir, &c, t.label, t.size);
+    else emit_move_alpha(ir, &t, c.label, c.size);
+    (void)dest_var;
+}
+
+static bool rw_is_counter(int report, const char *name) {
+    for (int k = 0; k < rw_num_sums; k++)
+        if (rw_sums[k].report == report && strcasecmp(rw_sums[k].field->name, name) == 0) return true;
+    return false;
+}
+
+// "did you mean" among the reports (and their DETAIL groups)
+static void rw_suggest(const char *name, bool details) {
+    const char *names[256];
+    const AstNode *where[256];
+    int n = 0;
+    for (int k = 0; k < rw_num_reports && n < 256; k++) {
+        where[n] = rw_reports[k].rd;
+        names[n++] = rw_reports[k].rd->name;
+        for (AstNode *g = rw_reports[k].rd->children; details && g && n < 256; g = g->next)
+            if (g->name && g->rw->type == RW_DE) { where[n] = g; names[n++] = g->name; }
+    }
+    const char *near = diag_closest(name, names, n);
+    for (int k = 0; near && k < n; k++)
+        if (names[k] == near) { diag_note(where[k]->loc, "did you mean '%s'?", near); break; }
+}
+
+static void lower_generate(IrProgram *ir, AstNode *node) {
+    const char *name = node->extra->name;
+    RwReport *r = NULL;
+    AstNode *detail = NULL;
+    for (int k = 0; k < rw_num_reports && !r; k++) {
+        if (strcasecmp(rw_reports[k].rd->name, name) == 0) r = &rw_reports[k];
+        for (AstNode *g = rw_reports[k].rd->children; g && !r; g = g->next)
+            if (g->name && strcasecmp(g->name, name) == 0) {
+                if (g->rw->type != RW_DE) {
+                    diag_error(node->extra->loc, "GENERATE needs a DETAIL report group or a report, but '%s' is a %s group",
+                               name, g->rw->type == RW_PH ? "PAGE HEADING" : g->rw->type == RW_PF ? "PAGE FOOTING" :
+                               g->rw->type == RW_RH ? "REPORT HEADING" : g->rw->type == RW_RF ? "REPORT FOOTING" :
+                               g->rw->type == RW_CH ? "CONTROL HEADING" : "CONTROL FOOTING");
+                    return;
+                }
+                r = &rw_reports[k];
+                detail = g;
+            }
+    }
+    if (!r) {
+        diag_error(node->extra->loc, "'%s' is not a report or a DETAIL report group", name);
+        rw_suggest(name, true);
+        return;
+    }
+    int ri = (int)(r - rw_reports);
+    char cont[32], sum[32], end[32];
+    new_label(cont, sizeof(cont), "rw_gen_next");
+    new_label(sum, sizeof(sum), "rw_gen_sum");
+    new_label(end, sizeof(end), "rw_gen_end");
+    rw_jump_if(ir, rw_id(r->state), "=", rw_lit(2), cont);
+    // The first GENERATE: REPORT HEADING, PAGE HEADING, the CONTROL HEADINGs
+    rw_set_const(ir, r->lc, 0);
+    rw_set_const(ir, r->pl, 0);
+    rw_set_const(ir, r->eject, 0);
+    rw_set_const(ir, r->body, 0);
+    if (r->rh) rw_print_group(ir, r, r->rh);
+    if (r->ph) rw_print_group(ir, r, r->ph);
+    if (r->chf) rw_print_group(ir, r, r->chf);
+    for (int i = 0; i < r->nctl; i++) if (r->ch[i]) rw_print_group(ir, r, r->ch[i]);
+    for (int i = 0; i < r->nctl; i++) rw_copy(ir, 0, r->ctl[i], false, r->saved[i]);
+    rw_set_const(ir, r->state, 2);
+    emit_jump(ir, IR_JUMP, sum);
+    // A control break: the major control that changed
+    emit_label(ir, cont);
+    char brk_at[16][32], do_break[32];
+    new_label(do_break, sizeof(do_break), "rw_break");
+    for (int i = 0; i < r->nctl; i++) {
+        new_label(brk_at[i], sizeof(brk_at[i]), "rw_break_at");
+        FieldRef c, t = var_field(r->saved[i]);
+        if (!resolve_ref(ir, r->ctl[i], &c)) continue;
+        IrInstr *j = emit(ir, IR_ALNUM_CMP_JUMP_IF_FALSE);      // not equal: a break at level i
+        j->var_name = strdup(c.label);
+        j->size = c.size;
+        j->lit_name = strdup(t.label);
+        j->lit_len = t.size;
+        j->cmp_op = strdup("=");
+        j->jump_target = strdup(brk_at[i]);
+    }
+    emit_jump(ir, IR_JUMP, sum);
+    for (int i = 0; i < r->nctl; i++) {
+        emit_label(ir, brk_at[i]);
+        rw_set_const(ir, r->level, i);
+        emit_jump(ir, IR_JUMP, do_break);
+    }
+    emit_label(ir, do_break);
+    if (r->nctl > 0) {
+        // the CONTROL FOOTINGs, minor first, with the values the controls had
+        for (int i = 0; i < r->nctl; i++) {
+            rw_copy(ir, 0, r->ctl[i], false, r->swap[i]);
+            rw_copy(ir, 0, r->ctl[i], true, r->saved[i]);
+        }
+        for (int j = r->nctl - 1; j >= 0; j--) {
+            char skip[32];
+            new_label(skip, sizeof(skip), "rw_cf_skip");
+            rw_jump_if(ir, rw_id(r->level), ">", rw_lit(j), skip);
+            rw_control_footing(ir, r, r->cf[j], j);
+            emit_label(ir, skip);
+        }
+        for (int i = 0; i < r->nctl; i++) rw_copy(ir, 0, r->ctl[i], true, r->swap[i]);
+        // the CONTROL HEADINGs, major first, with the new values
+        for (int j = 0; j < r->nctl; j++) {
+            if (!r->ch[j]) continue;
+            char skip[32];
+            new_label(skip, sizeof(skip), "rw_ch_skip");
+            rw_jump_if(ir, rw_id(r->level), ">", rw_lit(j), skip);
+            rw_print_group(ir, r, r->ch[j]);
+            emit_label(ir, skip);
+        }
+        for (int i = 0; i < r->nctl; i++) rw_copy(ir, 0, r->ctl[i], false, r->saved[i]);
+        for (int k = 0; k < rw_num_gi; k++)
+            for (AstNode *g = r->rd->children; g; g = g->next)
+                if (rw_gi[k].group == g) rw_set_const(ir, rw_gi[k].flag, 1);
+    }
+    emit_label(ir, sum);
+    // Summing: the SUM operands that are not sum counters
+    for (int k = 0; k < rw_num_sums; k++) {
+        if (rw_sums[k].report != ri) continue;
+        RwDesc *f = rw_sums[k].field->rw;
+        if (f->upon && (!detail || strcasecmp(f->upon, detail->name) != 0)) continue;
+        for (AstNode *op = f->sum; op; op = op->next) {
+            if (op->name && rw_is_counter(ri, op->name)) continue;
+            rw_set(ir, rw_sums[k].acc, mk_bin(AST_EXPR_ADD, rw_id(rw_sums[k].acc), ast_clone(op)));
+        }
+    }
+    if (detail) rw_print_group(ir, r, detail);
+    emit_label(ir, end);
+}
+
+static RwReport *rw_report_named(const AstNode *ref) {
+    for (int k = 0; k < rw_num_reports; k++)
+        if (strcasecmp(rw_reports[k].rd->name, ref->name) == 0) return &rw_reports[k];
+    diag_error(ref->loc, "'%s' is not a report (no RD entry has this name)", ref->name);
+    rw_suggest(ref->name, false);
+    return NULL;
+}
+
+static void lower_initiate(IrProgram *ir, AstNode *node) {
+    for (AstNode *n = node->children; n; n = n->next) {
+        RwReport *r = rw_report_named(n);
+        if (!r) continue;
+        rw_set_const(ir, r->pc, 1);
+        rw_set_const(ir, r->lc, 0);
+        rw_set_const(ir, r->state, 1);
+        rw_set_const(ir, r->pl, 0);
+        rw_set_const(ir, r->eject, 0);
+        rw_set_const(ir, r->body, 0);
+        rw_set_const(ir, r->force, 0);
+        for (int k = 0; k < rw_num_sums; k++)
+            if (rw_sums[k].report == (int)(r - rw_reports)) rw_set_const(ir, rw_sums[k].acc, 0);
+        for (int k = 0; k < rw_num_gi; k++)
+            for (AstNode *g = r->rd->children; g; g = g->next)
+                if (rw_gi[k].group == g) rw_set_const(ir, rw_gi[k].flag, 1);
+        AstNode *sp = ast_new(AST_FIGURATIVE_CONSTANT, "SPACES", (SourceLocation){0});
+        rw_move(ir, sp, rw_blank);
+        ast_free(sp);
+    }
+}
+
+static void lower_terminate(IrProgram *ir, AstNode *node) {
+    for (AstNode *n = node->children; n; n = n->next) {
+        RwReport *r = rw_report_named(n);
+        if (!r) continue;
+        char end[32];
+        new_label(end, sizeof(end), "rw_term_end");
+        // Without a GENERATE, TERMINATE presents nothing
+        rw_jump_if(ir, rw_id(r->state), "<", rw_lit(2), end);
+        for (int j = r->nctl - 1; j >= 0; j--) rw_control_footing(ir, r, r->cf[j], j);
+        rw_control_footing(ir, r, r->cff, -1);
+        if (r->pf) rw_print_group(ir, r, r->pf);
+        if (r->rf) {
+            // a REPORT FOOTING whose first line is above the line reached: on a new page
+            AstNode *first = NULL;
+            for (AstNode *l = r->rf->children; l && !first; l = l->next) if (l->kind == AST_REPORT_LINE) first = l;
+            if (first && r->rd->rw->page && (first->rw->line_kind == RW_AT_LINE || first->rw->line_kind == RW_AT_NEXT_PAGE)) {
+                char same[32];
+                new_label(same, sizeof(same), "rw_rf_here");
+                if (first->rw->line_kind == RW_AT_LINE)
+                    rw_jump_if(ir, rw_id(r->lc), "<", rw_lit(first->rw->line), same);
+                rw_set_const(ir, r->eject, 1);
+                rw_set_const(ir, r->lc, 0);
+                rw_set_const(ir, r->pl, 0);
+                rw_add_const(ir, r->pc, 1);
+                emit_label(ir, same);
+            }
+            rw_print_group(ir, r, r->rf);
+        }
+        emit_label(ir, end);
+        rw_set_const(ir, r->state, 0);
+    }
+}
+
+// The reports of a program: their groups, controls, sum counters and state
+static void rw_setup(AstNode *program) {
+    rw_num_reports = rw_num_sums = rw_num_gi = 0;
+    rw_blank = rw_suppress = -1;
+    for (AstNode *div = program->children; div; div = div->next) {
+        if (div->kind != AST_DIVISION || strcasecmp(div->name, "DATA") != 0) continue;
+        for (AstNode *sec = div->children; sec; sec = sec->next) {
+            if (sec->kind != AST_SECTION || !sec->name || strcmp(sec->name, "REPORT") != 0) continue;
+            for (AstNode *rd = sec->children; rd && rw_num_reports < 16; rd = rd->next) {
+                RwReport *r = &rw_reports[rw_num_reports];
+                memset(r, 0, sizeof(*r));
+                r->rd = rd;
+                r->file = -1;
+                for (int f = 0; f < num_files; f++)
+                    if (rd->rw->file && strcasecmp(files[f].name, rd->rw->file) == 0) r->file = f;
+                if (r->file < 0) continue;              // (reported by the parser)
+                snprintf(r->rec_name, sizeof(r->rec_name), "$RWR-%s", files[r->file].name);
+                r->pc = r->lc = -1;
+                for (int i = 0; i < num_vars; i++) {
+                    if (vars[i].parent < 0 || strcasecmp(vars[vars[i].parent].name, rd->name) != 0) continue;
+                    if (strcasecmp(vars[i].name, "PAGE-COUNTER") == 0) r->pc = i;
+                    if (strcasecmp(vars[i].name, "LINE-COUNTER") == 0) r->lc = i;
+                }
+                if (r->pc < 0 || r->lc < 0) continue;
+                r->state = temp_numeric(0, rd);
+                r->pl = temp_numeric(0, rd);
+                r->eject = temp_numeric(0, rd);
+                r->body = temp_numeric(0, rd);
+                r->force = temp_numeric(0, rd);
+                r->level = temp_numeric(0, rd);
+                r->tg = temp_numeric(0, rd);
+                r->adv = temp_numeric(0, rd);
+                for (AstNode *c = rd->extra; c && r->nctl < 16; c = c->next) {
+                    VarInfo *v = find_item(c, true);
+                    if (!v) continue;
+                    r->ctl[r->nctl] = c;
+                    r->saved[r->nctl] = temp_alnum(v->size, rd);
+                    r->swap[r->nctl] = temp_alnum(v->size, rd);
+                    r->nctl++;
+                }
+                for (AstNode *g = rd->children; g; g = g->next) {
+                    RwDesc *d = g->rw;
+                    AstNode **slot = NULL;
+                    int level = -2;
+                    if (d->type == RW_CH || d->type == RW_CF) {
+                        if (d->control && strcasecmp(d->control, "FINAL") == 0) {
+                            if (!rd->rw->final_control)
+                                diag_error(g->loc, "CONTROL %s FINAL, but the CONTROL clause of '%s' does not name FINAL",
+                                           d->type == RW_CH ? "HEADING" : "FOOTING", rd->name);
+                            slot = d->type == RW_CH ? &r->chf : &r->cff;
+                            level = -1;
+                        } else {
+                            for (int i = 0; i < r->nctl; i++)
+                                if (d->control && strcasecmp(r->ctl[i]->name, d->control) == 0) {
+                                    slot = d->type == RW_CH ? &r->ch[i] : &r->cf[i];
+                                    level = i;
+                                }
+                            if (!slot) {
+                                diag_error(g->loc, "'%s' is not a control of the report '%s'", d->control ? d->control : "?", rd->name);
+                                diag_note(rd->loc, "the CONTROL clause of '%s' names its controls", rd->name);
+                            }
+                        }
+                    } else if (d->type == RW_RH) slot = &r->rh;
+                    else if (d->type == RW_PH) slot = &r->ph;
+                    else if (d->type == RW_PF) slot = &r->pf;
+                    else if (d->type == RW_RF) slot = &r->rf;
+                    if ((d->type == RW_PH || d->type == RW_PF) && !rd->rw->page)
+                        diag_error(g->loc, "A PAGE %s group needs a PAGE clause in the RD of '%s'",
+                                   d->type == RW_PH ? "HEADING" : "FOOTING", rd->name);
+                    if (slot && *slot) diag_error(g->loc, "The report '%s' has two groups of this type", rd->name);
+                    else if (slot) *slot = g;
+                    // its sum counters and GROUP INDICATE fields
+                    bool gi = false;
+                    for (AstNode *c = g->children; c; c = c->next) {
+                        AstNode *fields = c->kind == AST_REPORT_LINE ? c->children : c;
+                        for (AstNode *f = fields; f; f = c->kind == AST_REPORT_LINE ? f->next : NULL) {
+                            gi |= f->rw->group_indicate;
+                            if (!f->rw->sum || rw_num_sums >= 256) continue;
+                            RwSum *sum = &rw_sums[rw_num_sums++];
+                            sum->field = f;
+                            sum->report = rw_num_reports;
+                            sum->group = g;
+                            sum->var = rw_var_named(f->name);
+                            int dp = sum->var >= 0 && vars[sum->var].decimal_places > 0 ? vars[sum->var].decimal_places : 0;
+                            sum->acc = temp_numeric(dp, rd);
+                            sum->reset_level = d->type == RW_CF ? level : -2;
+                            if (f->rw->reset) {
+                                if (strcasecmp(f->rw->reset, "FINAL") == 0) sum->reset_level = -1;
+                                else {
+                                    sum->reset_level = -3;
+                                    for (int i = 0; i < r->nctl; i++)
+                                        if (strcasecmp(r->ctl[i]->name, f->rw->reset) == 0) sum->reset_level = i;
+                                    if (sum->reset_level == -3)
+                                        diag_error(f->loc, "RESET ON '%s': it is not a control of the report '%s'",
+                                                   f->rw->reset, rd->name);
+                                }
+                            }
+                        }
+                    }
+                    if (gi && rw_num_gi < 64) {
+                        rw_gi[rw_num_gi].group = g;
+                        rw_gi[rw_num_gi++].flag = temp_numeric(0, rd);
+                    }
+                }
+                rw_num_reports++;
+            }
+        }
+    }
+    if (rw_num_reports) {
+        rw_blank = temp_alnum(1, program);
+        rw_suppress = temp_numeric(0, program);
+    }
+}
+
 static void lower_node_kind(IrProgram *ir, AstNode *node) {
 
     switch (node->kind) {
@@ -5334,6 +5957,19 @@ static void lower_node_kind(IrProgram *ir, AstNode *node) {
             break;
         case AST_STATEMENT_STOP:
             append_instr(ir, new_instr(IR_CALL_EXIT, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+            break;
+        case AST_STATEMENT_INITIATE:
+            lower_initiate(ir, node);
+            break;
+        case AST_STATEMENT_GENERATE:
+            lower_generate(ir, node);
+            break;
+        case AST_STATEMENT_TERMINATE:
+            lower_terminate(ir, node);
+            break;
+        case AST_STATEMENT_SUPPRESS:
+            if (rw_suppress < 0) diag_error(node->loc, "SUPPRESS PRINTING outside a USE BEFORE REPORTING procedure");
+            else rw_set_const(ir, rw_suppress, 1);
             break;
         case AST_STATEMENT_ACCEPT:
             lower_accept(ir, node);
@@ -6015,6 +6651,8 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
         t->content = bytes;
         emit(ir, IR_CALL_SET_COLLATION)->var_name = strdup("$collate");
     }
+
+    rw_setup(program);
 
     // Lower PROCEDURE DIVISION: procedures laid out in source order
     num_procs = 0;

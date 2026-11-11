@@ -144,7 +144,46 @@ typedef enum {
     AST_STATEMENT_SEARCH,   // name: "ALL" for SEARCH ALL; extra: table identifier;
                             //   loop: VARYING identifier; on_error: AT END statements;
                             //   children: AST_WHEN nodes
+    // Report Writer (docs: runtime/ABI.md section 16). The clauses are in rw.
+    AST_REPORT,             // RD: name; children: AST_REPORT_GROUP; extra: the CONTROL
+                            //   data-names (FINAL: rw->final_control)
+    AST_REPORT_GROUP,       // a report group (level 01): name (or NULL); children: its
+                            //   lines (AST_REPORT_LINE), then its unprinted entries
+                            //   (AST_REPORT_FIELD with column 0)
+    AST_REPORT_LINE,        // a line of a group: text: its line record (WORKING-STORAGE);
+                            //   children: AST_REPORT_FIELD
+    AST_REPORT_FIELD,       // a printable entry: name: its data item; rw: COLUMN, SOURCE,
+                            //   SUM, UPON, RESET, GROUP INDICATE; children: VALUE literal
+    AST_STATEMENT_INITIATE, // children: report names
+    AST_STATEMENT_GENERATE, // extra: detail report group or report name
+    AST_STATEMENT_TERMINATE,// children: report names
+    AST_STATEMENT_SUPPRESS, // SUPPRESS PRINTING (in a USE BEFORE REPORTING procedure)
 } AstKind;
+
+// Report group types
+enum { RW_NONE, RW_RH, RW_PH, RW_CH, RW_DE, RW_CF, RW_PF, RW_RF };
+// LINE NUMBER and NEXT GROUP: none, an absolute line, PLUS n, NEXT PAGE
+enum { RW_AT_NONE, RW_AT_LINE, RW_AT_PLUS, RW_AT_NEXT_PAGE };
+
+// The Report Writer clauses of an RD, a report group, a line or a field
+typedef struct RwDesc {
+    // RD: PAGE LIMIT (0: no page), HEADING, FIRST DETAIL, LAST DETAIL, FOOTING
+    int page, heading, first_detail, last_detail, footing;
+    bool final_control;             // CONTROL[S] ARE FINAL ...
+    char *file;                     // the file whose FD names the report
+    // groups and lines
+    int type;                       // RW_RH ... RW_RF
+    char *control;                  // CH / CF: the control data-name, or "FINAL"
+    int line_kind, line;            // LINE NUMBER
+    int next_kind, next;            // NEXT GROUP
+    // fields
+    int column;                     // COLUMN NUMBER (0: not printed)
+    struct AstNode *source;         // SOURCE identifier
+    struct AstNode *sum;            // SUM identifiers
+    char *upon;                     // SUM ... UPON detail-name
+    char *reset;                    // RESET ON data-name or "FINAL"
+    bool group_indicate;
+} RwDesc;
 
 
 // SourceLocation: diag.h
@@ -191,6 +230,8 @@ typedef struct AstNode {
     // and PERFORM loop control
     struct AstNode *extra;
     struct AstNode *loop;
+
+    struct RwDesc *rw;          // Report Writer nodes: their clauses (owned), else NULL
 
     struct AstNode *children;
     struct AstNode *next;

@@ -22,8 +22,8 @@ what is left.
   amendment). Measured with the NIST CCVS85 test suite: the Nucleus,
   Sequential, Relative and Indexed I-O, Sort-Merge, Inter-Program
   Communication, Source Text Manipulation (COPY, REPLACE), Intrinsic
-  Functions, Segmentation and Debug modules compile and pass with no
-  failures. Report Writer is not done yet; Communication is not supported.
+  Functions, Segmentation, Debug and Report Writer modules compile and pass
+  with no failures. Communication is not supported.
 - **Strictness levels** (`-X relaxed | normal | pedantic | ibm-strict`):
   extensions to the standard are accepted, warned about or rejected, and
   `pedantic` flags the obsolete elements (FIPS flagging).

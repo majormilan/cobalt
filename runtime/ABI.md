@@ -759,3 +759,65 @@ RETURN-CODE is an extension (IBM, GnuCOBOL): a program that names it
 without declaring it gets `01 RETURN-CODE PIC S9(9) COMP-5 EXTERNAL`, so
 every program shares one item, found by `cobrt_return_code` through the
 EXTERNAL list (section 12).
+
+## 16. Report Writer [implemented]
+
+The Report Writer needs no runtime of its own: the compiler turns the
+REPORT SECTION into ordinary storage and INITIATE, GENERATE and TERMINATE
+into moves, comparisons and WRITE ... AFTER ADVANCING statements.
+
+**Storage** (declared by the parser in the WORKING-STORAGE SECTION):
+
+- `01 report-name. 05 PAGE-COUNTER PIC 9(6). 05 LINE-COUNTER PIC 9(6).` -
+  so `LINE-COUNTER OF report-name` qualifies, and an unqualified
+  LINE-COUNTER is ambiguous when there are several reports.
+- `01 $RWL<n>`: each line of each report group; its fields are at their
+  COLUMNs, with `FILLER PIC X(k) VALUE SPACES` between them. A field is
+  named for its entry (or `$RWF<n>`); VALUE is its VALUE clause.
+- `01 $RWH<n>`: the entries of a group without COLUMN (sum counters used by
+  other entries, say).
+- The FD naming the report gets `01 $RWR-<file> PIC X(w)`, w the widest
+  line of its reports.
+
+**State** (temporary items, per report): 0 not initiated, 1 initiated, 2
+after a GENERATE; the physical line of the file; a new page pending; a body
+group on the page; NEXT GROUP NEXT PAGE pending; the break level; the
+values of the controls at the last GENERATE (and a copy for the CONTROL
+FOOTINGs); a sum counter for each SUM entry (18 digits, the scale of its
+field); a GROUP INDICATE flag for each group with such fields.
+
+**Presentation of a group:** the USE BEFORE REPORTING procedure (SUPPRESS
+PRINTING skips the group); for a body group (CONTROL HEADING, DETAIL,
+CONTROL FOOTING) of a report with a PAGE clause, a page break when it does
+not fit: an absolute first line at or above LINE-COUNTER, or the relative
+lines past LAST DETAIL (FOOTING for a CONTROL FOOTING). Then each line:
+LINE-COUNTER is set to its line (absolute, or LINE-COUNTER + PLUS; the
+first relative line of the first body group of a page goes on FIRST
+DETAIL, of a PAGE HEADING on HEADING, of a PAGE FOOTING after FOOTING), the
+fields take their values (SOURCE, the sum counter, GROUP INDICATE: spaces
+unless it is the first presentation after a page or control break), and
+the line is written: AFTER ADVANCING the lines from the physical line, or
+on a new page AFTER ADVANCING PAGE (a blank line 1 first when the line is
+below line 1). NEXT GROUP PLUS n adds to LINE-COUNTER (so the next group
+advances further), NEXT GROUP n sets it (or forces a new page when it is
+reached already), NEXT GROUP NEXT PAGE forces a new page.
+
+**A page break:** the PAGE FOOTING, then PAGE-COUNTER + 1, LINE-COUNTER 0,
+and the PAGE HEADING on the new page.
+
+**GENERATE:** the first one after INITIATE presents the REPORT HEADING, the
+PAGE HEADING and the CONTROL HEADINGs (FINAL first). A later one compares
+the controls (as bytes) with their values at the last GENERATE, major
+first; at a break of level i, the CONTROL FOOTINGs from the minor to level
+i are presented with the controls holding their previous values (each sum
+counter then added to the counters that SUM it, and the counters reset at
+that level reset), then the CONTROL HEADINGs from level i to the minor with
+the new values. Then summing: each SUM operand that is not a sum counter is
+added (for SUM ... UPON, only when that detail is generated). Then the
+DETAIL group, unless the GENERATE names the report (summary reporting).
+
+**TERMINATE** (after a GENERATE): the CONTROL FOOTINGs from the minor to
+FINAL, the PAGE FOOTING, the REPORT FOOTING (on a new page when its
+absolute first line is above LINE-COUNTER).
+
+Several reports may be written to one file; each keeps its own lines.

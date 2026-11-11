@@ -1,0 +1,16 @@
+tests/diag/report.cbl:15:12: error: The PAGE clause of 'SALES' needs HEADING <= FIRST DETAIL <= LAST DETAIL <= FOOTING <= PAGE LIMIT
+    15 |        RD  SALES
+       |            ^~~~~
+tests/diag/report.cbl:20:12: error: COLUMN 5 overlaps the field before it, which ends at column 10
+    20 |            05  COLUMN 5  PIC X(5)  VALUE "PAGE".
+       |            ^~
+tests/diag/report.cbl:23:12: error: A report entry with COLUMN needs a PICTURE clause
+    23 |            05  COLUMN 10 SOURCE AMOUNT.
+       |            ^~
+tests/diag/report.cbl:26:12: error: The report group 'NO-TYPE' has no TYPE clause
+    26 |        01  NO-TYPE LINE PLUS 1.
+       |            ^~~~~~~
+tests/diag/report.cbl:28:12: error: No FD names the report 'ORPHAN' in a REPORT clause
+    28 |        RD  ORPHAN.
+       |            ^~~~~~
+5 errors generated.

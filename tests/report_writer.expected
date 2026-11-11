@@ -1,0 +1,48 @@
+PAGES 000002 LAST LINE 000024
+|         QUARTERLY SALES                                    |
+|                                                            |
+|REGION  SALESMAN     AMOUNT       PAGE  1                   |
+|-----------------------------------------                   |
+|                                                            |
+|NORTH                                                       |
+|        ADAMS      125.00                                   |
+|                    30.75                                   |
+|          TOTAL    155.75                                   |
+|        BAKER      100.00                                   |
+|          TOTAL    100.00                                   |
+|NORTH   TOTAL      255.75                                   |
+|                                                            |
+|SOUTH                                                       |
+|        CLARK      200.00                                   |
+|                    10.50                                   |
+|                     9.99                                   |
+|          TOTAL    220.49                                   |
+|        DAVIS      300.00                                   |
+|          TOTAL    300.00                                   |
+|SOUTH   TOTAL      520.49                                   |
+|                                                            |
+|                             -- PAGE  1                     |
+|                                                            |
+|                                                            |
+|REGION  SALESMAN     AMOUNT       PAGE  2                   |
+|-----------------------------------------                   |
+|                                                            |
+|WEST                                                        |
+|        EVANS       40.00                                   |
+|                    45.00                                   |
+|          TOTAL     85.00                                   |
+|WEST    TOTAL       85.00                                   |
+|                                                            |
+|GRAND TOTAL        861.24                                   |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                                                            |
+|                             -- PAGE  2                     |
+|         END OF REPORT                                      |

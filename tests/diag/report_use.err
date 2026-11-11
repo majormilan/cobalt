@@ -1,0 +1,25 @@
+tests/diag/report_use.cbl:22:8: error: 'AMOUNT' is not a control of the report 'SALES'
+    22 |        01  TYPE CONTROL FOOTING AMOUNT LINE PLUS 1.
+       |        ^~
+tests/diag/report_use.cbl:15:12: note: the CONTROL clause of 'SALES' names its controls
+    15 |        RD  SALES
+       |            ^~~~~
+tests/diag/report_use.cbl:24:12: error: CONTROL FOOTING FINAL, but the CONTROL clause of 'SALES' does not name FINAL
+    24 |        01  FINAL-LINE TYPE CONTROL FOOTING FINAL LINE PLUS 1.
+       |            ^~~~~~~~~~
+tests/diag/report_use.cbl:28:21: error: 'SALE' is not a report (no RD entry has this name)
+    28 |            INITIATE SALE.
+       |                     ^~~~
+tests/diag/report_use.cbl:15:12: note: did you mean 'SALES'?
+    15 |        RD  SALES
+       |            ^~~~~
+tests/diag/report_use.cbl:29:21: error: 'SALES-LINE' is not a report or a DETAIL report group
+    29 |            GENERATE SALES-LINE.
+       |                     ^~~~~~~~~~
+tests/diag/report_use.cbl:20:12: note: did you mean 'SALE-LINE'?
+    20 |        01  SALE-LINE TYPE DETAIL LINE PLUS 1.
+       |            ^~~~~~~~~
+tests/diag/report_use.cbl:30:21: error: GENERATE needs a DETAIL report group or a report, but 'FINAL-LINE' is a CONTROL FOOTING group
+    30 |            GENERATE FINAL-LINE.
+       |                     ^~~~~~~~~~
+5 errors generated.
