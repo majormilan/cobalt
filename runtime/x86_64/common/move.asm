@@ -10,6 +10,19 @@ global runtime_move_numeric
 global runtime_move_fill
 global runtime_replicate
 global runtime_move_pattern
+global runtime_move_alphanum_p
+
+; runtime_move_alphanum with its lengths and flag in one register, for the
+; compiler: ARG2 = src length | dest size << 16 | JUSTIFIED << 31 (src length
+; below 65536, dest size below 32768)
+runtime_move_alphanum_p:
+    mov r8d, edx
+    shr r8d, 31
+    mov ecx, edx
+    shr ecx, 16
+    and ecx, 0x7FFF
+    and edx, 0xFFFF
+    jmp runtime_move_alphanum
 
 ; ARG0 = dest buffer
 ; ARG1 = src buffer / literal

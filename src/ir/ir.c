@@ -66,6 +66,8 @@ static bool is_alnum_edited(const VarInfo *v) { return v->mask && !v->num_edited
 #define MAX_VARS 4096
 static VarInfo vars[MAX_VARS];
 static int num_vars = 0;
+static IrInstr *record_data[MAX_VARS];      // the IR_DATA_VAR of each record, or NULL
+static bool record_coded[MAX_VARS];         // a VALUE of the record is set by code
 static int record_size[MAX_VARS];
 static int num_records = 0;
 static int record_ptr_slot[MAX_VARS];       // records reached through an address slot
@@ -1094,6 +1096,10 @@ static void build_data(IrProgram *ir, AstNode *program) {
     build_file_records();
     build_debug_item(program);
     for (int r = 0; r < num_records; r++) {
+        record_data[r] = NULL;
+        record_coded[r] = false;
+    }
+    for (int r = 0; r < num_records; r++) {
         if (is_fcb_record(r)) continue;     // emitted as IR_DATA_FILE
         if (record_ptr_slot[r] >= 0) continue;  // storage of the caller, or EXTERNAL
         if (record_extern[r]) continue;     // storage of a containing program
@@ -1103,6 +1109,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
                                record_size[r] > 0 ? record_size[r] : 1, 0, 0, USAGE_DISPLAY);
         d->symbol = record_export[r];
         append_instr(ir, d);
+        record_data[r] = d;
     }
 
     // File control blocks
@@ -6213,11 +6220,116 @@ static void lower_block(IrProgram *ir, AstNode *block) {
     }
 }
 
+// The bytes a numeric item holds for value (an integer at the item's
+// scale), as the runtime stores it (runtime/ABI.md section 5); false when
+// the item is not one of the usual kinds
+static bool encode_number(const IrProgram *ir, const VarInfo *v, long long value, unsigned char *out) {
+    bool neg = value < 0;
+    unsigned long long mag = neg ? 0ULL - (unsigned long long)value : (unsigned long long)value;
+    int size = v->size;
+    if (size <= 0 || size > 18 || v->decimal_places < 0 || v->decimal_places > v->digits || v->is_index) return false;
+    if (neg && !v->is_signed) return false;
+    switch (v->usage_type) {
+    case USAGE_DISPLAY: {
+        bool sep = v->is_signed && (v->sign_mode & SIGN_SEPARATE), lead = v->sign_mode & SIGN_LEADING;
+        int nd = size - (sep ? 1 : 0), first = sep && lead ? 1 : 0;
+        if (nd != v->digits || nd <= 0) return false;
+        for (int k = nd - 1; k >= 0; k--) { out[first + k] = (unsigned char)('0' + mag % 10); mag /= 10; }
+        if (mag) return false;
+        if (!v->is_signed) return true;
+        if (sep) { out[lead ? 0 : size - 1] = neg ? '-' : '+'; return true; }
+        int sp = lead ? 0 : size - 1, d = out[sp] - '0';
+        if (ir->runtime_flags & IR_RT_SIGN_EBCDIC)
+            out[sp] = (unsigned char)(neg ? (d ? 'J' + d - 1 : '}') : (d ? 'A' + d - 1 : '{'));
+        else if (neg && d)
+            out[sp] = (unsigned char)('p' + d);
+        else if (neg)
+            out[sp] = 'p';
+        if (neg && mag == 0 && d == 0) {
+            // negative zero is stored as positive zero
+            bool zero = true;
+            for (int k = 0; k < size; k++) if (k != sp && out[k] != '0') zero = false;
+            if (zero) out[sp] = (ir->runtime_flags & IR_RT_SIGN_EBCDIC) ? '{' : '0';
+        }
+        return true;
+    }
+    case USAGE_COMP: case USAGE_COMP5: {
+        if (size != 2 && size != 4 && size != 8) return false;
+        unsigned long long bits = (unsigned long long)value;
+        for (int k = 0; k < size; k++) {
+            unsigned char b = (unsigned char)(bits >> (8 * k));
+            out[v->usage_type == USAGE_COMP ? size - 1 - k : k] = b;     // COMP: big-endian
+        }
+        return true;
+    }
+    case USAGE_COMP3: {
+        int nibbles = size * 2 - 1;
+        unsigned char sign = v->is_signed ? (neg && mag ? 0x0D : 0x0C) : 0x0F;
+        unsigned char nib[40];
+        for (int k = nibbles - 1; k >= 0; k--) { nib[k] = (unsigned char)(mag % 10); mag /= 10; }
+        if (mag) return false;
+        nib[nibbles] = sign;
+        for (int k = 0; k < size; k++) out[k] = (unsigned char)(nib[2 * k] << 4 | nib[2 * k + 1]);
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
+// The initial value of one occurrence written into its record's image (the
+// main program: its records start with those bytes); false when it needs
+// code (and the record's later values then do too, to keep their order)
+static bool image_initial_occurrence(IrProgram *ir, const VarInfo *v, const int subs[], int ndims) {
+    if (ir->subprogram || v->record < 0 || v->record >= num_records) return false;
+    IrInstr *d = record_data[v->record];
+    if (!d || record_coded[v->record]) return false;
+    int counts[16], strides[16];
+    if (item_dims(v, counts, strides) != ndims) return false;
+    long off = v->offset;
+    for (int k = 0; k < ndims; k++) off += (long)(subs[k] - 1) * strides[k];
+    int size = v->size;
+    if (size <= 0 || off < 0 || off + size > d->size) return false;
+    unsigned char bytes[256];
+    unsigned char *out = size <= (int)sizeof(bytes) ? bytes : malloc((size_t)size);
+    bool ok = true;
+    AstNode *val = v->value;
+    int fig = figurative_char(val);
+    if (fig != -1 && !v->is_numeric) {
+        const char *pat = fig == FIG_PATTERN ? val->text : NULL;
+        size_t plen = pat ? strlen(pat) : 0;
+        for (int k = 0; k < size; k++) out[k] = pat ? (plen ? (unsigned char)pat[k % plen] : ' ') : (unsigned char)fig;
+    } else if (val->kind == AST_STRING_LITERAL && !v->is_numeric && !v->justified) {
+        size_t len = strlen(val->name);
+        for (int k = 0; k < size; k++) out[k] = (size_t)k < len ? (unsigned char)val->name[k] : ' ';
+    } else if (v->is_numeric && (fig == '0' || val->kind == AST_LITERAL_NUMBER)) {
+        long long rv = 0;
+        int rs = 0;
+        if (fig != '0' && !parse_num_literal(val->name, &rv, &rs)) ok = false;
+        if (ok && rs > v->decimal_places) ok = false;
+        __int128 scaled = rv;
+        for (int k = rs; ok && k < v->decimal_places; k++) scaled *= 10;
+        if (ok && (scaled > 999999999999999999LL || scaled < -999999999999999999LL)) ok = false;
+        if (ok) ok = encode_number(ir, v, (long long)scaled, out);
+    } else {
+        ok = false;
+    }
+    if (ok) {
+        if (!d->image) d->image = calloc((size_t)d->size, 1);
+        memcpy(d->image + off, out, (size_t)size);
+    } else {
+        record_coded[v->record] = true;
+    }
+    if (out != bytes) free(out);
+    return ok;
+}
+
 // Initial value of one occurrence of a data item from its VALUE clause
 // (subs: its subscripts, one per table dimension)
 static void lower_initial_occurrence(IrProgram *ir, int idx, const int subs[], int ndims) {
     VarInfo *v = &vars[idx];
     AstNode *val = v->value;
+    if (image_initial_occurrence(ir, v, subs, ndims)) return;
     AstNode *ref = item_ref(idx, val->loc);
     for (int d = ndims - 1; d >= 0; d--) {
         char num[16];
@@ -7040,6 +7152,7 @@ void ir_free(IrProgram *ir) {
         free((void*)i->content);
         free((void*)i->cmp_op);
         free((void*)i->jump_target);
+        free(i->image);
         free(i);
         i = next;
     }

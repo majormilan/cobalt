@@ -1236,6 +1236,65 @@ static const char *false_jump(const char *cmp_op) {
     return "jne";
 }
 
+// The data literals of a program, by label (for moves done inline)
+typedef struct {
+    NameMap names;
+    const char **text;
+    int n, cap;
+} Literals;
+
+static void literals_collect(Literals *l, const IrProgram *ir) {
+    memset(l, 0, sizeof(*l));
+    for (const IrInstr *i = ir->head; i; i = i->next) {
+        if (i->op != IR_DATA_LIT || !i->lit_name || !i->content) continue;
+        if (l->n == l->cap) {
+            l->cap = l->cap ? l->cap * 2 : 256;
+            l->text = realloc(l->text, (size_t)l->cap * sizeof(char *));
+        }
+        l->text[l->n] = i->content;
+        namemap_put(&l->names, i->lit_name, strlen(i->lit_name), l->n++);
+    }
+}
+
+// MOVE of a literal into a static alphanumeric item of a few bytes: the
+// bytes it ends with (padded with spaces, or right-aligned when JUSTIFIED)
+// stored as immediates, smaller and faster than the call
+static bool emit_inline_literal_move(FILE *f, const IrInstr *i, const Literals *l) {
+    int n = i->size;
+    if (!i->var_name || i->var_name[0] == '*' || !i->lit_name || i->lit_len < 0 ||
+        !(n == 1 || n == 2 || n == 3 || n == 4 || n == 5 || n == 8) || (i->flags != 0 && i->flags != 1))
+        return false;
+    int k = namemap_get(&l->names, i->lit_name, strlen(i->lit_name));
+    if (k < 0) return false;
+    const char *text = l->text[k];
+    int len = i->lit_len;
+    if ((int)strlen(text) < len) return false;
+    unsigned char b[8];
+    memset(b, ' ', sizeof(b));
+    if (i->flags == 1) {            // JUSTIFIED RIGHT: the rightmost characters
+        for (int j = 0; j < n && j < len; j++) b[n - 1 - j] = (unsigned char)text[len - 1 - j];
+    } else {
+        for (int j = 0; j < n && j < len; j++) b[j] = (unsigned char)text[j];
+    }
+    char *label = sanitize_label_name(i->var_name);
+    for (int off = 0; off < n;) {
+        int w = n - off >= 8 ? 8 : n - off >= 4 ? 4 : n - off >= 2 ? 2 : 1;
+        unsigned long long v = 0;
+        for (int j = w - 1; j >= 0; j--) v = v << 8 | b[off + j];      // little-endian
+        if (w == 8) {
+            fprintf(f, "    mov rax, 0x%016llx\n", v);
+            fprintf(f, "    mov [rel %s+%d], rax\n", label, off);
+        } else {
+            fprintf(f, "    mov %s [rel %s+%d], 0x%llx\n", w == 4 ? "dword" : w == 2 ? "word" : "byte",
+                    label, off, v);
+        }
+        off += w;
+    }
+    fprintf(f, "\n");
+    free(label);
+    return true;
+}
+
 int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     int perform_counter = 0; // unique label suffix for PERFORM return points
     int store_counter = 0;   // unique label suffix for numeric stores
@@ -1243,6 +1302,8 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     fprintf(f, ";; COBALT generated x86-64 Linux assembly\n\n");
     PromotePlan plan = promote_plan(ir, promo_accept);
     IrFlow *flow = ir_flow_new(ir);
+    Literals literals;
+    literals_collect(&literals, ir);
     int pos = -1;                   // position of the instruction being emitted
     char *cold_buf = NULL;
     size_t cold_len = 0;
@@ -1282,7 +1343,7 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     fprintf(f, "section .bss\n");
     IrInstr *i = ir->head;
     while (i) {
-        if (i->op == IR_DATA_VAR && i->var_name) {
+        if (i->op == IR_DATA_VAR && i->var_name && !i->image) {
             char *sanitized_name = sanitize_label_name(i->var_name);
             if (i->symbol) fprintf(f, "global %s\n%s:\n", i->symbol, i->symbol);
             fprintf(f, "%s: resb %d\n", sanitized_name, i->size);
@@ -1337,6 +1398,34 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     fprintf(f, "\n");
 
     fprintf(f, "section .data\n");
+    // Records with initial values: their bytes (the main program's VALUEs)
+    for (i = ir->head; i; i = i->next) {
+        if (i->op != IR_DATA_VAR || !i->var_name || !i->image) continue;
+        char *name = sanitize_label_name(i->var_name);
+        if (i->symbol) fprintf(f, "global %s\n%s:\n", i->symbol, i->symbol);
+        fprintf(f, "%s:", name);
+        int on_line = 0;                // bytes on the open db line (0: none open)
+        for (int k = 0; k < i->size; k++) {
+            // runs of one byte as TIMES, the rest up to 32 to a db line
+            int run = 1;
+            while (k + run < i->size && i->image[k + run] == i->image[k]) run++;
+            if (run >= 8) {
+                fprintf(f, "\n    times %d db %d", run, i->image[k]);
+                k += run - 1;
+                on_line = 0;
+                continue;
+            }
+            if (on_line == 0 || on_line == 32) {
+                fprintf(f, "\n    db %d", i->image[k]);
+                on_line = 1;
+            } else {
+                fprintf(f, ", %d", i->image[k]);
+                on_line++;
+            }
+        }
+        fprintf(f, "\n");
+        free(name);
+    }
     i = ir->head;
     while (i) {
         if (i->op == IR_DATA_LIT && i->lit_name && i->content) {
@@ -1483,6 +1572,17 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 fprintf(f, "    call runtime_display_newline\n\n");
                 break;
             case IR_CALL_MOVE_ALPHA:
+                if (emit_inline_literal_move(f, i, &literals)) break;
+                if (i->lit_len >= 0 && i->lit_len < 65536 && i->size >= 0 && i->size < 32768 &&
+                    (i->flags == 0 || i->flags == 1)) {
+                    emit_addr(f, "rdi", i->var_name);
+                    emit_addr(f, "rsi", i->lit_name);
+                    fprintf(f, "    mov edx, %u\n",
+                            (unsigned)i->lit_len | (unsigned)i->size << 16 | (unsigned)i->flags << 31);
+                    fprintf(f, "    call runtime_move_alphanum_p\n\n");
+                    break;
+                }
+                /* fall through */
             case IR_CALL_MOVE_NUM:
                 emit_addr(f, "rdi", i->var_name);
                 emit_addr(f, "rsi", i->lit_name);
@@ -2624,6 +2724,8 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     promote_free(&plan);
     ir_flow_free(flow);
     free(range_end);
+    namemap_free(&literals.names);
+    free(literals.text);
     // Out-of-line paths; control never falls into them
     fprintf(f, "\n    call runtime_exit\n\n; out-of-line paths\n");
     mem_stream_close(cold);

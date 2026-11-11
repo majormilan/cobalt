@@ -196,6 +196,7 @@ struct IrInstr {
     const char *cmp_op;         // comparison operator string
     const char *jump_target;    // label to jump to
     const char *symbol;         // IR_DATA_VAR, IR_DATA_FILE: also a global symbol for it
+    unsigned char *image;       // IR_DATA_VAR: its initial contents (size bytes), or NULL
     IrInstr *next;
 };
 

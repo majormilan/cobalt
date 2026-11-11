@@ -74,6 +74,20 @@ Every numeric value is a signed 64-bit integer scaled by a power of ten
   without files links no file code.
 - The symbol table names procedures and runtime routines, not the
   compiler's local labels; `--strip` removes it.
+- The main program's VALUE clauses are its initial storage: its records
+  are emitted with their bytes, computed when compiling as the runtime
+  would store them (every usage and sign form, both sign conventions), so
+  no code sets them. A called program keeps code, which CANCEL and INITIAL
+  need; a record with a value the compiler cannot encode keeps code for its
+  later values, so their order is kept.
+- A MOVE of a literal into a small alphanumeric item stores its final bytes
+  as immediates; other alphanumeric moves pass their lengths packed in one
+  register (`runtime_move_alphanum_p`).
+- PERFORM saves the return slot with `push` / `pop` and stores the return
+  address as an immediate; a procedure end that no PERFORM range ends at has
+  no return-slot test.
+- A statement that moves no number clears no size-error byte, and a clear
+  that no store reads is left out.
 
 ## Compile time
 

@@ -153,6 +153,7 @@ positions in the PICTURE.
 | `runtime_display_fill` | `char, size, usage` | Writes `size` copies of `char` (figurative constants). |
 | `runtime_display_newline` | none | Ends the DISPLAY line. |
 | `runtime_move_alphanum` | `dest, src, src_len, dest_size, justified` | Left-justified copy, space padded, truncated on the right. With `justified` non-zero (JUSTIFIED RIGHT): right-justified, space padded on the left, truncated on the left. |
+| `runtime_move_alphanum_p` | `dest, src, packed` | The same, with `src_len \| dest_size << 16 \| justified << 31` in ARG2 (src_len below 65536, dest_size below 32768). |
 | `runtime_move_numeric` | `dest, src_digits, src_len, dest_size, usage` | Right-justified digit copy, zero padded, for an alphanumeric source moved to an unsigned integer DISPLAY field. Requires `src_len <= dest_size`. |
 | `runtime_move_fill` | `dest, char, size, usage` | Fills a field with `char`. |
 | `runtime_replicate` | `ptr, size, count` | Copies the first `size` bytes at `ptr` over the following `count - 1` occurrences (INITIALIZE of a table). |
