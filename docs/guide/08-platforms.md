@@ -103,6 +103,10 @@ programs (FIPS subsets and obsolete elements) are compiled with the
 matching `--subset` and `--flag-obsolete`, and scored on the messages they
 expect.
 
+`.github/workflows/ci.yml` runs the build, `make test` and the NIST suite on
+Linux for every push, cross-builds cobalt.exe, and runs the test programs and
+the examples with it on Windows.
+
 A diagnostics test is `tests/diag/NAME.cbl` with its options in
 `NAME.flags` and the expected messages in `NAME.err` (`NAME.src` names
 another source, to check one program with other options).

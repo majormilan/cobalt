@@ -198,7 +198,6 @@ DEBUGGING MODE.
 The language and both platforms are done; what is left:
 
 - release notes with the known limitations;
-- continuous integration on Linux and Windows;
 - release builds for both systems, a version tag.
 
 ### After the alpha

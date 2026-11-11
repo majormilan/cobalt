@@ -37,7 +37,9 @@ BASENAME=$(basename "$CBL_FILE" .cbl)
 BUILD_DIR="obj/test/$TARGET"
 ASM_FILE="$BUILD_DIR/${BASENAME}.asm"
 OBJ_FILE="$BUILD_DIR/${BASENAME}.o"
-BIN_FILE="$BUILD_DIR/${BASENAME}"
+EXE=""
+[ "$TARGET" = x86_64-pc-windows-msvc ] && EXE=.exe
+BIN_FILE="$BUILD_DIR/${BASENAME}$EXE"
 RUNTIME_LIB="obj/runtime/$TARGET/libcobrt.a"
 INPUT_FILE="tests/${BASENAME}.input"
 ENV_FILE="tests/${BASENAME}.env"
@@ -95,9 +97,9 @@ fi
 # 4. Run and capture output
 # (in the build directory, so files the program creates stay there)
 if [ -f "$INPUT_FILE" ]; then
-    OUTPUT=$(cd "$BUILD_DIR" && env "${RUN_ENV[@]}" timeout "$TEST_TIMEOUT" "./$BASENAME" < "$OLDPWD/$INPUT_FILE")
+    OUTPUT=$(cd "$BUILD_DIR" && env "${RUN_ENV[@]}" timeout "$TEST_TIMEOUT" "./$BASENAME$EXE" < "$OLDPWD/$INPUT_FILE")
 else
-    OUTPUT=$(cd "$BUILD_DIR" && env "${RUN_ENV[@]}" timeout "$TEST_TIMEOUT" "./$BASENAME" < /dev/null)
+    OUTPUT=$(cd "$BUILD_DIR" && env "${RUN_ENV[@]}" timeout "$TEST_TIMEOUT" "./$BASENAME$EXE" < /dev/null)
 fi
 if [ $? -eq 124 ]; then
     echo "Error: $BIN_FILE did not finish within ${TEST_TIMEOUT}s"

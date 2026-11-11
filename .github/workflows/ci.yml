@@ -1,0 +1,68 @@
+# Build cobalt and run its tests on every push and pull request: on Linux
+# the test programs, the diagnostics and run-time error tests, the examples
+# and the NIST CCVS85 suite; cobalt.exe is cross-built there and then runs
+# the test programs and the examples natively on Windows.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
+      - name: Build
+        run: make
+      - name: Tests (programs, diagnostics, run-time errors, examples)
+        run: make test
+      - name: NIST CCVS85
+        run: |
+          status=0
+          for m in NC SM SQ RL IX ST IC IF SG DB RW; do
+            out=$(bash tools/nist/run.sh $m)
+            line=$(echo "$out" | grep "^Individual tests:")
+            echo "$m: $line"
+            echo "$line" | grep -q " 0 failed" || { echo "$out" | grep -E "FAIL|ERROR" | head -20; status=1; }
+          done
+          exit $status
+      - name: Build cobalt.exe
+        run: make windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cobalt-exe
+          path: bin/cobalt.exe
+
+  windows:
+    needs: linux
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep line ends as they are in the repository
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: cobalt-exe
+          path: bin
+      - name: Test programs (built and run on Windows)
+        run: |
+          passed=0; failed=0
+          for cbl in tests/*.cbl; do
+            base=$(basename "$cbl" .cbl)
+            [ -f "tests/$base.expected" ] || continue
+            if TARGET=x86_64-pc-windows-msvc bash test_runner.sh "$cbl" > "test-$base.log" 2>&1; then
+              passed=$((passed+1))
+            else
+              echo "FAIL $base"; cat "test-$base.log"; failed=$((failed+1))
+            fi
+          done
+          echo "Results: $passed passed, $failed failed"
+          [ $failed -eq 0 ]
+      - name: Examples
+        run: COBALT="$PWD/bin/cobalt.exe" bash examples/run.sh
