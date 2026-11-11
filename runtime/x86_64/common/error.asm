@@ -18,6 +18,7 @@ global cobrt_error_text
 global cobrt_error_number
 global cobrt_error_end
 global runtime_check_fail
+global runtime_check_data_fail
 extern cobrt_close_files
 
 ; Write the zero-terminated string ARG0 to standard error
@@ -130,6 +131,34 @@ runtime_check_fail:
     mov ARG0, r15
     call cobrt_error_number
     call cobrt_error_end
+
+; A numeric DISPLAY item that holds no number (-fcheck): ARG0 = the item,
+; ARG1 = its size. Does not return.
+;   <where>a numeric item holds 'AB 1', which is not a number
+runtime_check_data_fail:
+    push rbx
+    push r12
+    sub rsp, 8
+    mov rbx, ARG0
+    mov r12, ARG1
+    cmp r12, 40
+    jbe .shown
+    mov r12, 40                         ; (the first 40 characters)
+.shown:
+    call cobrt_error_begin
+    lea ARG0, [rel msg_data]
+    call cobrt_error_text
+    mov ARG0, COBRT_STDERR
+    mov ARG1, rbx
+    mov ARG2, r12
+    call cobrt_os_write
+    lea ARG0, [rel msg_data_end]
+    call cobrt_error_text
+    call cobrt_error_end
+
+section .rodata
+msg_data: db "a numeric item holds '", 0
+msg_data_end: db "', which is not a number", 0
 
 section .bss
 cobrt_where: resq 1

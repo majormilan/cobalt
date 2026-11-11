@@ -793,6 +793,11 @@ The errors:
   max; reference modification start, length and end against the length of
   the item. The check is `IR_CHECK_RANGE`: the value is on the numeric
   stack, kept; the limit is a constant or popped from the stack.
+- **Numeric data** (`-fcheck` in the main program: `RT_CHECK_DATA`, 2, in
+  the flags of `runtime_init`): `runtime_num_load` meets a byte of a
+  DISPLAY item that is not a digit: `runtime_check_data_fail(digits, count)`
+  writes `a numeric item holds '...', which is not a number`. With
+  `-fcheck`, every statement sets `cobrt_where`.
 
 ### Exit status
 

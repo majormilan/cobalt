@@ -87,3 +87,4 @@
 
 ; Program-wide settings from runtime_init (cobrt_runtime_flags)
 %define RT_SIGN_EBCDIC 1                ; overpunch '{' 'A'..'I' / '}' 'J'..'R'
+%define RT_CHECK_DATA 2                 ; -fcheck: a DISPLAY item holding no number ends the run

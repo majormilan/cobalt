@@ -133,9 +133,9 @@ failed. The errors:
 |---|---|
 | `CALL of a program that is not in the run unit: 'NAME'` | a CALL without ON EXCEPTION or ON OVERFLOW |
 | `I-O error on file 'NAME': status NN (meaning)` | a status of 30 or more on a file with no FILE STATUS item and no USE procedure (chapter 6) |
-| a range check (below) | compiled with `-fcheck` |
+| a run-time check (below) | compiled with `-fcheck` |
 
-## Range checks (`-fcheck`)
+## Run-time checks (`-fcheck`)
 
 COBOL-85 leaves undefined what happens when a subscript, a reference
 modification or an OCCURS DEPENDING ON value is out of range. By default
@@ -147,12 +147,19 @@ the program checks:
 - the DEPENDING ON item, wherever the length of its table is used, against
   its `OCCURS min TO max`;
 - the start, length and end of a reference modification against the length
-  of the item.
+  of the item;
+- the contents of each numeric DISPLAY item its value is taken from: a
+  byte that is not a digit (spaces moved through a group, a REDEFINES,
+  data read from a file) ends the run instead of counting as 0.
 
 ```
 ledger.cbl:42: run-time error in program LEDGER: the subscript of 'ENTRY' is 11, out of range 1 to 10
 ledger.cbl:57: run-time error in program LEDGER: the reference modification start of 'NAME' is 0, out of range 1 to 29
+ledger.cbl:63: run-time error in program LEDGER: a numeric item holds '    ', which is not a number
 ```
+
+The check of numeric items is on for the whole run unit when its main
+program is compiled with `-fcheck`.
 
 Literal subscripts and reference modifications are checked when compiling,
 with or without `-fcheck`.

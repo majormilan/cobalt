@@ -1,0 +1,3 @@
+before
+tests/runerr/numeric_data.cbl:15: run-time error in program NUMDATA: a numeric item holds '    ', which is not a number
+[exit 1]

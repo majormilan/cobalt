@@ -19,6 +19,7 @@ typedef struct IrInstr IrInstr;
 
 // Program-wide runtime settings passed to runtime_init (runtime/ABI.md)
 #define IR_RT_SIGN_EBCDIC 1 // overpunched signs '{' 'A'..'I' / '}' 'J'..'R'
+#define IR_RT_CHECK_DATA 2  // -fcheck: numeric DISPLAY items that hold no number end the run
 
 typedef enum {
     IR_DATA_VAR,            // storage of one record: var_name ("%r<n>"), size

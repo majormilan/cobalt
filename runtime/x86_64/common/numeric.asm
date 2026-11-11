@@ -15,6 +15,7 @@ section .text
 global runtime_num_load
 global runtime_num_store
 global runtime_num_load_p
+extern runtime_check_data_fail
 global runtime_num_store_p
 global runtime_packed_load
 global runtime_packed_store
@@ -641,6 +642,8 @@ runtime_num_load:
     sub dl, '0'
     cmp dl, 9
     jbe .d_add
+    test qword [rel cobrt_runtime_flags], RT_CHECK_DATA
+    jnz .d_bad                          ; -fcheck: the run ends
     xor edx, edx                        ; not a digit (e.g. a space): counts as 0
 .d_add:
     imul rax, rax, 10
@@ -652,6 +655,10 @@ runtime_num_load:
     jz .ret
     neg rax
     jmp .ret
+.d_bad:
+    mov ARG0, r12                       ; the item's digits
+    mov ARG1, r13                       ; their number
+    call runtime_check_data_fail        ; does not return
 
     ; COMP: big-endian two's complement
 .comp:

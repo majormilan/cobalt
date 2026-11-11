@@ -5389,7 +5389,9 @@ static void lower_node(IrProgram *ir, AstNode *node) {
     if (node->kind != AST_SENTENCE && node->kind != AST_THEN_BLOCK && node->kind != AST_ELSE_BLOCK) {
         stmt_kind_now = node->kind;
         where_stmt = node;
-        if (can_fail(node->kind)) emit(ir, IR_SET_WHERE)->var_name = strdup(where_label(ir, node->loc));
+        // (with -fcheck any statement can: a numeric item without a number)
+        if (can_fail(node->kind) || ir_runtime_checks)
+            emit(ir, IR_SET_WHERE)->var_name = strdup(where_label(ir, node->loc));
     }
     lower_node_kind(ir, node);
     stmt_kind_now = saved;
@@ -6755,6 +6757,7 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
     if (!ir) return NULL;
     dialect = program_dialect;
     if (dialect->sign_encoding == SIGN_ENCODING_EBCDIC) ir->runtime_flags |= IR_RT_SIGN_EBCDIC;
+    if (ir_runtime_checks) ir->runtime_flags |= IR_RT_CHECK_DATA;
     ir->subprogram = !unit->main;
     ir->program_name = strdup(program->name ? program->name : "MAIN");
     where_program = ir->program_name;
