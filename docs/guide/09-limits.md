@@ -35,8 +35,8 @@ compilers:
 - The Communication module (CD, RECEIVE, SEND, ACCEPT and DISABLE / ENABLE
   MESSAGE): an error says it is not supported. It is obsolete in COBOL-85 and
   was removed from the 2002 standard.
-- ASSIGN to a data item: the name of a file is fixed when compiling
-  (chapter 6).
+- ASSIGN to a data item (the name of a file computed by the program); the
+  environment can map the names of ASSIGN when the program runs (chapter 6).
 - USAGE COMP-1 and COMP-2 (floating point), and the other extensions of
   later standards and of vendors that chapter 4 does not list.
 - An exponent with decimals (`2 ** 0.5`) is a size error.

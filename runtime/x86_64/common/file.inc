@@ -44,6 +44,7 @@
 %define FILE_USE        4               ; a USE procedure handles errors
 %define FILE_VARIABLE   8               ; records of different lengths
 %define FILE_LINAGE     16              ; FD LINAGE
+%define FILE_MAPPED     0x10000         ; runtime: the name was mapped (map_file_name)
 %define ORG_RELATIVE    0x100
 %define ORG_INDEXED     0x200
 %define ACC_RANDOM      0x1000

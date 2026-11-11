@@ -320,6 +320,118 @@ write_chars:
     pop r14
     ret
 
+; ── File names ──────────────────────────────────────────────────────────────
+
+; The file name of an ASSIGN, mapped at the first OPEN (runtime/ABI.md
+; section 7): a name without a directory is replaced by the value of the
+; environment variable DD_name, dd_name or name, the first that is set;
+; otherwise COB_FILE_PATH, when set, is put before it.
+; ARG0 = FCB. Sets FILE_MAPPED.
+map_file_name:
+    push rbx
+    push r12
+    push r13
+    mov rbx, ARG0
+    or qword [rbx + FCB_FLAGS], FILE_MAPPED
+    mov r12, [rbx + FCB_NAME]
+    ; a name with a directory (or a drive) is used as it is
+    xor ecx, ecx
+.scan:
+    mov al, [r12 + rcx]
+    test al, al
+    jz .scanned
+    cmp al, '/'
+    je .done
+    cmp al, '\'
+    je .done
+    cmp al, ':'
+    je .done
+    inc rcx
+    cmp rcx, 240
+    jae .done                           ; (too long for a variable name)
+    jmp .scan
+.scanned:
+    test rcx, rcx
+    jz .done
+    mov r13, rcx                        ; the name's length
+    ; DD_name, dd_name
+    lea rdi, [rel map_buf]
+    mov byte [rdi], 'D'
+    mov byte [rdi + 1], 'D'
+    mov byte [rdi + 2], '_'
+    call .copy_name
+    lea ARG0, [rel map_buf]
+    call cobrt_os_getenv
+    test rax, rax
+    jnz .use
+    lea rdi, [rel map_buf]
+    mov byte [rdi], 'd'
+    mov byte [rdi + 1], 'd'
+    call .copy_name
+    lea ARG0, [rel map_buf]
+    call cobrt_os_getenv
+    test rax, rax
+    jnz .use
+    mov ARG0, r12
+    call cobrt_os_getenv
+    test rax, rax
+    jnz .use
+    ; COB_FILE_PATH/name
+    lea ARG0, [rel cob_file_path]
+    call cobrt_os_getenv
+    test rax, rax
+    jz .done
+    cmp byte [rax], 0
+    je .done
+    mov r12, rax                        ; the directory
+    xor ecx, ecx
+.dir_len:
+    cmp byte [r12 + rcx], 0
+    je .dir_end
+    inc rcx
+    jmp .dir_len
+.dir_end:
+    push rcx
+    sub rsp, 8
+    lea ARG0, [rcx + r13 + 2]
+    call cobrt_os_alloc
+    add rsp, 8
+    pop rcx
+    test rax, rax
+    jz .done
+    mov rdi, rax
+    mov rsi, r12
+    rep movsb                           ; the directory
+    cmp byte [rdi - 1], '/'
+    je .sep
+    cmp byte [rdi - 1], '\'
+    je .sep
+    mov byte [rdi], '/'
+    inc rdi
+.sep:
+    mov rsi, [rbx + FCB_NAME]
+    mov rcx, r13
+    rep movsb                           ; the name
+    mov byte [rdi], 0
+.use:
+    cmp byte [rax], 0
+    je .done                            ; (set to nothing: not mapped)
+    mov [rbx + FCB_NAME], rax
+.done:
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+; map_buf + 3 = the name, NUL-terminated (r12 = name, r13 = length)
+.copy_name:
+    lea rdi, [rel map_buf + 3]
+    mov rsi, r12
+    mov rcx, r13
+    rep movsb
+    mov byte [rdi], 0
+    ret
+
 ; ── OPEN ────────────────────────────────────────────────────────────────────
 
 ; ARG0 = FCB, ARG1 = OPEN_* mode | OPT_* options
@@ -332,6 +444,15 @@ runtime_file_open:
     mov rbx, ARG0
     lea r11, [rel cobrt_files_close_all]  ; STOP RUN and run-time errors close the files
     mov [rel cobrt_close_files], r11
+    test qword [rbx + FCB_FLAGS], FILE_MAPPED
+    jnz .mapped
+    mov ARG0, rbx
+    push ARG1
+    sub rsp, 8
+    call map_file_name
+    add rsp, 8
+    pop ARG1
+.mapped:
     mov r12, ARG1
     and r12, 0xFF                       ; mode
     mov r13, ARG1
@@ -1138,3 +1259,9 @@ st46: db "no next record: at end, or the last READ failed", 0
 st47: db "the file is not open INPUT or I-O", 0
 st48: db "the file is not open OUTPUT, I-O or EXTEND", 0
 st49: db "the file is not open I-O", 0
+
+section .bss
+map_buf: resb 256
+
+section .rodata
+cob_file_path: db "COB_FILE_PATH", 0

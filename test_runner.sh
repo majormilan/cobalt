@@ -4,6 +4,8 @@
 # Usage: [TARGET=<triple>] ./test_runner.sh <cbl_file>
 #
 # Build artifacts go to obj/test/<triple>/ and are kept for inspection.
+# If tests/<name>.env exists, its VAR=value lines are the program's
+# environment additions (passed through WSLENV to Windows executables).
 # If tests/<name>.input exists it is fed to the program on stdin,
 # otherwise stdin is empty (so ACCEPT never blocks).
 # A program running longer than TEST_TIMEOUT seconds (default 10) fails.
@@ -38,6 +40,17 @@ OBJ_FILE="$BUILD_DIR/${BASENAME}.o"
 BIN_FILE="$BUILD_DIR/${BASENAME}"
 RUNTIME_LIB="obj/runtime/$TARGET/libcobrt.a"
 INPUT_FILE="tests/${BASENAME}.input"
+ENV_FILE="tests/${BASENAME}.env"
+RUN_ENV=()
+if [ -f "$ENV_FILE" ]; then
+    names=""
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        RUN_ENV+=("$line")
+        names="${names:+$names:}${line%%=*}"
+    done < "$ENV_FILE"
+    RUN_ENV+=("WSLENV=${WSLENV:+$WSLENV:}$names")
+fi
 EXPECTED_FILE="tests/${BASENAME}.expected"
 FLAGS_FILE="tests/${BASENAME}.flags"
 FLAGS=""
@@ -82,9 +95,9 @@ fi
 # 4. Run and capture output
 # (in the build directory, so files the program creates stay there)
 if [ -f "$INPUT_FILE" ]; then
-    OUTPUT=$(cd "$BUILD_DIR" && timeout "$TEST_TIMEOUT" "./$BASENAME" < "$OLDPWD/$INPUT_FILE")
+    OUTPUT=$(cd "$BUILD_DIR" && env "${RUN_ENV[@]}" timeout "$TEST_TIMEOUT" "./$BASENAME" < "$OLDPWD/$INPUT_FILE")
 else
-    OUTPUT=$(cd "$BUILD_DIR" && timeout "$TEST_TIMEOUT" "./$BASENAME" < /dev/null)
+    OUTPUT=$(cd "$BUILD_DIR" && env "${RUN_ENV[@]}" timeout "$TEST_TIMEOUT" "./$BASENAME" < /dev/null)
 fi
 if [ $? -eq 124 ]; then
     echo "Error: $BIN_FILE did not finish within ${TEST_TIMEOUT}s"

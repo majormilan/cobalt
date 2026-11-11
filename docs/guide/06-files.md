@@ -19,6 +19,24 @@ The ASSIGN clause of a SELECT entry gives the name of the file on disk:
 - Further names after the first (`ASSIGN TO DISK "x.dat"`) are accepted and
   ignored.
 
+When the program first opens the file, a name without a directory is
+mapped through the environment, so the same program can work on other files
+without being compiled again:
+
+1. the environment variable `DD_name`, then `dd_name`, then `name` itself:
+   the first that is set (and not empty) is the file's path;
+2. otherwise, when `COB_FILE_PATH` is set, the file is in that directory:
+   `COB_FILE_PATH/name`;
+3. otherwise the name is the path, relative to the current directory.
+
+```
+$ DD_REPORTOUT=/var/reports/daily.txt ./ledger
+$ COB_FILE_PATH=/data/ledger ./ledger
+```
+
+A name with a directory (`data/customers.dat`, `C:\data\x.dat`) is used as
+it is. Run-time I-O errors name the path that was used.
+
 On Windows both `/` and `\` separate directories.
 
 ## Organizations

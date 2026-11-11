@@ -109,6 +109,8 @@ Programs in other languages cannot be called in this release.
 | Variable | Effect |
 |---|---|
 | `COB_SWITCH_n` (n from 1 to 9) | `ON` starts SWITCH-n on; otherwise it starts off. SET mnemonic-name TO ON / OFF changes it while the program runs. |
+| `DD_name`, `dd_name`, `name` | the path of the file assigned to `name` (chapter 6) |
+| `COB_FILE_PATH` | the directory of the files whose names have no directory and no variable of their own (chapter 6) |
 | `COB_SET_DEBUG` | `Y`, `y`, `1` or `ON` turns on the debugging switch: the USE FOR DEBUGGING procedures run (in a program compiled WITH DEBUGGING MODE). |
 
 ```

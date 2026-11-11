@@ -521,6 +521,12 @@ sorted by a stable merge sort, so records with equal keys come out in the
 order they went in; MERGE is a sort of its USING files' records in the order
 of the files, which gives equal keys in that order.
 
+**File names.** At the first OPEN, `map_file_name` maps a name without a
+directory (no `/`, `\` or `:`): the value of the environment variable
+`DD_name`, `dd_name` or `name`, the first set and not empty; otherwise
+`COB_FILE_PATH/name` when `COB_FILE_PATH` is set. FCB_NAME then points at
+the path, and `FILE_MAPPED` (0x10000 in the flags) records that it was done.
+
 Not yet supported: ASSIGN to a data item, CODE-SET.
 
 ## 8. Editing [implemented]
