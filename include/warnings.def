@@ -13,6 +13,7 @@ WARNING(W_PERFORM_RANGE,      "perform-range",      0, "PERFORM THRU whose last 
 WARNING(W_COLUMN,             "column-overflow",    0, "program text past column 72, which is ignored")
 WARNING(W_AREA,               "area",               0, "names and statements in the wrong area (A or B)")
 WARNING(W_EXTENSION,          "extension",          0, "elements outside COBOL-85 (by -X strictness)")
+WARNING(W_SUBSET,             "subset",             0, "elements outside the FIPS subset chosen by --subset")
 WARNING(W_OBSOLETE,           "obsolete",           1, "obsolete elements of COBOL-85 (FIPS flagging)")
 WARNING(W_UNINITIALIZED,      "uninitialized",      1, "items read but never given a value")
 WARNING(W_UNCHECKED_IO,       "unchecked-io",       1, "I-O statements whose AT END / INVALID KEY nothing handles")

@@ -1,0 +1,19 @@
+tests/diag/subset.cbl:9:19: warning: NON-CONFORMING STANDARD: OPTIONAL is not in the Intermediate subset (Relative I-O level 2) [-Wsubset]
+     9 |            SELECT OPTIONAL MASTER ASSIGN TO "master.dat"
+       |                   ^~~~~~~~
+tests/diag/subset.cbl:20:16: warning: NON-CONFORMING STANDARD: A condition-name (level 88) is not in the Intermediate subset (Nucleus level 2) [-Wsubset]
+    20 |            88  BIG-AMOUNT    VALUE 1000 THRU 9999.
+       |                ^~~~~~~~~~
+tests/diag/subset.cbl:24:12: warning: NON-CONFORMING STANDARD: COMPUTE is not in the Intermediate subset (Nucleus level 2) [-Wsubset]
+    24 |            COMPUTE AMOUNT = AMOUNT * 2.
+       |            ^~~~~~~
+tests/diag/subset.cbl:26:16: warning: NON-CONFORMING STANDARD: A nested IF statement is not in the Intermediate subset (Nucleus level 2) [-Wsubset]
+    26 |                IF BIG-AMOUNT DISPLAY "BIG"
+       |                ^~
+tests/diag/subset.cbl:27:40: warning: NON-CONFORMING STANDARD: Reference modification is not in the Intermediate subset (Nucleus level 2) [-Wsubset]
+    27 |                ELSE DISPLAY NAME-FIELD (1:3).
+       |                                        ^
+tests/diag/subset.cbl:28:20: warning: NON-CONFORMING STANDARD: An intrinsic function is not in the Intermediate subset (the Intrinsic Functions module) [-Wsubset]
+    28 |            DISPLAY FUNCTION UPPER-CASE (NAME-FIELD).
+       |                    ^~~~~~~~
+6 warnings generated.

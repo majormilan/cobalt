@@ -26,14 +26,13 @@ is not supported (1.3).
   The COMMUNICATION SECTION, SEND, RECEIVE, ENABLE, DISABLE, PURGE and
   ACCEPT MESSAGE COUNT get a clear error (`tests/diag/communication`).
   To be stated in the release notes (4.5).
-- [ ] **1.4 Subset flagging (FIPS).** Under `-X pedantic`, flag elements
-  above the chosen subset level ("NON-CONFORMING"), like the obsolete
-  elements are flagged now.
-  Done when: the NIST 401M programs score their NON-CONFORMING messages
-  through `tools/nist/flags.py`.
-- [ ] **1.5 Reference format in the DATA DIVISION.** `-Warea` for level 01
-  and 77 entries, FD / SD / RD and section headers outside Area A.
-  Done when: a diagnostics test covers each.
+- [x] **1.4 Subset flagging (FIPS).** `--subset=minimum|intermediate`
+  reports the elements outside the subset ("NON-CONFORMING STANDARD",
+  `-Wsubset`). The NIST flagging programs score every message they expect
+  (`tools/nist/flags.py`); `tests/diag/subset-*`.
+- [x] **1.5 Reference format in the DATA DIVISION.** `-Warea` for division
+  and section headers, FD / SD / RD, level 01 and 77 entries and
+  DECLARATIVES outside Area A (`tests/diag/area`).
 - [ ] **1.6 Exclusions written down.** IX110A (invalid PICTURE with P,
   rejected by GnuCOBOL too) and ST301M (corrupt in the suite file).
   Done when: listed with the reason in the release notes.

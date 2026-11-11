@@ -75,6 +75,10 @@ bool lexer_debugging_lines(void) { return debugging_lines; }
 static bool mark_debugging_lines = false;
 void lexer_mark_debugging_lines(bool on) { mark_debugging_lines = on; }
 
+// The file being converted (for its diagnostics)
+static const char *format_file;
+void lexer_set_format_file(const char *name) { format_file = name; }
+
 char *lexer_reference_format(const char *src) {
     // Collect the converted lines first: a continuation line changes the
     // line it continues.
@@ -124,6 +128,8 @@ char *lexer_reference_format(const char *src) {
             } else {
                 // A word or numeric literal continues without a space
                 while (prev->len > 0 && prev->buf[prev->len - 1] == ' ') prev->buf[--prev->len] = '\0';
+                diag_subset(MOD_NC, 2, (SourceLocation){ format_file, (int)n + 1, 7 },
+                            "The continuation of a word or numeric literal");
             }
             sb_append(prev, text + skip, text_len - skip);
         } else {

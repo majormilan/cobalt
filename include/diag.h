@@ -59,6 +59,18 @@ void diag_set_strictness(int strictness);      // a Strictness (config.h)
 bool diag_option(const char *arg);             // -W..., -w, -fmax-errors=, -fdiagnostics-color=
 void diag_print_warning_help(void);            // the warning names for --help
 
+// FIPS PUB 21-4 subsets of COBOL-85 (--subset): the level of each module
+// they contain. An element of a higher level (or of a module the subset
+// leaves out) is reported "NON-CONFORMING STANDARD" (-Wsubset).
+enum { SUBSET_HIGH, SUBSET_INTERMEDIATE, SUBSET_MINIMUM };
+typedef enum {
+    MOD_NC, MOD_SQ, MOD_RL, MOD_IX, MOD_ST, MOD_SM, MOD_IC, MOD_SG, MOD_DB, MOD_RW, MOD_IF, MOD_COUNT
+} CobolModule;
+void diag_set_subset(int subset);
+bool diag_subset_active(void);
+// An element of level `level` of a module; what names it ("COMPUTE")
+void diag_subset(CobolModule module, int level, SourceLocation loc, const char *what);
+
 // Diagnostics at a location (filename NULL: the current source)
 void diag_error(SourceLocation loc, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 bool diag_warning(Warning w, SourceLocation loc, const char *fmt, ...) __attribute__((format(printf, 3, 4)));

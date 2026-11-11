@@ -414,6 +414,7 @@ static char *replace_text(const char *t, Patterns *fixed, bool statements, int f
         Word *w = &ws.w[i];
         if (statements && word_is(t, w, "REPLACE") && i + 1 < ws.n &&
             (ws.w[i + 1].kind == W_PSEUDO || word_is(t, &ws.w[i + 1], "OFF"))) {
+            diag_subset(MOD_SM, 2, position(t, file, w->start), "REPLACE");
             int j = i + 1;
             Patterns np = {0};
             bool ok;
@@ -496,6 +497,7 @@ static bool expand(Buf *out, const char *t, int file, int depth, const PpOptions
         int line, col;
         position_at(t, &cur, w->start, &line, &col);
         SourceLocation at = { diag_file_name(cur.file), line, col };
+        diag_subset(MOD_SM, 1, at, "COPY");
         int j = i + 1;
         if (j >= ws.n || (ws.w[j].kind != W_WORD && ws.w[j].kind != W_LIT)) {
             diag_error(at, "Expected a text-name after COPY");
@@ -513,6 +515,7 @@ static bool expand(Buf *out, const char *t, int file, int depth, const PpOptions
         Patterns ps = {0};
         bool good = true;
         if (j < ws.n && word_is(t, &ws.w[j], "REPLACING")) {
+            diag_subset(MOD_SM, 2, at, "COPY ... REPLACING");
             j++;
             good = parse_pairs(t, &ws, &j, &ps, false);
         }
@@ -549,8 +552,9 @@ static bool expand(Buf *out, const char *t, int file, int depth, const PpOptions
             free(ws.w);
             return false;
         }
-        char *lib = load_text(raw, opt);
         int lib_file = diag_add_file(path, raw, cur.file, at);
+        lexer_set_format_file(diag_file_name(lib_file));
+        char *lib = load_text(raw, opt);
         if (!opt->free_format) lexer_check_columns(raw, diag_file_name(lib_file));
         free(raw);
         put(out, t + last, w->start - last);

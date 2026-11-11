@@ -246,6 +246,7 @@ static AstNode *parse_identification_paragraph(void) {
     SourceLocation loc = {tok.filename, tok.line, tok.column};
     char *name = tok_to_str();
     if (is_known_ident_para(name)) flag_obsolete(tok.line, tok.column, "the paragraph is obsolete");
+    if (strcasecmp(name, "DATE-COMPILED") == 0) diag_subset(MOD_NC, 2, loc, "The DATE-COMPILED paragraph");
     next();
     expect(TOK_PERIOD, ".");
     if (parser_panic_mode) { free(name); return NULL; }
@@ -299,6 +300,7 @@ static Token peek_token(void);
 static bool tok_is_word(const char *word);
 static bool tok_spelled(const char *word);
 static void parse_report_section(AstNode *div, AstNode **sec_tail);
+static void check_area_a(SourceLocation loc, const char *what);
 static AstNode *parse_forward_identifier(void);
 static bool end_program_follows(void);
 static void arith_error(const char *msg);
@@ -321,6 +323,10 @@ static void append_child(AstNode *parent, AstNode **tail, AstNode *child) {
     *tail = child;
 }
 
+// Subset flagging: the level number of the REDEFINES entry whose
+// subordinate entries are being read (0: none)
+static int redefines_level;
+
 static AstNode *parse_var_decl(void) {
     if (tok.kind != TOK_NUMBER) return NULL;
     if (parser_panic_mode) return NULL; // Don't parse if in panic mode
@@ -328,6 +334,7 @@ static AstNode *parse_var_decl(void) {
     SourceLocation loc = {tok.filename, tok.line, tok.column};
     char *level_str = tok_to_str();
     int level_num = atoi(level_str);
+    if (level_num == 1 || level_num == 77) check_area_a(loc, level_num == 1 ? "A level 01 entry" : "A level 77 entry");
     next();
 
     // data-name, FILLER, or nothing (an implicit FILLER); the entry is
@@ -361,6 +368,10 @@ static AstNode *parse_var_decl(void) {
     free(name);
     var->text = level_str; // Keep level_str in AST node for now, or just free it.
     AstNode *tail = NULL;
+    if (level_num == 88) diag_subset(MOD_NC, 2, loc, "A condition-name (level 88)");
+    if (level_num == 66) diag_subset(MOD_NC, 2, loc, "RENAMES (level 66)");
+    if (level_num != 88 && level_num != 66 && redefines_level && (level_num <= redefines_level || level_num == 77))
+        redefines_level = 0;                // the end of the redefining entry
 
     // Level 88: VALUE[S] [IS|ARE] literal [THRU literal] {literal [THRU literal]}...
     // children: the literals; a THRU range keeps its upper bound in extra
@@ -411,6 +422,7 @@ static AstNode *parse_var_decl(void) {
         if (tok.kind != TOK_IDENT) { ast_free(var); arith_error("Expected the item to rename"); return NULL; }
         var->on_error = parse_identifier();
         if (tok.kind == TOK_THROUGH) {
+            diag_subset(MOD_NC, 2, TOK_LOC, "RENAMES ... THRU");
             next();
             if (tok.kind != TOK_IDENT) { ast_free(var); arith_error("Expected a data name after THRU"); return NULL; }
             var->not_on_error = parse_identifier();
@@ -495,6 +507,7 @@ static AstNode *parse_var_decl(void) {
                 val_node = ast_new(AST_FIGURATIVE_CONSTANT, val, val_loc);
             } else if (tok.kind == TOK_ALL) {
                 free(val);
+                diag_subset(MOD_NC, 2, TOK_LOC, "VALUE ALL literal");
                 val_node = parse_all_literal();
                 if (!val_node) { ast_free(var); return NULL; }
                 append_child(var, &tail, val_node);
@@ -510,12 +523,17 @@ static AstNode *parse_var_decl(void) {
             append_child(var, &tail, val_node);
             next();
         } else if (tok_is_word("GLOBAL") || tok_is_word("EXTERNAL")) {
+            diag_subset(MOD_IC, 2, TOK_LOC, tok_is_word("GLOBAL") ? "GLOBAL" : "EXTERNAL");
             if (tok_is_word("GLOBAL")) var->is_global = true;
             else var->is_external = true;
             next();
         } else if (tok.kind == TOK_IS && (peek_token().kind == TOK_IDENT)) {
             next();                         // IS GLOBAL / IS EXTERNAL
         } else if (tok.kind == TOK_REDEFINES) {
+            if (redefines_level && level_num > redefines_level)
+                diag_subset(MOD_NC, 2, TOK_LOC, "REDEFINES subordinate to a redefining entry");
+            else
+                redefines_level = level_num;
             next();
             if (tok.kind != TOK_IDENT) { ast_free(var); arith_error("Expected data-name after REDEFINES"); return NULL; }
             char *target = tok_to_str();
@@ -547,6 +565,7 @@ static AstNode *parse_var_decl(void) {
             }
             if (tok.kind == TOK_TIMES) next();
             if (tok.kind == TOK_DEPENDING) {
+                diag_subset(MOD_NC, 2, TOK_LOC, "OCCURS ... DEPENDING ON");
                 next();
                 if (tok.kind == TOK_ON) next();
                 if (tok.kind != TOK_IDENT) { ast_free(var); arith_error("Expected data-name after DEPENDING ON"); return NULL; }
@@ -554,6 +573,7 @@ static AstNode *parse_var_decl(void) {
                 occurs->extra = parse_procedure_name();
             }
             while (tok.kind == TOK_ASCENDING || tok.kind == TOK_DESCENDING) {
+                diag_subset(MOD_NC, 2, TOK_LOC, "The KEY phrase of OCCURS");
                 next();
                 if (tok.kind == TOK_KEY) next();
                 if (tok.kind == TOK_IS) next();
@@ -754,7 +774,10 @@ static void declare_return_code(AstNode *prog) {
 }
 
 static AstNode *parse_identifier(void) {
-    if (tok_is_word("FUNCTION")) return parse_function();
+    if (tok_is_word("FUNCTION")) {
+        diag_subset(MOD_IF, 1, TOK_LOC, "An intrinsic function");
+        return parse_function();
+    }
     SourceLocation loc = {tok.filename, tok.line, tok.column};
     char *name = tok_to_str();
     AstNode *id = ast_new(AST_IDENTIFIER, name, loc);
@@ -775,6 +798,7 @@ static AstNode *parse_identifier(void) {
 
     AstNode *qual_tail = NULL;
     while ((tok.kind == TOK_OF || tok.kind == TOK_IN) && !parser_panic_mode) {
+        if (!qual_tail) diag_subset(MOD_NC, 2, TOK_LOC, "Qualification (OF / IN)");
         next();
         if (tok.kind != TOK_IDENT) { arith_error("Expected a name after OF/IN"); return id; }
         char *q = tok_to_str();
@@ -801,6 +825,7 @@ static AstNode *parse_identifier(void) {
         }
         if (!first) { arith_error("Expected subscript or reference modifier"); return id; }
         if (tok.kind == TOK_COLON) {
+            diag_subset(MOD_NC, 2, ploc, "Reference modification");
             next();
             AstNode *refmod = ast_new(AST_REFMOD, NULL, ploc);
             refmod->children = first;
@@ -822,6 +847,9 @@ static AstNode *parse_identifier(void) {
                 tail->next = sub;
                 tail = sub;
             }
+            int nsubs = 0;
+            for (AstNode *x = id->children; x; x = x->next) nsubs++;
+            if (nsubs > 3) diag_subset(MOD_NC, 2, ploc, "More than three subscripts");
         }
         if (tok.kind != TOK_RPAREN) { arith_error("Expected ')'"); return id; }
         next();
@@ -1120,6 +1148,11 @@ static bool is_condition_name(const AstNode *n) {
 
 // Relation, class or sign condition after its subject; NULL (consuming
 // nothing) if none follows.
+static bool expression_node(const AstNode *n) {
+    return n && (n->kind == AST_EXPR_ADD || n->kind == AST_EXPR_SUB || n->kind == AST_EXPR_MUL ||
+                 n->kind == AST_EXPR_DIV || n->kind == AST_EXPR_POW || n->kind == AST_EXPR_NEG);
+}
+
 static AstNode *parse_condition_tail(AstNode *subject) {
     if (tok.kind != TOK_IS && tok.kind != TOK_NOT && !is_relop_start(tok.kind) &&
         !is_class_or_sign(tok.kind) && tok.kind != TOK_ZEROS) return NULL;
@@ -1136,6 +1169,8 @@ static AstNode *parse_condition_tail(AstNode *subject) {
         const char *op = parse_relop();
         AstNode *object = parse_rel_operand();
         if (!object) { ast_free(subject); arith_error("Expected an operand after the relational operator"); return NULL; }
+        if (expression_node(subject) || expression_node(object))
+            diag_subset(MOD_NC, 2, subject->loc, "An arithmetic expression in a relation condition");
         if (negated) op = negate_relop(op);
         cond = make_relation(subject, op, object);
         abbrev_subject = subject;
@@ -1168,6 +1203,7 @@ static AstNode *parse_condition_tail(AstNode *subject) {
             arith_error("Expected relational operator, class or sign condition");
             return NULL;
     }
+    if (kind == AST_COND_SIGN) diag_subset(MOD_NC, 2, TOK_LOC, "A sign condition");
     next();
     cond = make_cond(kind, subject, NULL, subject->loc);
     cond->name = strdup(word);
@@ -1275,6 +1311,7 @@ static AstNode *parse_not_cond(void) {
 static AstNode *parse_and_cond(void) {
     AstNode *left = parse_not_cond();
     while (left && tok.kind == TOK_AND) {
+        diag_subset(MOD_NC, 2, TOK_LOC, "A combined condition (AND)");
         next();
         AstNode *right = parse_not_cond();
         if (!right) { ast_free(left); return NULL; }
@@ -1286,6 +1323,7 @@ static AstNode *parse_and_cond(void) {
 static AstNode *parse_or_cond(void) {
     AstNode *left = parse_and_cond();
     while (left && tok.kind == TOK_OR) {
+        diag_subset(MOD_NC, 2, TOK_LOC, "A combined condition (OR)");
         next();
         AstNode *right = parse_and_cond();
         if (!right) { ast_free(left); return NULL; }
@@ -1601,7 +1639,16 @@ static bool parse_inspect_phrases(AstNode *item) {
 
 // [AT] END s / INVALID [KEY] s, then NOT [AT] END s / NOT INVALID [KEY] s:
 // on_error and not_on_error; is_signed set for the INVALID KEY form
+static int file_org_of(const char *name);
+static CobolModule org_module(int org);
+
+// The module of the file (or record) an I-O statement names
+static CobolModule stmt_module(const AstNode *stmt) {
+    return stmt->extra && stmt->extra->name ? org_module(file_org_of(stmt->extra->name)) : MOD_SQ;
+}
+
 static bool parse_io_phrases(AstNode *stmt) {
+    if (tok.kind == TOK_INVALID) diag_subset(stmt_module(stmt), 1, TOK_LOC, "INVALID KEY");
     if (tok.kind == TOK_AT || tok.kind == TOK_END) {
         if (tok.kind == TOK_AT) next();
         if (tok.kind != TOK_END) { arith_error("Expected END"); return false; }
@@ -1630,10 +1677,37 @@ static bool parse_io_phrases(AstNode *stmt) {
     return true;
 }
 
+// Subset flagging: the elements of a higher level that are whole statements
+static void subset_statement(void) {
+    if (!diag_subset_active()) return;
+    switch (tok.kind) {
+        case TOK_COMPUTE:    diag_subset(MOD_NC, 2, TOK_LOC, "COMPUTE"); break;
+        case TOK_EVALUATE:   diag_subset(MOD_NC, 2, TOK_LOC, "EVALUATE"); break;
+        case TOK_INITIALIZE: diag_subset(MOD_NC, 2, TOK_LOC, "INITIALIZE"); break;
+        case TOK_SEARCH:     diag_subset(MOD_NC, 2, TOK_LOC, "SEARCH"); break;
+        case TOK_STRING_KW:  diag_subset(MOD_NC, 2, TOK_LOC, "STRING"); break;
+        case TOK_UNSTRING:   diag_subset(MOD_NC, 2, TOK_LOC, "UNSTRING"); break;
+        case TOK_CANCEL:     diag_subset(MOD_IC, 2, TOK_LOC, "CANCEL"); break;
+        case TOK_SORT:       diag_subset(MOD_ST, 1, TOK_LOC, "SORT"); break;
+        case TOK_MERGE:      diag_subset(MOD_ST, 1, TOK_LOC, "MERGE"); break;
+        case TOK_RELEASE:    diag_subset(MOD_ST, 1, TOK_LOC, "RELEASE"); break;
+        case TOK_RETURN:     diag_subset(MOD_ST, 1, TOK_LOC, "RETURN"); break;
+        case TOK_INITIATE:   diag_subset(MOD_RW, 1, TOK_LOC, "INITIATE"); break;
+        case TOK_GENERATE:   diag_subset(MOD_RW, 1, TOK_LOC, "GENERATE"); break;
+        case TOK_TERMINATE:  diag_subset(MOD_RW, 1, TOK_LOC, "TERMINATE"); break;
+        case TOK_SUPPRESS:   diag_subset(MOD_RW, 1, TOK_LOC, "SUPPRESS"); break;
+        default: break;
+    }
+}
+
+static int if_depth;                    // nested IF statements (subset flagging)
+static int segment_limit;               // SEGMENT-LIMIT (subset flagging)
+
 static AstNode *parse_statement(void) {
     if (parser_panic_mode) return NULL; // Don't try to parse statements if in panic mode
 
     SourceLocation loc = {tok.filename, tok.line, tok.column};
+    subset_statement();
 
     if (tok.kind == TOK_DISPLAY) {
         next();
@@ -1643,6 +1717,7 @@ static AstNode *parse_statement(void) {
                (arg = parse_value_operand()))
             list_append(&display->children, &last, arg);
         if (tok.kind == TOK_UPON) {         // the console is the only device
+            diag_subset(MOD_NC, 2, TOK_LOC, "DISPLAY ... UPON");
             next();
             if (tok.kind == TOK_IDENT) next();
         }
@@ -1675,6 +1750,7 @@ static AstNode *parse_statement(void) {
         AstNode *move = ast_new(AST_STATEMENT_MOVE, NULL, loc);
         AstNode *tail = NULL;
         if (tok.kind == TOK_CORRESPONDING) {
+            diag_subset(MOD_NC, 2, TOK_LOC, "CORRESPONDING");
             // MOVE CORRESPONDING group TO group; name = "CORR"
             next();
             move->name = strdup("CORR");
@@ -1701,6 +1777,7 @@ static AstNode *parse_statement(void) {
         AstNode *head = NULL, *tail = NULL, *op;
         int num_src = 0, num_dest = 0;
         if (tok.kind == TOK_CORRESPONDING) {
+            diag_subset(MOD_NC, 2, TOK_LOC, "CORRESPONDING");
             // ADD CORRESPONDING group TO group [ROUNDED]; name = "CORR"
             next();
             add->name = strdup("CORR");
@@ -1753,6 +1830,7 @@ static AstNode *parse_statement(void) {
         AstNode *head = NULL, *tail = NULL, *op;
         int num_src = 0, num_dest = 0;
         if (tok.kind == TOK_CORRESPONDING) {
+            diag_subset(MOD_NC, 2, TOK_LOC, "CORRESPONDING");
             // SUBTRACT CORRESPONDING group FROM group [ROUNDED]; name = "CORR"
             next();
             sub->name = strdup("CORR");
@@ -1858,6 +1936,7 @@ static AstNode *parse_statement(void) {
             div_stmt->is_numeric = true;
             num_dest = parse_receivers(&head, &tail);
             if (tok.kind == TOK_REMAINDER) {
+                diag_subset(MOD_NC, 2, TOK_LOC, "DIVIDE ... REMAINDER");
                 next();
                 if (num_dest != 1) { ast_free(div_stmt); arith_error("REMAINDER requires exactly one GIVING receiver"); return NULL; }
                 if (parse_receivers(&head, &tail) != 1) { ast_free(div_stmt); arith_error("Expected one identifier after REMAINDER"); return NULL; }
@@ -1879,6 +1958,7 @@ static AstNode *parse_statement(void) {
     // A period ends every open IF; ELSE pairs with the nearest open IF.
     // children: [condition, THEN-BLOCK, [ELSE-BLOCK]]
     else if (tok.kind == TOK_IF) {
+        if (if_depth > 0) diag_subset(MOD_NC, 2, loc, "A nested IF statement");
         next();
         AstNode *if_stmt = ast_new(AST_STATEMENT_IF, NULL, loc);
         AstNode *cond = parse_condition();
@@ -1887,6 +1967,7 @@ static AstNode *parse_statement(void) {
 
         if (tok.kind == TOK_THEN) next();
         AstNode *then_node = ast_new(AST_THEN_BLOCK, NULL, loc);
+        if_depth++;
         then_node->children = parse_block();
         cond->next = then_node;
 
@@ -1896,6 +1977,7 @@ static AstNode *parse_statement(void) {
             else_node->children = parse_block();
             then_node->next = else_node;
         }
+        if_depth--;
         if (tok.kind == TOK_END_IF) next();
         return if_stmt;
     }
@@ -1943,6 +2025,7 @@ static AstNode *parse_statement(void) {
                        tok.kind == TOK_VARYING) {
                 if (tok.kind == TOK_WITH) next();
                 if (tok.kind == TOK_TEST) {
+                    diag_subset(MOD_NC, 2, TOK_LOC, "PERFORM ... WITH TEST");
                     next();
                     if (tok.kind == TOK_AFTER) perf->is_signed = true;
                     else if (tok.kind != TOK_BEFORE) { ast_free(perf); arith_error("Expected BEFORE or AFTER"); return NULL; }
@@ -1954,6 +2037,7 @@ static AstNode *parse_statement(void) {
                     if (!perf->loop) { ast_free(perf); return NULL; }
                     form = "UNTIL";
                 } else if (tok.kind == TOK_VARYING) {
+                    diag_subset(MOD_NC, 2, TOK_LOC, "PERFORM ... VARYING");
                     AstNode *tail = NULL;
                     while (tok.kind == TOK_VARYING || (perf->loop && tok.kind == TOK_AFTER)) {
                         SourceLocation vloc = {tok.filename, tok.line, tok.column};
@@ -2005,6 +2089,7 @@ static AstNode *parse_statement(void) {
         // GO TO without a procedure: its target is set by an ALTER statement
         if (!go->children && tok.kind == TOK_PERIOD) {
             flag_obsolete(loc.line, loc.column, "GO TO without a procedure-name");
+            diag_subset(MOD_NC, 2, loc, "GO TO without a procedure-name");
             return go;
         }
         if (!go->children) { ast_free(go); arith_error("Expected procedure name after GO TO"); return NULL; }
@@ -2132,6 +2217,7 @@ static AstNode *parse_statement(void) {
         AstNode *alter = ast_new(AST_STATEMENT_ALTER, NULL, loc);
         AstNode *tail = NULL;
         while (is_procedure_name_token() && !parser_panic_mode) {
+            if (alter->children) diag_subset(MOD_NC, 2, TOK_LOC, "ALTER with more than one procedure");
             AstNode *para = parse_procedure_name();
             if (tok.kind != TOK_TO) { ast_free(para); ast_free(alter); arith_error("Expected TO"); return NULL; }
             next();
@@ -2231,6 +2317,7 @@ static AstNode *parse_statement(void) {
         if (tok.kind == TOK_TO) {
             next();
             if (tok.kind == TOK_TRUE) {
+                diag_subset(MOD_NC, 2, loc, "SET ... TO TRUE");
                 next();
                 set->name = strdup("TRUE");
                 for (AstNode *c = set->children; c; c = c->next) {
@@ -2362,6 +2449,7 @@ static AstNode *parse_statement(void) {
         insp->extra = parse_identifier();
         AstNode *tail = NULL;
         if (tok.kind == TOK_CONVERTING) {
+            diag_subset(MOD_NC, 2, TOK_LOC, "INSPECT ... CONVERTING");
             next();
             AstNode *item = ast_new(AST_INSPECT_ITEM, "CONVERT", loc);
             item->extra = parse_value_operand();
@@ -2435,10 +2523,12 @@ static AstNode *parse_statement(void) {
         AstNode *stmt = ast_new(is_open ? AST_STATEMENT_OPEN : AST_STATEMENT_CLOSE, NULL, loc);
         AstNode *tail = NULL;
         int mode = 0;
+        SourceLocation mode_loc = loc;
         while (!parser_panic_mode) {
             if (is_open && (tok.kind == TOK_INPUT || tok.kind == TOK_OUTPUT ||
                             tok.kind == TOK_I_O || tok.kind == TOK_EXTEND)) {
                 mode = tok.kind == TOK_INPUT ? 1 : tok.kind == TOK_OUTPUT ? 2 : tok.kind == TOK_I_O ? 3 : 4;
+                mode_loc = TOK_LOC;
                 next();
             } else if (tok.kind == TOK_IDENT && (!is_open || mode) && !tok_is_word("REVERSED") &&
                        !tok_is_word("REEL") && !tok_is_word("UNIT") && !tok_is_word("NO") &&
@@ -2446,18 +2536,31 @@ static AstNode *parse_statement(void) {
                 AstNode *file = parse_procedure_name();
                 file->decimal_places = mode;
                 list_append(&stmt->children, &tail, file);
+                CobolModule fmod = org_module(file_org_of(file->name));
+                if (mode == 4) diag_subset(fmod, 2, mode_loc, "OPEN EXTEND");
                 // OPEN options (digits): 1 REVERSED, 2 WITH NO REWIND; CLOSE
                 // options: 1 REEL / UNIT [FOR REMOVAL], 2 WITH NO REWIND, 4 WITH LOCK
                 while (tok_is_word("REEL") || tok_is_word("UNIT") || tok.kind == TOK_WITH ||
                        tok_is_word("NO") || tok_is_word("REWIND") || tok_is_word("LOCK") ||
                        tok_is_word("REVERSED") || tok.kind == TOK_FOR || tok_is_word("REMOVAL")) {
-                    if (tok_is_word("REEL") || tok_is_word("UNIT")) file->digits |= 1;
+                    if (tok_is_word("REEL") || tok_is_word("UNIT")) {
+                        diag_subset(MOD_SQ, 2, TOK_LOC, "CLOSE REEL / UNIT");
+                        file->digits |= 1;
+                    }
                     else if (tok_is_word("REVERSED")) {
                         file->digits |= 1;
                         flag_obsolete(tok.line, tok.column, "OPEN REVERSED");
+                        diag_subset(MOD_SQ, 2, TOK_LOC, "OPEN REVERSED");
                     }
-                    else if (tok_is_word("REWIND")) file->digits |= 2;
-                    else if (tok_is_word("LOCK")) file->digits |= 4;
+                    else if (tok_is_word("REWIND")) {
+                        diag_subset(MOD_SQ, 2, TOK_LOC, "WITH NO REWIND");
+                        file->digits |= 2;
+                    }
+                    else if (tok_is_word("LOCK")) {
+                        diag_subset(fmod, 2, TOK_LOC, "CLOSE WITH LOCK");
+                        file->digits |= 4;
+                    }
+                    else if (tok_is_word("REMOVAL")) diag_subset(MOD_SQ, 2, TOK_LOC, "FOR REMOVAL");
                     next();
                 }
             } else {
@@ -2497,8 +2600,8 @@ static AstNode *parse_statement(void) {
             bool content = false;
             for (;;) {
                 if (tok.kind == TOK_BY) next();
-                if (tok_is_word("REFERENCE")) { content = false; next(); continue; }
-                if (tok_is_word("CONTENT")) { content = true; next(); continue; }
+                if (tok_is_word("REFERENCE")) { diag_subset(MOD_IC, 2, TOK_LOC, "CALL ... BY REFERENCE"); content = false; next(); continue; }
+                if (tok_is_word("CONTENT")) { diag_subset(MOD_IC, 2, TOK_LOC, "CALL ... BY CONTENT"); content = true; next(); continue; }
                 if (tok.kind != TOK_IDENT) break;
                 AstNode *arg = parse_identifier();
                 arg->is_signed = content;
@@ -2646,6 +2749,7 @@ static AstNode *parse_statement(void) {
         AstNode *del = ast_new(AST_STATEMENT_DELETE, NULL, loc);
         if (tok.kind != TOK_IDENT) { ast_free(del); arith_error("Expected file name after DELETE"); return NULL; }
         del->extra = parse_procedure_name();
+        diag_subset(stmt_module(del), 1, loc, "DELETE");
         if (tok.kind == TOK_RECORD) next();
         if (!parse_io_phrases(del)) { ast_free(del); return NULL; }
         if (tok.kind == TOK_END_DELETE) next();
@@ -2659,6 +2763,7 @@ static AstNode *parse_statement(void) {
         AstNode *st = ast_new(AST_STATEMENT_START, NULL, loc);
         if (tok.kind != TOK_IDENT) { ast_free(st); arith_error("Expected file name after START"); return NULL; }
         st->extra = parse_procedure_name();
+        diag_subset(stmt_module(st), 2, loc, "START");
         st->text = strdup("=");
         if (tok.kind == TOK_KEY) {
             next();
@@ -2690,7 +2795,7 @@ static AstNode *parse_statement(void) {
         AstNode *read = ast_new(AST_STATEMENT_READ, NULL, loc);
         if (tok.kind != TOK_IDENT) { ast_free(read); arith_error("Expected file name after READ"); return NULL; }
         read->extra = parse_procedure_name();
-        if (tok.kind == TOK_NEXT) { read->is_numeric = true; next(); }
+        if (tok.kind == TOK_NEXT) { diag_subset(stmt_module(read), 2, TOK_LOC, "READ ... NEXT"); read->is_numeric = true; next(); }
         if (tok.kind == TOK_RECORD) next();
         if (tok.kind == TOK_INTO) {
             next();
@@ -2698,6 +2803,7 @@ static AstNode *parse_statement(void) {
             read->loop = parse_identifier();
         }
         if (tok.kind == TOK_KEY) {
+            diag_subset(MOD_IX, 2, TOK_LOC, "READ ... KEY IS");
             next();
             if (tok.kind == TOK_IS) next();
             if (tok.kind != TOK_IDENT) { ast_free(read); arith_error("Expected the key data item"); return NULL; }
@@ -2738,6 +2844,7 @@ static AstNode *parse_statement(void) {
             }
         }
         if (is_write && (tok.kind == TOK_AT || tok.kind == TOK_END_OF_PAGE)) {
+            diag_subset(MOD_SQ, 2, TOK_LOC, "WRITE ... AT END-OF-PAGE");
             if (tok.kind == TOK_AT) next();
             next();
             w->on_error = parse_imperative_block();     // the end-of-page condition (LINAGE)
@@ -2772,7 +2879,10 @@ static AstNode *parse_statement(void) {
                 next();
                 if (tok.kind == TOK_DATE) accept_stmt->name = strdup("DATE");
                 else if (tok.kind == TOK_DAY) accept_stmt->name = strdup("DAY");
-                else if (tok.kind == TOK_DAY_OF_WEEK) accept_stmt->name = strdup("DAY-OF-WEEK");
+                else if (tok.kind == TOK_DAY_OF_WEEK) {
+                    diag_subset(MOD_NC, 2, TOK_LOC, "ACCEPT ... FROM DAY-OF-WEEK");
+                    accept_stmt->name = strdup("DAY-OF-WEEK");
+                }
                 else if (tok.kind == TOK_TIME) accept_stmt->name = strdup("TIME");
                 else if (tok.kind != TOK_IDENT) { ast_free(accept_stmt); arith_error("Expected DATE, DAY, DAY-OF-WEEK, TIME or a device"); return NULL; }
                 next();
@@ -2887,6 +2997,14 @@ static AstNode *parse_statement(void) {
     return NULL;
 }
 
+// An entry that begins in Area A (fixed format): division and section
+// headers, FD / SD / RD, level 01 and 77, DECLARATIVES
+static void check_area_a(SourceLocation loc, const char *what) {
+    if (!current_lexer->mode->free_format && loc.column > 11)
+        diag_warning(W_AREA, loc, "%s begins in Area B (column %d); it belongs in Area A, columns 8 to 11",
+                     what, loc.column);
+}
+
 // A statement starting in Area A (fixed format)
 static void check_statement_area(void) {
     if (!current_lexer->mode->free_format && tok.column >= 8 && tok.column <= 11 && tok.kind != TOK_EOF)
@@ -2964,7 +3082,7 @@ static AstNode *parse_use(void) {
     next();
     AstNode *u = ast_new(AST_USE, NULL, loc);
     AstNode *tail = NULL;
-    if (tok_is_word("GLOBAL")) { u->is_signed = true; next(); }
+    if (tok_is_word("GLOBAL")) { diag_subset(MOD_IC, 2, TOK_LOC, "USE GLOBAL"); u->is_signed = true; next(); }
     if (tok.kind == TOK_AFTER) {
         u->name = strdup("ERROR");
         next();
@@ -2982,6 +3100,7 @@ static AstNode *parse_use(void) {
         }
     } else if (tok.kind == TOK_FOR) {
         flag_obsolete(loc.line, loc.column, "USE FOR DEBUGGING (the Debug module)");
+        diag_subset(MOD_DB, 1, loc, "USE FOR DEBUGGING");
         u->name = strdup("DEBUGGING");
         next();
         if (tok_is_word("DEBUGGING")) next();
@@ -3001,6 +3120,7 @@ static AstNode *parse_use(void) {
             list_append(&u->children, &tail, parse_forward_identifier());
         }
     } else if (tok.kind == TOK_BEFORE) {
+        diag_subset(MOD_RW, 1, loc, "USE BEFORE REPORTING");
         u->name = strdup("REPORTING");
         next();
         if (tok_is_word("REPORTING")) next();
@@ -3021,6 +3141,7 @@ static void parse_procedure_body(AstNode *div) {
         const char *before = tok.lexeme;
         AstNode *node = NULL;
         if (tok_is_word("DECLARATIVES") && peek_token().kind == TOK_PERIOD && !in_declaratives) {
+            check_area_a(TOK_LOC, "DECLARATIVES");
             next();
             next();
             in_declaratives = true;
@@ -3028,6 +3149,7 @@ static void parse_procedure_body(AstNode *div) {
         }
         if (tok.kind == TOK_END && end_program_follows()) break;
         if (tok.kind == TOK_END && peek_token().kind == TOK_IDENT && in_declaratives) {
+            check_area_a(TOK_LOC, "END DECLARATIVES");
             next();
             if (!tok_is_word("DECLARATIVES")) { arith_error("Expected END DECLARATIVES"); continue; }
             next();
@@ -3051,6 +3173,10 @@ static void parse_procedure_body(AstNode *div) {
                     // segment-number (Segmentation module): kept in digits
                     flag_obsolete(tok.line, tok.column, "segment-number (the Segmentation module)");
                     char *seg = tok_to_str();
+                    int number = atoi(seg);
+                    diag_subset(MOD_SG, 1, TOK_LOC, "A segment-number");
+                    if (segment_limit && number >= segment_limit && number < 50)
+                        diag_subset(MOD_SG, 2, TOK_LOC, "An overlayable fixed segment (at or above SEGMENT-LIMIT)");
                     sec->digits = atoi(seg);
                     sec->decimal_places = 1;      // a segment number was given
                     free(seg);
@@ -3223,6 +3349,7 @@ typedef struct {
 static bool rw_entry(RwEntry *e) {
     memset(e, 0, sizeof(*e));
     e->loc = TOK_LOC;
+    if (tok.kind == TOK_NUMBER && atoi(tok_value_tmp()) == 1) check_area_a(TOK_LOC, "A report group (level 01)");
     e->level = rw_int();
     if (tok.kind == TOK_IDENT && !tok_spelled("LINE") && !tok_spelled("TYPE") && !tok_spelled("COLUMN") &&
         !tok_spelled("SOURCE") && !tok_spelled("SUM") && !tok_spelled("GROUP") && !tok_spelled("NEXT")) {
@@ -3235,6 +3362,7 @@ static bool rw_entry(RwEntry *e) {
     AstNode *sum_tail = NULL;
     while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF && !is_division_start(tok.kind)) {
         if (tok.kind == TOK_LINE || tok_spelled("LINE")) {
+            diag_subset(MOD_RW, 1, TOK_LOC, "The LINE clause");
             next();
             if (tok_spelled("NUMBER")) next();
             rw_position(&e->rw.line_kind, &e->rw.line);
@@ -3243,6 +3371,7 @@ static bool rw_entry(RwEntry *e) {
             if (tok_spelled("GROUP")) next();
             rw_position(&e->rw.next_kind, &e->rw.next);
         } else if (tok_spelled("TYPE")) {
+            diag_subset(MOD_RW, 1, TOK_LOC, "The TYPE clause");
             next();
             if (tok.kind == TOK_IS) next();
             bool control = false;
@@ -3280,6 +3409,7 @@ static bool rw_entry(RwEntry *e) {
         } else if (tok.kind == TOK_DISPLAY) {
             next();
         } else if (tok_spelled("COLUMN")) {
+            diag_subset(MOD_RW, 1, TOK_LOC, "The COLUMN clause");
             next();
             if (tok_spelled("NUMBER")) next();
             if (tok.kind == TOK_IS) next();
@@ -3292,10 +3422,12 @@ static bool rw_entry(RwEntry *e) {
             e->has_pic = true;
             next();
         } else if (tok_spelled("SOURCE")) {
+            diag_subset(MOD_RW, 1, TOK_LOC, "The SOURCE clause");
             next();
             if (tok.kind == TOK_IS) next();
             e->rw.source = parse_identifier();
         } else if (tok_spelled("SUM")) {
+            diag_subset(MOD_RW, 1, TOK_LOC, "The SUM clause");
             next();
             while (tok.kind == TOK_IDENT && !tok_spelled("UPON") && !tok_spelled("RESET") && !tok_spelled("LINE") &&
                    !tok_spelled("COLUMN") && !tok_spelled("SOURCE") && !tok_spelled("GROUP") && !tok_spelled("TYPE"))
@@ -3499,6 +3631,8 @@ static int rw_line_width(AstNode *ws, const char *line_name) {
 
 static void parse_report_section(AstNode *div, AstNode **sec_tail) {
     SourceLocation loc = TOK_LOC;
+    diag_subset(MOD_RW, 1, loc, "The REPORT SECTION");
+    check_area_a(loc, "The REPORT SECTION header");
     next();                                     // REPORT
     next();                                     // SECTION
     expect(TOK_PERIOD, ".");
@@ -3507,6 +3641,8 @@ static void parse_report_section(AstNode *div, AstNode **sec_tail) {
     AstNode *ws = rw_working_storage(div);
     AstNode *rd_tail = NULL;
     while (tok_spelled("RD")) {
+        diag_subset(MOD_RW, 1, TOK_LOC, "An RD entry");
+        check_area_a(TOK_LOC, "An RD entry");
         next();
         SourceLocation rloc = TOK_LOC;          // (at the report name)
         if (tok.kind != TOK_IDENT) { arith_error("Expected a report name after RD"); break; }
@@ -3728,8 +3864,10 @@ static void parse_special_names(AstNode *div, AstNode **tail) {
             if (tok.kind == TOK_IS) next();
             if (alphabet && (tok_is_word("NATIVE") || tok_is_word("STANDARD-1") || tok_is_word("STANDARD-2")))
                 next();                     // the native (ASCII) order
-            else
+            else {
+                diag_subset(MOD_NC, 2, TOK_LOC, alphabet ? "An ALPHABET of literals" : "CLASS");
                 parse_char_specs(e, alphabet);
+            }
             list_append(&div->children, tail, e);
         } else if (tok_is_word("CURRENCY")) {
             next();
@@ -3749,6 +3887,7 @@ static void parse_special_names(AstNode *div, AstNode **tail) {
         } else if (tok_is_word("SYMBOLIC")) {
             // SYMBOLIC [CHARACTERS] {name+ {IS|ARE} integer+}+ [IN alphabet]
             // children: the names, each with its ordinal in digits
+            diag_subset(MOD_NC, 2, TOK_LOC, "SYMBOLIC CHARACTERS");
             next();
             if (tok_is_word("CHARACTERS") || tok_is_word("CHARACTER") || tok.kind == TOK_CHARACTERS ||
                 tok.kind == TOK_CHARACTER) next();
@@ -3849,12 +3988,39 @@ static AstNode *parse_forward_identifier(void) {
 // SELECT [OPTIONAL] file-name, then its clauses in any order: ASSIGN,
 // ORGANIZATION, ACCESS MODE, RELATIVE / RECORD / ALTERNATE RECORD KEY,
 // FILE STATUS, RESERVE, PADDING CHARACTER, RECORD DELIMITER
+// Subset flagging of files: the organization of each file (and of the
+// file of each record), for the statements that name them
+static struct { char *name; int org; } file_orgs[256];
+static int num_file_orgs;
+
+static void note_file_org(const char *name, int org) {
+    if (num_file_orgs < 256) {
+        file_orgs[num_file_orgs].name = strdup(name);
+        file_orgs[num_file_orgs++].org = org;
+    }
+}
+
+static int file_org_of(const char *name) {
+    for (int k = num_file_orgs - 1; k >= 0; k--)
+        if (strcasecmp(file_orgs[k].name, name) == 0) return file_orgs[k].org;
+    return FILE_ORG_SEQUENTIAL;
+}
+
+static CobolModule org_module(int org) {
+    return org == FILE_ORG_RELATIVE ? MOD_RL : org == FILE_ORG_INDEXED ? MOD_IX : MOD_SQ;
+}
+
 static AstNode *parse_select(void) {
     SourceLocation loc = {tok.filename, tok.line, tok.column};
     next();
     AstNode *sel = ast_new(AST_SELECT, NULL, loc);
     AstNode *key_tail = NULL;
+    // flags of the entry, of its file's module: known at its end
+    struct { SourceLocation loc; const char *what; int level; int module; } pend[16];
+    int npend = 0;
+    #define PEND(l, w, lev, mod) do { if (npend < 16) pend[npend++] = (typeof(pend[0])){ l, w, lev, mod }; } while (0)
     if (tok.kind == TOK_OPTIONAL) {
+        PEND(TOK_LOC, "OPTIONAL", 2, -1);
         sel->is_signed = true;
         next();
     }
@@ -3896,22 +4062,25 @@ static AstNode *parse_select(void) {
             if (tok.kind == TOK_IS) next();
             if (tok.kind == TOK_LINE) { sel->org = FILE_ORG_LINE_SEQUENTIAL; sel->decimal_places = 1; next(); }
             else if (tok.kind == TOK_RECORD) next();
-            if (tok.kind == TOK_INDEXED) { sel->org = FILE_ORG_INDEXED; next(); }
-            else if (tok.kind == TOK_RELATIVE) { sel->org = FILE_ORG_RELATIVE; next(); }
+            if (tok.kind == TOK_INDEXED) { PEND(TOK_LOC, "ORGANIZATION IS INDEXED", 1, MOD_IX); sel->org = FILE_ORG_INDEXED; next(); }
+            else if (tok.kind == TOK_RELATIVE) { PEND(TOK_LOC, "ORGANIZATION IS RELATIVE", 1, MOD_RL); sel->org = FILE_ORG_RELATIVE; next(); }
             else if (tok.kind == TOK_SEQUENTIAL) next();
             else { ast_free(sel); arith_error("Expected SEQUENTIAL, RELATIVE or INDEXED"); return NULL; }
         } else if (tok.kind == TOK_ACCESS) {
             next();
             if (tok.kind == TOK_MODE) next();
             if (tok.kind == TOK_IS) next();
-            if (tok.kind == TOK_RANDOM) sel->access = FILE_ACCESS_RANDOM;
-            else if (tok.kind == TOK_DYNAMIC) sel->access = FILE_ACCESS_DYNAMIC;
+            if (tok.kind == TOK_RANDOM) { PEND(TOK_LOC, "ACCESS MODE IS RANDOM", 1, -1); sel->access = FILE_ACCESS_RANDOM; }
+            else if (tok.kind == TOK_DYNAMIC) { PEND(TOK_LOC, "ACCESS MODE IS DYNAMIC", 2, -1); sel->access = FILE_ACCESS_DYNAMIC; }
             else if (tok.kind != TOK_SEQUENTIAL) { ast_free(sel); arith_error("Expected SEQUENTIAL, RANDOM or DYNAMIC"); return NULL; }
             next();
         } else if (tok.kind == TOK_RELATIVE || (tok.kind == TOK_RECORD && peek_token().kind != TOK_DELIMITER) ||
                    tok_is_word("ALTERNATE")) {
             const char *what = tok.kind == TOK_RELATIVE ? "RELATIVE" : tok.kind == TOK_RECORD ? "RECORD" : "ALTERNATE";
             SourceLocation kloc = {tok.filename, tok.line, tok.column};
+            if (what[0] == 'A') PEND(kloc, "ALTERNATE RECORD KEY", 2, MOD_IX);
+            else if (what[0] == 'R' && what[2] == 'L') PEND(kloc, "RELATIVE KEY", 1, MOD_RL);
+            else PEND(kloc, "RECORD KEY", 1, MOD_IX);
             next();
             if (what[0] == 'A' && tok.kind == TOK_RECORD) next();
             if (tok.kind == TOK_KEY) next();
@@ -3931,16 +4100,19 @@ static AstNode *parse_select(void) {
             // Declared later in the DATA DIVISION: resolved during IR lowering
             sel->extra = parse_forward_identifier();
         } else if (tok_is_word("RESERVE")) {
+            PEND(TOK_LOC, "RESERVE ... AREAS", 2, -1);
             next();
             if (tok.kind == TOK_NUMBER || tok_is_word("NO")) next();
             if (tok_is_word("ALTERNATE")) next();
             if (tok_is_word("AREA") || tok_is_word("AREAS")) next();
         } else if (tok_is_word("PADDING")) {
+            PEND(TOK_LOC, "PADDING CHARACTER", 2, MOD_SQ);
             next();
             if (tok_spelled("CHARACTER")) next();
             if (tok.kind == TOK_IS) next();
             next();
         } else if (tok.kind == TOK_RECORD) {
+            PEND(TOK_LOC, "RECORD DELIMITER", 2, MOD_SQ);
             next();                         // RECORD DELIMITER IS STANDARD-1 / name
             if (tok.kind == TOK_DELIMITER) next();
             if (tok.kind == TOK_IS) next();
@@ -3953,6 +4125,11 @@ static AstNode *parse_select(void) {
     if (!assigned) {
         diag_error(loc, "SELECT '%s' has no ASSIGN clause", sel->name);
     }
+    for (int k = 0; k < npend; k++)
+        diag_subset(pend[k].module >= 0 ? (CobolModule)pend[k].module : org_module(sel->org), pend[k].level,
+                    pend[k].loc, pend[k].what);
+    #undef PEND
+    if (sel->name) note_file_org(sel->name, sel->org);
     if (tok.kind == TOK_PERIOD) next();
     return sel;
 }
@@ -3966,6 +4143,7 @@ static AstNode *parse_linage_operand(void) {
 // FILE SECTION. {FD file-name [clauses]. record-description-entries}...
 static AstNode *parse_file_section(void) {
     SourceLocation loc = {tok.filename, tok.line, tok.column};
+    check_area_a(loc, "The FILE SECTION header");
     next();                                 // FILE
     expect(TOK_SECTION, "SECTION");
     expect(TOK_PERIOD, ".");
@@ -3976,6 +4154,8 @@ static AstNode *parse_file_section(void) {
     while (tok.kind == TOK_FD || tok.kind == TOK_SD) {
         SourceLocation fd_loc = {tok.filename, tok.line, tok.column};
         bool sort_file = tok.kind == TOK_SD;
+        if (sort_file) diag_subset(MOD_ST, 1, fd_loc, "An SD entry");
+        check_area_a(fd_loc, sort_file ? "An SD entry" : "An FD entry");
         next();
         if (tok.kind != TOK_IDENT) { arith_error("Expected file name after FD"); break; }
         char *name = tok_to_str();
@@ -3995,6 +4175,7 @@ static AstNode *parse_file_section(void) {
                 if (tok_is_word("CONTAINS")) next();
                 if (tok.kind == TOK_IS) next();
                 if (tok.kind == TOK_VARYING) {
+                    diag_subset(org_module(file_org_of(fd->name)), 2, TOK_LOC, "RECORD IS VARYING");
                     fd->is_signed = true;
                     next();
                     if (tok.kind == TOK_IN) next();
@@ -4030,11 +4211,29 @@ static AstNode *parse_file_section(void) {
                 (tok.kind == TOK_DATA && (peek_token().kind == TOK_RECORD || peek_token().kind == TOK_IDENT))) {
                 flag_obsolete(tok.line, tok.column, tok.kind == TOK_VALUE ? "VALUE OF" :
                               tok.kind == TOK_DATA ? "DATA RECORDS" : "LABEL RECORDS");
+                if (tok.kind == TOK_VALUE) {
+                    // VALUE OF implementor-name IS {literal | data-name}: a
+                    // data-name is level 2
+                    next(); next();
+                    while (tok.kind == TOK_IDENT && peek_token().kind != TOK_IS && peek_token().kind != TOK_PERIOD) next();
+                    if (tok.kind == TOK_IDENT) next();
+                    if (tok.kind == TOK_IS) next();
+                    if (tok.kind == TOK_IDENT) diag_subset(MOD_SQ, 2, TOK_LOC, "VALUE OF with a data-name");
+                    continue;
+                }
                 next();
+                continue;
+            }
+            if (tok_is_word("BLOCK")) {
+                next();
+                if (tok_is_word("CONTAINS")) next();
+                if (tok.kind == TOK_NUMBER) next();
+                if (tok.kind == TOK_TO) diag_subset(MOD_SQ, 2, TOK_LOC, "BLOCK CONTAINS ... TO");
                 continue;
             }
             if (tok_spelled("REPORT") || tok_spelled("REPORTS")) {
                 // REPORT IS / REPORTS ARE report-name...: the Report Writer
+                diag_subset(MOD_RW, 1, TOK_LOC, "The REPORT clause");
                 next();
                 if (tok.kind == TOK_IS) next();
                 while (tok.kind == TOK_IDENT && !tok_spelled("LABEL") && !tok_spelled("GLOBAL") &&
@@ -4055,6 +4254,7 @@ static AstNode *parse_file_section(void) {
             }
             if (tok.kind == TOK_LINAGE) {
                 SourceLocation lloc = {tok.filename, tok.line, tok.column};
+                diag_subset(MOD_SQ, 2, lloc, "LINAGE");
                 next();
                 if (tok.kind == TOK_IS) next();
                 AstNode *lin = ast_new(AST_SPECIAL, "LINAGE", lloc);
@@ -4093,6 +4293,8 @@ static AstNode *parse_file_section(void) {
             parser_panic_mode = false;
             AstNode *decl = parse_var_decl();
             if (decl) list_append(&fd->children, &tail, decl);
+            if (decl && decl->name && decl->text && atoi(decl->text) == 1)
+                note_file_org(decl->name, file_org_of(fd->name));
             if (tok.lexeme == before) next();
         }
         list_append(&sec->children, &fd_tail, fd);
@@ -4103,6 +4305,11 @@ static AstNode *parse_file_section(void) {
 static AstNode *parse_division(void) {
     SourceLocation loc = {tok.filename, tok.line, tok.column};
     char *name = tok_to_str();
+    if (peek_token().kind == TOK_DIVISION) {
+        char what[64];
+        snprintf(what, sizeof(what), "The %s DIVISION header", name);
+        check_area_a(loc, what);
+    }
     next();
     expect(TOK_DIVISION, "DIVISION");
     AstNode *using = NULL, *using_tail = NULL;
@@ -4130,8 +4337,8 @@ static AstNode *parse_division(void) {
         // [IS] [COMMON] [INITIAL] [PROGRAM]: digits 1 COMMON, 2 INITIAL
         while (tok.kind == TOK_IS || tok_is_word("COMMON") || tok.kind == TOK_INITIAL ||
                tok_is_word("PROGRAM")) {
-            if (tok_is_word("COMMON")) div->digits |= 1;
-            if (tok.kind == TOK_INITIAL) div->digits |= 2;
+            if (tok_is_word("COMMON")) { diag_subset(MOD_IC, 2, TOK_LOC, "A COMMON program"); div->digits |= 1; }
+            if (tok.kind == TOK_INITIAL) { diag_subset(MOD_IC, 2, TOK_LOC, "An INITIAL program"); div->digits |= 2; }
             next();
         }
         expect(TOK_PERIOD, ".");
@@ -4181,11 +4388,23 @@ static AstNode *parse_division(void) {
                 flag_obsolete(tok.line, tok.column, tok_is_word("MEMORY") ? "MEMORY SIZE" :
                               tok_is_word("RERUN") ? "RERUN" : tok_is_word("MULTIPLE") ? "MULTIPLE FILE TAPE" :
                               "SEGMENT-LIMIT (the Segmentation module)");
+                if (tok_is_word("MULTIPLE")) diag_subset(MOD_SQ, 2, TOK_LOC, "MULTIPLE FILE TAPE");
+                if (tok_is_word("SEGMENT-LIMIT")) {
+                    diag_subset(MOD_SG, 2, TOK_LOC, "SEGMENT-LIMIT");
+                    Token p = peek_token();
+                    if (p.kind == TOK_IS || p.kind == TOK_NUMBER) {
+                        next();
+                        if (tok.kind == TOK_IS) next();
+                        if (tok.kind == TOK_NUMBER) segment_limit = atoi(tok_value_tmp());
+                    }
+                }
+                if (tok_is_word("RERUN")) diag_subset(MOD_SQ, 2, TOK_LOC, "RERUN");
                 next();
                 continue;
             }
             if (tok_is_word("DEBUGGING") && peek_token().kind == TOK_MODE) {
                 // SOURCE-COMPUTER ... WITH DEBUGGING MODE
+                diag_subset(MOD_DB, 1, TOK_LOC, "WITH DEBUGGING MODE");
                 list_append(&div->children, &sel_tail,
                             ast_new(AST_SPECIAL, "DEBUGGING", (SourceLocation){tok.filename, tok.line, tok.column}));
                 next();
@@ -4198,6 +4417,22 @@ static AstNode *parse_division(void) {
                 SourceLocation sloc = {tok.filename, tok.line, tok.column};
                 next();
                 bool record = tok.kind == TOK_RECORD;
+                if (record) {
+                    // the module of the files named (sequential unless one is relative or indexed)
+                    Lexer copy = *current_lexer;
+                    copy.quiet = true;
+                    copy.prev = NULL;
+                    int org = FILE_ORG_SEQUENTIAL;
+                    for (Token t = lexer_next(&copy); t.kind != TOK_PERIOD && t.kind != TOK_EOF; t = lexer_next(&copy))
+                        if (t.kind == TOK_IDENT) {
+                            char nm[64];
+                            snprintf(nm, sizeof(nm), "%.*s", (int)t.length, t.lexeme);
+                            if (file_org_of(nm) != FILE_ORG_SEQUENTIAL) org = file_org_of(nm);
+                        }
+                    diag_subset(org_module(org), 2, sloc, "SAME RECORD AREA");
+                } else {
+                    diag_subset(MOD_ST, 1, sloc, "SAME SORT AREA");
+                }
                 while (tok.kind == TOK_RECORD || tok.kind == TOK_SORT || tok_is_word("SORT-MERGE") ||
                        tok_is_word("AREA") || tok.kind == TOK_FOR) next();
                 AstNode *same = record ? ast_new(AST_SPECIAL, "SAME RECORD", sloc) : NULL;
@@ -4239,6 +4474,7 @@ static AstNode *parse_division(void) {
         AstNode *sec_tail = NULL;
         while (tok.kind != TOK_EOF && !is_division_start(tok.kind)) {
             if (tok.kind == TOK_WORKING_STORAGE) {
+                check_area_a(TOK_LOC, "The WORKING-STORAGE SECTION header");
                 next();
                 AstNode *sec = parse_section();
                 if (sec) sec->name = strdup("WORKING-STORAGE");
@@ -4251,6 +4487,7 @@ static AstNode *parse_division(void) {
                 continue;
             }
             if (tok.kind == TOK_LINKAGE) {
+                check_area_a(TOK_LOC, "The LINKAGE SECTION header");
                 next();
                 AstNode *sec = parse_section();
                 if (sec) sec->name = strdup("LINKAGE");
@@ -4305,6 +4542,7 @@ static AstNode *parse_one_program(void) {
 
     while (tok.kind != TOK_EOF) {
         if (tok.kind == TOK_END && end_program_follows()) {
+            diag_subset(MOD_IC, 2, TOK_LOC, "END PROGRAM");
             next();
             next();
             if (tok.kind == TOK_IDENT || tok.kind == TOK_STRING) {
@@ -4323,6 +4561,7 @@ static AstNode *parse_one_program(void) {
             if (!has_proc) {
                 diag_error(TOK_LOC, "Expected a PROCEDURE DIVISION before the next program");
             }
+            diag_subset(MOD_IC, 2, TOK_LOC, "A nested program");
             AstNode *nested = parse_one_program();
             if (last) last->next = nested;
             else prog->children = nested;

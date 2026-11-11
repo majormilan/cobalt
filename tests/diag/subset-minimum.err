@@ -1,0 +1,31 @@
+tests/diag/subset.cbl:9:19: warning: NON-CONFORMING STANDARD: OPTIONAL is not in the Minimum subset (the Relative I-O module) [-Wsubset]
+     9 |            SELECT OPTIONAL MASTER ASSIGN TO "master.dat"
+       |                   ^~~~~~~~
+tests/diag/subset.cbl:10:32: warning: NON-CONFORMING STANDARD: ORGANIZATION IS RELATIVE is not in the Minimum subset (the Relative I-O module) [-Wsubset]
+    10 |                ORGANIZATION IS RELATIVE
+       |                                ^~~~~~~~
+tests/diag/subset.cbl:11:31: warning: NON-CONFORMING STANDARD: ACCESS MODE IS RANDOM is not in the Minimum subset (the Relative I-O module) [-Wsubset]
+    11 |                ACCESS MODE IS RANDOM
+       |                               ^~~~~~
+tests/diag/subset.cbl:12:16: warning: NON-CONFORMING STANDARD: RELATIVE KEY is not in the Minimum subset (the Relative I-O module) [-Wsubset]
+    12 |                RELATIVE KEY IS REC-NO.
+       |                ^~~~~~~~
+tests/diag/subset.cbl:20:16: warning: NON-CONFORMING STANDARD: A condition-name (level 88) is not in the Minimum subset (Nucleus level 2) [-Wsubset]
+    20 |            88  BIG-AMOUNT    VALUE 1000 THRU 9999.
+       |                ^~~~~~~~~~
+tests/diag/subset.cbl:24:12: warning: NON-CONFORMING STANDARD: COMPUTE is not in the Minimum subset (Nucleus level 2) [-Wsubset]
+    24 |            COMPUTE AMOUNT = AMOUNT * 2.
+       |            ^~~~~~~
+tests/diag/subset.cbl:26:16: warning: NON-CONFORMING STANDARD: A nested IF statement is not in the Minimum subset (Nucleus level 2) [-Wsubset]
+    26 |                IF BIG-AMOUNT DISPLAY "BIG"
+       |                ^~
+tests/diag/subset.cbl:27:40: warning: NON-CONFORMING STANDARD: Reference modification is not in the Minimum subset (Nucleus level 2) [-Wsubset]
+    27 |                ELSE DISPLAY NAME-FIELD (1:3).
+       |                                        ^
+tests/diag/subset.cbl:28:20: warning: NON-CONFORMING STANDARD: An intrinsic function is not in the Minimum subset (the Intrinsic Functions module) [-Wsubset]
+    28 |            DISPLAY FUNCTION UPPER-CASE (NAME-FIELD).
+       |                    ^~~~~~~~
+tests/diag/subset.cbl:31:24: warning: NON-CONFORMING STANDARD: INVALID KEY is not in the Minimum subset (the Relative I-O module) [-Wsubset]
+    31 |            READ MASTER INVALID KEY DISPLAY "NONE".
+       |                        ^~~~~~~
+10 warnings generated.

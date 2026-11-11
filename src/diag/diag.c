@@ -380,6 +380,31 @@ bool diag_extension(ExtensionOwner owner, SourceLocation loc, const char *fmt, .
     return true;
 }
 
+// ---------------------------------------------------------------- FIPS subsets
+
+static int subset = SUBSET_HIGH;
+
+void diag_set_subset(int s) { subset = s; }
+bool diag_subset_active(void) { return subset != SUBSET_HIGH; }
+
+void diag_subset(CobolModule module, int level, SourceLocation loc, const char *what) {
+    //                                        NC SQ RL IX ST SM IC SG DB RW IF
+    static const int levels[3][MOD_COUNT] = { { 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 },     // High
+                                              { 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0 },     // Intermediate
+                                              { 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0 } };   // Minimum
+    static const char *const names[MOD_COUNT] = {
+        "Nucleus", "Sequential I-O", "Relative I-O", "Indexed I-O", "Sort-Merge", "Source Text Manipulation",
+        "Inter-Program Communication", "Segmentation", "Debug", "Report Writer", "Intrinsic Functions" };
+    static const char *const subsets[3] = { "High", "Intermediate", "Minimum" };
+    if (subset == SUBSET_HIGH || level <= levels[subset][module]) return;
+    if (levels[subset][module] == 0)
+        diag_warning(W_SUBSET, loc, "NON-CONFORMING STANDARD: %s is not in the %s subset (the %s module)",
+                     what, subsets[subset], names[module]);
+    else
+        diag_warning(W_SUBSET, loc, "NON-CONFORMING STANDARD: %s is not in the %s subset (%s level %d)",
+                     what, subsets[subset], names[module], level);
+}
+
 void diag_summary(void) {
     if (!any_located || (!error_count && !warning_count)) return;
     char e[32] = "", w[32] = "";

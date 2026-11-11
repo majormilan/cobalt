@@ -1,0 +1,19 @@
+tests/diag/area.cbl:8:12: warning: The DATA DIVISION header begins in Area B (column 12); it belongs in Area A, columns 8 to 11 [-Warea]
+     8 |            DATA DIVISION.
+       |            ^~~~
+tests/diag/area.cbl:10:12: warning: An FD entry begins in Area B (column 12); it belongs in Area A, columns 8 to 11 [-Warea]
+    10 |            FD  PRINT-FILE.
+       |            ^~
+tests/diag/area.cbl:12:12: warning: The WORKING-STORAGE SECTION header begins in Area B (column 12); it belongs in Area A, columns 8 to 11 [-Warea]
+    12 |            WORKING-STORAGE SECTION.
+       |            ^~~~~~~~~~~~~~~
+tests/diag/area.cbl:13:12: warning: A level 01 entry begins in Area B (column 12); it belongs in Area A, columns 8 to 11 [-Warea]
+    13 |            01  COUNTER       PIC 9(4) VALUE ZERO.
+       |            ^~
+tests/diag/area.cbl:15:13: warning: A level 77 entry begins in Area B (column 13); it belongs in Area A, columns 8 to 11 [-Warea]
+    15 |             77  OTHER-TOTAL  PIC 9(4) VALUE ZERO.
+       |             ^~
+tests/diag/area.cbl:7:12: warning: File 'PRINT-FILE' is never opened or used [-Wunused-file]
+     7 |            SELECT PRINT-FILE ASSIGN TO "out.txt".
+       |            ^~~~~~
+6 warnings generated.

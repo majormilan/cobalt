@@ -63,6 +63,33 @@ The vendor dialect (`-D`) is separate: it chooses how things the standard
 leaves to the implementor behave (numeric DISPLAY format, sign encoding,
 binary truncation), not what is accepted.
 
+## FIPS subsets (`--subset`)
+
+FIPS PUB 21-4 defines three subsets of COBOL-85. `--subset=minimum` or
+`--subset=intermediate` reports each element the subset leaves out with a
+warning `NON-CONFORMING STANDARD: ... [-Wsubset]` (`-Werror=subset` makes
+them errors); `--subset=high`, the default, reports nothing.
+
+| Subset | Modules (level) |
+|---|---|
+| Minimum | Nucleus 1, Sequential I-O 1, Inter-Program Communication 1 |
+| Intermediate | Nucleus, Sequential, Relative and Indexed I-O, Sort-Merge, Source Text Manipulation, Inter-Program Communication, Segmentation, Debug: level 1 |
+| High | all of them, level 2, with Report Writer and Intrinsic Functions |
+
+The level 2 elements flagged include: COMPUTE, EVALUATE, INITIALIZE,
+SEARCH, STRING, UNSTRING, SET ... TO TRUE, INSPECT CONVERTING, nested IF,
+PERFORM VARYING and WITH TEST, CORRESPONDING, DIVIDE REMAINDER, reference
+modification, qualification, more than three subscripts, arithmetic
+expressions in conditions, sign and combined conditions, condition-names,
+RENAMES, OCCURS DEPENDING ON and KEY, VALUE ALL, nested REDEFINES, the
+continuation of words and numeric literals, SYMBOLIC CHARACTERS, ALPHABET
+literals, DATE-COMPILED; OPTIONAL, RESERVE, ACCESS DYNAMIC, ALTERNATE
+RECORD KEY, RECORD VARYING, LINAGE, OPEN EXTEND, CLOSE WITH LOCK, READ NEXT,
+START; GLOBAL, EXTERNAL, nested programs, COMMON, INITIAL, END PROGRAM,
+CANCEL, BY REFERENCE / CONTENT; COPY REPLACING, REPLACE; SEGMENT-LIMIT.
+The NIST CCVS85 flagging programs (the 30xM ones with `--subset=minimum`,
+the 40xM ones with `--subset=intermediate`) find every message they expect.
+
 ## Warnings
 
 `-Wname` turns a warning on, `-Wno-name` off; `-Wall` turns on the default
@@ -79,8 +106,9 @@ that controls it, e.g. `[-Wtruncate]`.
 | `perform-range` | on | PERFORM A THRU B where B comes before A |
 | `unused-file` | on | a file no statement opens or names |
 | `column-overflow` | on | a word that runs past column 72 (columns 73-80 are ignored) |
-| `area` | on | a paragraph or section name in area B, a statement in area A |
+| `area` | on | in area B, what belongs in area A (division and section headers, paragraph names, FD / SD / RD, level 01 and 77, DECLARATIVES); a statement in area A |
 | `extension` | on | an element outside COBOL-85 (see `-X`) |
+| `subset` | with `--subset` | an element outside the chosen FIPS subset |
 | `unused` | -Wextra | a data item never referenced (not those of copied text) |
 | `unused-procedure` | -Wextra | a paragraph or section neither performed nor reached by falling into it |
 | `narrowing` | -Wextra | MOVE of an item to a smaller one |

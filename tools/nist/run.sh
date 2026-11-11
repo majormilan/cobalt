@@ -49,7 +49,15 @@ for cbl in "$SRC"/$MODULE*.CBL; do
     elif [ -z "$ASSEMBLER" ]; then
         # FIPS flagging programs: with the obsolete elements flagged
         flagging=""
-        grep -aqi "Message expected for \(above\|following\) statement" "$cbl" && flagging=--flag-obsolete
+        # (the 30xM programs flag what the Minimum subset leaves out, the 40xM
+        # ones what the Intermediate subset leaves out)
+        if grep -aqi "Message expected for \(above\|following\) statement" "$cbl"; then
+            flagging=--flag-obsolete
+            case "$name" in
+                *3[0-9][0-9]M) flagging="$flagging --subset=minimum" ;;
+                *4[0-9][0-9]M) flagging="$flagging --subset=intermediate" ;;
+            esac
+        fi
         timeout 20 ./bin/cobalt $COBALT_FLAGS $flagging -i "$cbl" $extra -o "$dir/$name" > "$dir/compile.log" 2>&1
     else
         timeout 20 ./bin/cobalt $COBALT_FLAGS -A -i "$cbl" -o "$dir/$name.asm" > "$dir/compile.log" 2>&1 &&
@@ -124,12 +132,11 @@ for cbl in "$SRC"/$MODULE*.CBL; do
             printf "%-8s RAN (DISPLAY) PASS\n" "$name"
         fi
     elif grep -aqi "Message expected for \(above\|following\) statement" "$SRC/$name.CBL"; then
-        # FIPS flagging programs check compiler messages (OBSOLETE,
-        # NON-CONFORMING ...), which COBALT does not issue: not counted
-        # The OBSOLETE messages it expects (tools/nist/flags.py)
+        # FIPS flagging programs: the OBSOLETE and NON-CONFORMING STANDARD
+        # messages they expect (tools/nist/flags.py)
         read fp ff fu fs <<< "$(python3 -I tools/nist/flags.py "$cbl" "$dir/compile.log")"
         passed=$((passed + fp)); failed=$((failed + ff))
-        printf "%-8s FLAGGING      %3d passed, %3d failed (OBSOLETE); %d NON-CONFORMING not checked, %d other\n" "$name" $fp $ff $fu $fs
+        printf "%-8s FLAGGING      %3d passed, %3d failed; %d other messages not checked, %d unexpected flags\n" "$name" $fp $ff $fu $fs
     else
         printf "%-8s NO-REPORT     (program ran but wrote no report.log)\n" "$name"
     fi

@@ -152,6 +152,8 @@ static void print_help(const char *progname) {
     printf("  -Werror[=name]         Warnings (or this one) are errors\n");
     printf("  -w                     No warnings\n");
     printf("  --flag-obsolete        The obsolete elements of COBOL-85 (FIPS flagging; = -Wobsolete)\n");
+    printf("  --subset=SUBSET        FIPS flagging of the elements outside a subset of COBOL-85:\n");
+    printf("                         minimum, intermediate or high (default; nothing flagged)\n");
     printf("  -fmax-errors=N         Stop after N errors\n");
     printf("  -fdiagnostics-color[=always|never|auto]  Colors (default: on a terminal)\n");
     printf("      Warnings:\n");
@@ -222,6 +224,7 @@ int main(int argc, char **argv) {
         {"strip",       no_argument,       0, 0},
         {"module",      no_argument,       0, 'M'},
         {"flag-obsolete", no_argument,     0, 0},
+        {"subset",      required_argument, 0, 0},
         {"help",        no_argument,       0, 0},
         {"version",     no_argument,       0, 0},
         {0, 0, 0, 0}
@@ -286,6 +289,12 @@ int main(int argc, char **argv) {
                 }
                 if (strcmp(long_options[opt_index].name, "strip") == 0) strip = true;
                 if (strcmp(long_options[opt_index].name, "flag-obsolete") == 0) mode.flag_obsolete = true;
+                if (strcmp(long_options[opt_index].name, "subset") == 0) {
+                    if (!strcasecmp(optarg, "high")) diag_set_subset(SUBSET_HIGH);
+                    else if (!strcasecmp(optarg, "intermediate")) diag_set_subset(SUBSET_INTERMEDIATE);
+                    else if (!strcasecmp(optarg, "minimum")) diag_set_subset(SUBSET_MINIMUM);
+                    else { cobalt_error("Unknown subset '%s' (minimum, intermediate or high)", optarg); return 1; }
+                }
                 break;
             case ':':
                 cobalt_error("Option '%s' needs a value", argv[optind - 1]);
@@ -355,6 +364,7 @@ int main(int argc, char **argv) {
         if (!mode.free_format) lexer_check_columns(source, filename);
         lexer_set_debugging_lines(!mode.free_format && lexer_debugging_mode(source));
         if (!mode.free_format) {
+            lexer_set_format_file(filename);
             char *converted = lexer_reference_format(source);
             free(source);
             source = converted;
