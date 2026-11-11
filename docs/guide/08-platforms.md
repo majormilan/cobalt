@@ -23,9 +23,8 @@ the same messages. The NIST suite gives the same results on both.
 ## Linux
 
 The executables are static: copy them to any x86-64 Linux and they run.
-They hold only the runtime code the program uses: a program that displays
-one line is about 7 KB, 4 KB with `--strip` (which removes the symbol
-table); for Windows, 7 KB. The symbol table names the procedures and
+They hold only the runtime code the program uses; `--strip` removes the
+symbol table. The symbol table names the procedures and
 runtime routines, not the compiler's internal labels.
 
 The shell sees the exit status modulo 256 (chapter 7).

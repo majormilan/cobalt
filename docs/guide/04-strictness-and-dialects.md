@@ -122,7 +122,3 @@ GLOBAL, EXTERNAL, nested programs, COMMON, INITIAL, END PROGRAM, CANCEL, BY
 REFERENCE / CONTENT; COPY REPLACING, REPLACE; SEGMENT-LIMIT. Under
 `minimum`, the elements of Relative and Indexed I-O, Sort-Merge, COPY, the
 Debug and Report Writer modules are reported as well.
-
-The NIST flagging programs find every message they expect: the 30xM
-programs compiled with `--subset=minimum`, the 40xM ones with
-`--subset=intermediate`, both with `--flag-obsolete`.

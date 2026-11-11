@@ -3,9 +3,7 @@
 cobalt compiles **COBOL-85**: ANSI X3.23-1985 (ISO 1989:1985) with its 1989
 amendment, the intrinsic functions. Its modules are implemented at their
 highest level (level 2), except the Communication module, which is not
-supported. The NIST CCVS85 validation suite measures it: every module but
-Communication compiles and passes with no failures (the table is in the
-[README](../../README.md)).
+supported. It is checked with the NIST CCVS85 validation suite.
 
 This chapter describes the language as cobalt implements it, with what it
 adds and what it leaves out. Chapter 4 explains how the extensions are

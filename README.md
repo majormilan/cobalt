@@ -16,11 +16,9 @@ Hello, world!
 
 > **Status: under development.** cobalt is working toward its first release,
 > **0.1.0-alpha**, a feature complete alpha for COBOL-85. The language is
-> largely done and measured against the NIST test suite, but the release
-> work (user guide, CI, packaging) is not finished, and options and formats
-> may still change. It is not yet meant for production use.
-> [docs/release-checklist.md](docs/release-checklist.md) tracks what is done
-> and what is left.
+> largely done and checked with the NIST test suite, but the release work
+> (CI, packaging) is not finished, and options and formats may still
+> change. It is not yet meant for production use.
 
 ## Contents
 
@@ -41,38 +39,11 @@ Hello, world!
 
 cobalt compiles COBOL-85 (ANSI X3.23-1985, with the 1989 amendment of
 intrinsic functions), checked with the NIST CCVS85 validation suite. Every
-module of the standard but one compiles and passes with no failures:
+module of the standard is implemented except Communication: Nucleus,
+Sequential, Relative and Indexed I-O, Sort-Merge, Inter-Program
+Communication, Source Text Manipulation (COPY, REPLACE), Intrinsic
+Functions, Segmentation, Debug and Report Writer.
 
-| Module | Programs compiled | Tests passed | Failed |
-|---|---|---|---|
-| Nucleus (NC) | 95 of 95 | 4415 | 0 |
-| Sequential I-O (SQ) | 85 of 85 | 536 | 0 |
-| Relative I-O (RL) | 35 of 35 | 1846 | 0 |
-| Indexed I-O (IX) | 41 of 42 | 524 | 0 |
-| Sort-Merge (ST) | 39 of 40 | 278 | 0 |
-| Inter-Program Communication (IC) | 25 of 25 | 257 | 0 |
-| Source Text Manipulation (SM: COPY, REPLACE) | 17 of 17 | 293 | 0 |
-| Intrinsic Functions (IF) | 45 of 45 | 776 | 0 |
-| Segmentation (SG) | 13 of 13 | 317 | 0 |
-| Debug (DB) | 13 of 15 | 391 | 0 |
-| Report Writer (RW) | 6 of 6 | 53 | 0 |
-| Communication (CM) | not supported | | |
-
-The programs that do not compile are IX110A (an invalid PICTURE, which
-GnuCOBOL rejects as well), ST301M (corrupt in the suite file) and two Debug
-programs that use the Communication module. The counts include the FIPS
-flagging programs, which check the compiler's messages.
-
-### The compiler
-
-- **Strictness levels** (`-X`): elements outside COBOL-85 are accepted
-  (`relaxed`), accepted with a warning (`normal`, the default), or rejected
-  (`pedantic`; `ibm-strict` also accepts IBM's extensions). FIPS flagging of
-  the obsolete elements (`--flag-obsolete`) and of the elements outside a
-  FIPS subset (`--subset=minimum|intermediate`).
-- **Dialects** (`-D standard | ibm | gnucobol | microfocus`) for what the
-  standard leaves to the implementor, such as the format of numeric DISPLAY
-  and the encoding of signs.
 - **Diagnostics** in the style of gcc and clang: the source line with the
   error underlined, notes that explain it (where an item is declared, the
   candidates of an ambiguous name, "did you mean"), errors inside copybooks
@@ -80,9 +51,8 @@ flagging programs, which check the compiler's messages.
   `-Wextra`, `-Werror`), and every stage reporting what it finds in one run.
 - **Run-time errors** that name the source line and the program, and
   run-time checks of subscripts and reference modification (`-fcheck`).
-- **Fast builds.** On a 64,000-line program cobalt builds the executable in
-  2.5 s (cobalt itself compiled with `-O2`) against 12 to 15 s for
-  GnuCOBOL 3.2, and the time grows linearly with the size of the program.
+- **Fast builds**, in a time that grows linearly with the size of the
+  program, and small executables that hold only the runtime code they use.
 
 ### The toolchain
 
@@ -170,7 +140,7 @@ under `obj/nist/` (it is fetched again when needed).
 
 ## Installing
 
-There is no `make install` yet (it is on the checklist). cobalt is one
+There is no `make install` yet. cobalt is one
 executable with nothing else to install, so copy it to a directory on your
 PATH:
 
@@ -222,12 +192,11 @@ DEBUGGING MODE.
 
 ### For 0.1.0-alpha
 
-The language and both platforms are done; what is left is mostly release
-work (details in [docs/release-checklist.md](docs/release-checklist.md)):
+The language and both platforms are done; what is left:
 
-- a user guide: getting started, the options, what of COBOL-85 is
-  implemented, files, the runtime;
-- release notes with the NIST results and the known limitations;
+- error recovery after syntax errors, and clear messages for elements of
+  later standards and vendor extensions;
+- release notes with the known limitations;
 - continuous integration on Linux and Windows;
 - a fuzzing pass over the compiler (no crash on any input);
 - mapping ASSIGN names through environment variables;
@@ -269,7 +238,6 @@ work (details in [docs/release-checklist.md](docs/release-checklist.md)):
 | Document | About |
 |---|---|
 | [docs/guide](docs/guide/README.md) | the user guide: getting started, the command line, the language, strictness and dialects, diagnostics, files, running programs, platforms, limits |
-| [docs/release-checklist.md](docs/release-checklist.md) | the road to 0.1.0-alpha |
 | [runtime/ABI.md](runtime/ABI.md) | the runtime: data formats, files, CALL, run-time errors, the Report Writer, the OS layers |
 | [docs/assembler.md](docs/assembler.md) | the built-in assembler |
 | [docs/linker.md](docs/linker.md) | the built-in linker (ELF and PE) |
