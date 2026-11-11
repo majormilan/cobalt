@@ -195,10 +195,8 @@ DEBUGGING MODE.
 
 ### For 0.1.0-alpha
 
-The language and both platforms are done; what is left:
-
-- release notes with the known limitations;
-- release builds for both systems, a version tag.
+The language, both platforms, the documentation and the release builds
+(`make dist`) are done; what is left is tagging the release.
 
 ### After the alpha
 
@@ -241,6 +239,7 @@ Report Writer report. `make examples` builds and checks them.
 
 | Document | About |
 |---|---|
+| [CHANGELOG.md](CHANGELOG.md) | the release notes |
 | [docs/guide](docs/guide/README.md) | the user guide: getting started, the command line, the language, strictness and dialects, diagnostics, files, running programs, platforms, limits |
 | [runtime/ABI.md](runtime/ABI.md) | the runtime: data formats, files, CALL, run-time errors, the Report Writer, the OS layers |
 | [docs/assembler.md](docs/assembler.md) | the built-in assembler |

@@ -209,17 +209,43 @@ DOCDIR = $(DESTDIR)$(PREFIX)/share/doc/cobalt
 install: $(EXEC)
 	install -d $(DESTDIR)$(PREFIX)/bin $(DOCDIR)/guide
 	install -m 755 $(EXEC) $(DESTDIR)$(PREFIX)/bin/cobalt
-	install -m 644 README.md LICENSE $(DOCDIR)
+	install -m 644 README.md LICENSE CHANGELOG.md $(DOCDIR)
 	install -m 644 docs/guide/*.md $(DOCDIR)/guide
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/cobalt
-	rm -f $(DOCDIR)/README.md $(DOCDIR)/LICENSE $(addprefix $(DOCDIR)/guide/,$(notdir $(wildcard docs/guide/*.md)))
+	rm -f $(DOCDIR)/README.md $(DOCDIR)/LICENSE $(DOCDIR)/CHANGELOG.md $(addprefix $(DOCDIR)/guide/,$(notdir $(wildcard docs/guide/*.md)))
 	-rmdir $(DOCDIR)/guide $(DOCDIR)
+
+# Release packages (obj/dist): an optimized, static cobalt for Linux and
+# cobalt.exe for Windows, each with the README, the license, the release
+# notes, the user guide and the examples; their SHA-256 sums. The Linux
+# package is checked by running the examples with its cobalt.
+VERSION := $(shell sed -n 's/.*COBALT_VERSION "\(.*\)".*/\1/p' include/version.h)
+DIST     = $(OBJDIR)/dist
+DIST_LIN = cobalt-$(VERSION)-linux-x86_64
+DIST_WIN = cobalt-$(VERSION)-windows-x86_64
+
+dist:
+	$(MAKE) BINDIR=$(DIST)/build/bin OBJDIR=$(DIST)/build/obj CC=gcc \
+	    CFLAGS="-O2 -Wall -Iinclude -Iruntime -include compat.h" LDFLAGS=-static all windows
+	@for pkg in $(DIST_LIN) $(DIST_WIN); do \
+	    mkdir -p $(DIST)/$$pkg/guide $(DIST)/$$pkg/examples; \
+	    cp README.md LICENSE CHANGELOG.md $(DIST)/$$pkg/; \
+	    cp docs/guide/*.md $(DIST)/$$pkg/guide/; \
+	    cp -r examples/. $(DIST)/$$pkg/examples/; \
+	done
+	cp $(DIST)/build/bin/cobalt $(DIST)/$(DIST_LIN)/
+	cp $(DIST)/build/bin/cobalt.exe $(DIST)/$(DIST_WIN)/
+	cd $(DIST) && tar czf $(DIST_LIN).tar.gz $(DIST_LIN)
+	cd $(DIST) && zip -qr $(DIST_WIN).zip $(DIST_WIN)
+	cd $(DIST) && sha256sum $(DIST_LIN).tar.gz $(DIST_WIN).zip > SHA256SUMS
+	COBALT=$(CURDIR)/$(DIST)/$(DIST_LIN)/cobalt bash examples/run.sh
+	@echo "Packages in $(DIST): $(DIST_LIN).tar.gz, $(DIST_WIN).zip, SHA256SUMS"
 
 # The example programs (examples/), built and run like the tests
 examples: $(EXEC)
 	@echo "Building the examples..."
 	@bash examples/run.sh
 
-.PHONY: all clean test test-windows runtime check-runtime windows install uninstall examples
+.PHONY: all clean test test-windows runtime check-runtime windows install uninstall examples dist

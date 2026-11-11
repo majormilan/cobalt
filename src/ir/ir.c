@@ -5715,7 +5715,7 @@ static bool rw_is_counter(int report, const char *name) {
 
 // "did you mean" among the reports (and their DETAIL groups)
 static void rw_suggest(const char *name, bool details) {
-    const char *names[256];
+    const char *names[256] = { 0 };
     const AstNode *where[256];
     int n = 0;
     for (int k = 0; k < rw_num_reports && n < 256; k++) {

@@ -78,6 +78,11 @@ compiler:
 $ make CFLAGS="-O2 -Iinclude -Iruntime -include compat.h"
 ```
 
+`make dist` builds the release packages in `obj/dist`: an optimized, static
+cobalt for Linux and cobalt.exe for Windows, each with the README, the
+license, the release notes, this guide and the examples, and their SHA-256
+sums; the examples are run with the Linux package's cobalt.
+
 `make clean` removes `obj/` and `bin/`, including the NIST suite under
 `obj/nist/` (downloaded again when needed).
 
