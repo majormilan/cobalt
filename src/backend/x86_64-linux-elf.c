@@ -1602,6 +1602,16 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 fprintf(f, "    call %s\n", i->var_name + 1);
                 tgt_zero = val_zero = false;
                 break;
+            case IR_DEBUG_SWITCH_JUMP:
+                fprintf(f, "    call runtime_debug_switch\n");
+                fprintf(f, "    test eax, eax\n");
+                fprintf(f, "    jz %s\n", sanitized_jump);
+                break;
+            case IR_ALTER_SLOT_JUMP:
+                fprintf(f, "    lea rax, [rel P_%d]\n", i->proc_end);
+                fprintf(f, "    cmp [rel G_%lld], rax\n", i->imm);
+                fprintf(f, "    jne %s\n", sanitized_jump);
+                break;
             case IR_FUNC_ARG: {
                 long long at = 24 * i->imm;
                 if (i->flags) {

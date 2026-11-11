@@ -296,6 +296,8 @@ void lexer_init(Lexer *l, const char *source, const CompilerMode *mode, const ch
 // and columns are kept; comment lines become empty and continuation lines
 // are joined to the line they continue. Returns a new buffer.
 char *lexer_reference_format(const char *src);
+bool lexer_debugging_mode(const char *src);     // WITH DEBUGGING MODE in the source
+void lexer_set_debugging_lines(bool on);        // compile debugging lines (D)
 Token lexer_next(Lexer *l);
 
 // Public helper functions for standard-specific lexers

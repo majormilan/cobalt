@@ -13,6 +13,7 @@ global cobrt_runtime_flags
 global runtime_exit
 global runtime_switch_status
 global runtime_switch_set
+global runtime_debug_switch
 extern cobrt_files_close_all
 
 ; ARG0 = stack pointer at program entry (for the environment),
@@ -73,8 +74,45 @@ runtime_exit:
     call cobrt_os_exit
 
 
+; The object time debugging switch: on when the environment variable
+; COB_SET_DEBUG is Y, y, 1 or ON. Returns RET0 = 1 when on.
+runtime_debug_switch:
+    movzx eax, byte [rel debug_switch]
+    cmp al, SWITCH_UNKNOWN
+    jne .known
+    sub rsp, 24
+    mov rax, 'COB_SET_'
+    mov [rsp], rax
+    mov dword [rsp + 8], 'DEBU'
+    mov word [rsp + 12], 'G'
+    mov ARG0, rsp
+    call cobrt_os_getenv
+    add rsp, 24
+    xor ecx, ecx
+    test rax, rax
+    jz .store
+    movzx edx, byte [rax]
+    cmp dl, 'Y'
+    je .on
+    cmp dl, 'y'
+    je .on
+    cmp dl, '1'
+    je .on
+    cmp dl, 'O'
+    jne .store
+    cmp byte [rax + 1], 'N'
+    jne .store
+.on:
+    mov ecx, 1
+.store:
+    mov [rel debug_switch], cl
+    mov eax, ecx
+.known:
+    ret
+
 section .bss
 cobrt_runtime_flags: resq 1
 
 section .data
 switches: times 10 db SWITCH_UNKNOWN    ; state of SWITCH-n, until first read
+debug_switch: db SWITCH_UNKNOWN

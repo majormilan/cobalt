@@ -3325,6 +3325,14 @@ static AstNode *parse_division(void) {
                 if (sel) list_append(&div->children, &sel_tail, sel);
                 continue;
             }
+            if (tok_is_word("DEBUGGING") && peek_token().kind == TOK_MODE) {
+                // SOURCE-COMPUTER ... WITH DEBUGGING MODE
+                list_append(&div->children, &sel_tail,
+                            ast_new(AST_SPECIAL, "DEBUGGING", (SourceLocation){current_lexer->filename, tok.line, tok.column}));
+                next();
+                next();
+                continue;
+            }
             if (tok_is_word("SAME")) {
                 // SAME RECORD AREA FOR file...: the files share their record area;
                 // SAME [SORT | SORT-MERGE] AREA: storage sharing, no effect
@@ -3489,6 +3497,11 @@ AstNode *parse_program(Lexer *l) {
     reset_diagnostics();
     next();
     current_symtab = symtab_init();
+    // The DEBUG-ITEM special register (the Debug module)
+    static const char *debug_names[] = { "DEBUG-ITEM", "DEBUG-LINE", "DEBUG-NAME", "DEBUG-SUB-1",
+                                         "DEBUG-SUB-2", "DEBUG-SUB-3", "DEBUG-CONTENTS", NULL };
+    for (int k = 0; debug_names[k]; k++)
+        declare_special_name(debug_names[k], 1, (SourceLocation){current_lexer->filename, 0, 0});
 
     AstNode *first = NULL, *last = NULL;
     while (tok.kind != TOK_EOF) {

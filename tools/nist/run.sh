@@ -65,6 +65,10 @@ for cbl in "$SRC"/$MODULE*.CBL; do
     input=/dev/null
     [ -f "$SRC/$name.DAT" ] && input="$ROOT/$SRC/$name.DAT"
     # The operator's switch settings the suite expects: SWITCH-1 on
+    # The object time debugging switch is on, except where the program
+    # tests it off
+    debug_switch=Y
+    [ "$name" = DB102A ] && debug_switch=N
     # Programs of a module share their data files (one writes a file that a
     # later one reads), so they run in order in one directory; the report
     # moves to the program's own directory
@@ -82,7 +86,7 @@ for cbl in "$SRC"/$MODULE*.CBL; do
         done
     fi
     (cd "$FILES" && rm -f report.log &&
-     COB_SWITCH_1=ON timeout 10 "$ROOT/$dir/$name" < "$input" > "$ROOT/$dir/run.log" 2>&1
+     COB_SET_DEBUG=$debug_switch COB_SWITCH_1=ON timeout 10 "$ROOT/$dir/$name" < "$input" > "$ROOT/$dir/run.log" 2>&1
      [ -f report.log ] && mv report.log "$ROOT/$dir/")
     for h in $hidden; do mv -f "$FILES/$h.hidden" "$FILES/$h"; done
     if [ -f "$dir/report.log" ]; then

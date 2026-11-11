@@ -164,6 +164,8 @@ typedef enum {
                             //   field var_name of size bytes
     IR_FUNC_CALL,           // intrinsic function imm with size arguments into var_name
                             //   (lit_len bytes; numeric: binary of scale digits)
+    IR_DEBUG_SWITCH_JUMP,   // jump to jump_target unless the object time debugging switch is on
+    IR_ALTER_SLOT_JUMP,     // jump to jump_target unless paragraph imm's GO TO goes to proc_end
     IR_EXTERNAL,            // A_<imm> = the EXTERNAL storage named lit_name (lit_len bytes)
                             //   of size bytes; content: a template it starts as (or NULL)
     IR_SIZE_ERR_CLEAR,      // start of a statement that stores numeric results

@@ -297,6 +297,7 @@ int main(int argc, char **argv) {
     for (int k = 0; k < nsources; k++) {
         current_filename = (char *)sources[k];
         char *source = read_file(sources[k]);
+        lexer_set_debugging_lines(!mode.free_format && lexer_debugging_mode(source));
         if (!mode.free_format) {
             char *converted = lexer_reference_format(source);
             free(source);

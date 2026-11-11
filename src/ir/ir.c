@@ -177,6 +177,19 @@ static UseDecl uses[64];
 static int num_uses = 0;
 static bool has_declaratives = false;
 
+// USE FOR DEBUGGING sections (the Debug module)
+typedef struct {
+    AstNode *section;
+    AstNode *use;           // its USE statement: the procedures, items and files
+    int first, last;        // procedure range of the section
+} DebugUse;
+static DebugUse debug_uses[32];
+static int num_debug_uses = 0;
+static bool debugging_mode = false;         // WITH DEBUGGING MODE
+static int debug_item = -1;                 // DEBUG-ITEM and its fields (vars)
+static int debug_line, debug_name, debug_sub[3], debug_contents;
+#define DEBUG_CONTENTS_SIZE 200
+
 // The data-name of the RELATIVE / RECORD key clause of file f, or NULL
 static AstNode *file_key(int f, const char *what) {
     for (AstNode *k = files[f].select->children; k; k = k->next)
@@ -197,6 +210,8 @@ static void collect_program_uses(AstNode *program, const char *owner, bool own) 
             if (n->kind != AST_SECTION || !n->is_signed) continue;
             if (own) has_declaratives = true;
             AstNode *u = n->extra;
+            if (own && u && u->name && strcmp(u->name, "DEBUGGING") == 0 && num_debug_uses < 32)
+                debug_uses[num_debug_uses++] = (DebugUse){ n, u, -1, -1 };
             if (!u || !u->name || strcmp(u->name, "ERROR") != 0) continue;
             int gi = u->is_signed ? global_count++ : -1;
             if (!own && gi < 0) continue;
@@ -220,6 +235,7 @@ static void collect_program_uses(AstNode *program, const char *owner, bool own) 
 
 static void collect_uses(AstNode *program) {
     num_uses = 0;
+    num_debug_uses = 0;
     has_declaratives = false;
     collect_program_uses(program, NULL, true);
     // Then USE GLOBAL of the containing programs, the innermost first
@@ -685,6 +701,44 @@ static void build_file_records(void) {
 static void emit_qword(IrProgram *ir, const char *dest, int mode, long long imm,
                        const char *src, int size);
 
+// DEBUG-ITEM: DEBUG-LINE X(6), FILLER X, DEBUG-NAME X(30), FILLER X,
+// DEBUG-SUB-1 .. -3 S9(4) SIGN LEADING SEPARATE each followed by FILLER X,
+// DEBUG-CONTENTS X(200)
+static int debug_field(const char *name, int parent, int offset, int size, AstNode *decl) {
+    VarInfo *v = new_var(name);
+    if (!v) return 0;
+    int idx = (int)(v - vars);
+    v->level = parent < 0 ? 1 : 2;
+    v->parent = parent;
+    v->record = parent < 0 ? num_records : vars[parent].record;
+    v->offset = offset;
+    v->size = size;
+    v->usage_type = USAGE_DISPLAY;
+    v->decl = decl;
+    if (parent >= 0) add_child(parent, idx);
+    return idx;
+}
+
+static void build_debug_item(AstNode *program) {
+    int total = 56 + DEBUG_CONTENTS_SIZE;
+    debug_item = debug_field("DEBUG-ITEM", -1, 0, total, program);
+    vars[debug_item].is_group = true;
+    int r = num_records++;
+    record_size[r] = total;
+    debug_line = debug_field("DEBUG-LINE", debug_item, 0, 6, program);
+    debug_name = debug_field("DEBUG-NAME", debug_item, 7, 30, program);
+    for (int k = 0; k < 3; k++) {
+        static const char *names[] = { "DEBUG-SUB-1", "DEBUG-SUB-2", "DEBUG-SUB-3" };
+        int d = debug_field(names[k], debug_item, 38 + 6 * k, 5, program);
+        vars[d].is_numeric = true;
+        vars[d].is_signed = true;
+        vars[d].digits = 4;
+        vars[d].sign_mode = SIGN_GIVEN | SIGN_LEADING | SIGN_SEPARATE;
+        debug_sub[k] = d;
+    }
+    debug_contents = debug_field("DEBUG-CONTENTS", debug_item, 56, DEBUG_CONTENTS_SIZE, program);
+}
+
 static void build_data(IrProgram *ir, AstNode *program) {
     int stack[64];
     int depth = 0;
@@ -1022,6 +1076,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
     }
     for (int k = 0; k < num_renames; k++) build_renames(renames[k], renames_record[k]);
     build_file_records();
+    build_debug_item(program);
     for (int r = 0; r < num_records; r++) {
         if (is_fcb_record(r)) continue;     // emitted as IR_DATA_FILE
         if (record_ptr_slot[r] >= 0) continue;  // storage of the caller, or EXTERNAL
@@ -1921,6 +1976,9 @@ static AstNode *fold_ops(AstKind kind, AstNode *first, AstNode **ops, int n) {
 }
 
 static void lower_block(IrProgram *ir, AstNode *block);
+static void debug_item_event(IrProgram *ir, AstNode *ref, int line);
+static void debug_file_event(IrProgram *ir, AstNode *stmt, int f);
+static void debug_after_statement(IrProgram *ir, AstNode *stmt);
 
 // Resolve a procedure name: a paragraph of the current section first, then a
 // section or a paragraph whose name is unique in the program.
@@ -2776,6 +2834,7 @@ static void lower_varying_set(IrProgram *ir, AstNode *var, AstNode *value, bool 
     AstNode *tree = add ? mk_bin(AST_EXPR_ADD, ast_clone(var), ast_clone(value)) : ast_clone(value);
     lower_assign(ir, tree, var, false);
     ast_free(tree);
+    debug_item_event(ir, var, var->loc.line);
 }
 
 // The statements of one PERFORM iteration: the procedure range or the inline body
@@ -3220,6 +3279,7 @@ static void emit_perform_use(IrProgram *ir, int k) {
     IrInstr *p = emit(ir, IR_PERFORM);
     p->imm = uses[k].first;
     p->proc_end = uses[k].last;
+    p->digits = 4;                      // (for the Debug module: USE PROCEDURE)
 }
 
 // Branches after an I-O statement on file f: on_error runs for statuses
@@ -3460,6 +3520,7 @@ static void lower_sort(IrProgram *ir, AstNode *node) {
         IrInstr *p = emit(ir, IR_PERFORM);
         p->imm = first;
         p->proc_end = last;
+        p->digits = 1;                  // (for the Debug module: SORT INPUT)
     }
     emit_sort_op(ir, IR_SORT_SORT, sd, NULL);
     // Output: to the GIVING files, or the OUTPUT PROCEDURE's RETURNs
@@ -3505,6 +3566,7 @@ static void lower_sort(IrProgram *ir, AstNode *node) {
         IrInstr *p = emit(ir, IR_PERFORM);
         p->imm = first;
         p->proc_end = last;
+        p->digits = strcmp(node->name, "MERGE") == 0 ? 3 : 2;   // SORT / MERGE OUTPUT
     }
     emit_sort_op(ir, IR_SORT_END, sd, NULL);
 }
@@ -3545,6 +3607,7 @@ static void lower_release_return(IrProgram *ir, AstNode *node) {
     char area[48];
     record_label(area, sizeof(area), vars[files[sd].first_record].record, 0);
     emit_sort_op(ir, IR_SORT_RETURN, sd, area);
+    debug_file_event(ir, node, sd);
     AstNode *dep = files[sd].fd ? files[sd].fd->extra : NULL;
     if (dep || node->loop) {
         char skip[32];
@@ -3562,6 +3625,8 @@ static void lower_release_return(IrProgram *ir, AstNode *node) {
     lower_io_phrases(ir, node, 10, 19, -1, 0);
 }
 
+static void debug_file_event(IrProgram *ir, AstNode *stmt, int f);
+
 static bool random_or_dynamic(int f) {
     return files[f].select->access != FILE_ACCESS_SEQUENTIAL;
 }
@@ -3577,6 +3642,7 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
                 if (open) store_linage(ir, f);
                 IrInstr *i = emit_file_op(ir, open ? IR_FILE_OPEN : IR_FILE_CLOSE, f);
                 i->imm = open ? fn->decimal_places | (fn->digits << 8) : fn->digits;
+                debug_file_event(ir, node, f);
                 lower_io_phrases(ir, &no_phrases, 1, 0, f, open ? (fn->decimal_places & 7) : 0);
             }
             break;
@@ -3601,6 +3667,7 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
             IrInstr *r = emit_file_op(ir, IR_FILE_READ, f);
             r->lit_name = strdup(area);
             r->imm = keyed ? 1 : 0;
+            debug_file_event(ir, node, f);
             // After a successful READ: the record number into the RELATIVE KEY
             // (sequential reading), the record length into the DEPENDING ON
             // item, the record into the INTO item
@@ -3648,6 +3715,7 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
                 w->lit_name = strdup(rf.label);
                 w->size = fi->variable ? rf.size : fi->max_size;   // fixed: the whole area
                 w->flags = dep ? 2 : 0;
+                debug_file_event(ir, node, f);
                 lower_io_phrases(ir, node, 20, 29, f, 0);
                 break;
             }
@@ -3675,6 +3743,7 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
             w->imm = mode;
             w->flags = (on_stack ? 1 : 0) | (dep ? 2 : 0);
             w->digits = (int)lines;
+            debug_file_event(ir, node, f);
             if (relkey && !random_or_dynamic(f)) {
                 char skip[32];
                 new_label(skip, sizeof(skip), "write_skip");
@@ -3721,6 +3790,7 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
                 return;
             }
             IrInstr *op = emit_file_op(ir, start ? IR_FILE_START : IR_FILE_DELETE, f);
+            debug_file_event(ir, node, f);
             if (start) {
                 op->imm = strcmp(node->text, ">") == 0 ? 1 : strcmp(node->text, "=") == 0 ? 0 : 2;
                 op->digits = 0;
@@ -4637,6 +4707,7 @@ static void lower_node(IrProgram *ir, AstNode *node) {
             lower_perform(ir, node);
             break;
         case AST_STATEMENT_GOTO:
+            debug_after_statement(ir, node);    // (before the transfer)
             lower_goto(ir, node);
             break;
         case AST_STATEMENT_STRING:
@@ -4770,8 +4841,16 @@ static void lower_node(IrProgram *ir, AstNode *node) {
     }
 }
 
+static void debug_after_statement(IrProgram *ir, AstNode *stmt);
+static void debug_item_event(IrProgram *ir, AstNode *ref, int line);
+
 static void lower_block(IrProgram *ir, AstNode *block) {
-    for (AstNode *n = block; n; n = n->next) lower_node(ir, n);
+    for (AstNode *n = block; n; n = n->next) {
+        lower_node(ir, n);
+        if (debugging_mode && n->kind != AST_SENTENCE && n->kind != AST_PARAGRAPH && n->kind != AST_SECTION &&
+            n->kind != AST_STATEMENT_GOTO)
+            debug_after_statement(ir, n);
+    }
 }
 
 // Initial value of one occurrence of a data item from its VALUE clause
@@ -4848,6 +4927,287 @@ void ir_program_symbols(const char *program_name, char *entry, char *info, size_
     m[k] = '\0';
     snprintf(entry, size, "cob_%s", m);
     snprintf(info, size, "cobinfo_%s", m);
+}
+
+// ── The Debug module ────────────────────────────────────────────────────────
+
+static FieldRef var_field(int idx) {
+    FieldRef f = { .var = &vars[idx], .size = vars[idx].size };
+    record_label(f.label, sizeof(f.label), vars[idx].record, vars[idx].offset);
+    return f;
+}
+
+static void move_text_to_var(IrProgram *ir, const char *text, int idx) {
+    char lit[32];
+    emit_data_lit(ir, "lit", text, lit, sizeof(lit));
+    FieldRef d = var_field(idx);
+    emit_move_alpha(ir, &d, lit, (int)strlen(text));
+}
+
+// DEBUG-ITEM for a debugging procedure, then the procedure: the name, the
+// line, the contents (a text, or the field contents), the subscripts
+static void emit_debug_call(IrProgram *ir, int u, const char *name, int line, const char *text,
+                            const FieldRef *contents, AstNode *subs) {
+    // only with the object time debugging switch on (runtime/ABI.md section 14)
+    char off[32];
+    new_label(off, sizeof(off), "debug_off");
+    emit(ir, IR_DEBUG_SWITCH_JUMP)->jump_target = strdup(off);
+    FieldRef all = var_field(debug_item);
+    IrInstr *fill = emit(ir, IR_CALL_MOVE_FILL);
+    fill->var_name = strdup(all.label);
+    fill->pad_char = ' ';
+    fill->size = all.size;
+    char num[16];
+    snprintf(num, sizeof(num), "%6d", line);
+    move_text_to_var(ir, num, debug_line);
+    move_text_to_var(ir, name, debug_name);
+    int k = 0;
+    for (AstNode *x = subs; x && k < 3; x = x->next, k++) {
+        AstNode *d = item_ref(debug_sub[k], x->loc);
+        emit(ir, IR_SIZE_ERR_CLEAR);
+        lower_assign(ir, x, d, false);
+        ast_free(d);
+    }
+    FieldRef dc = var_field(debug_contents);
+    if (contents) emit_move_alpha(ir, &dc, contents->label, contents->size);
+    else if (text && *text) move_text_to_var(ir, text, debug_contents);
+    IrInstr *p = emit(ir, IR_PERFORM);
+    p->imm = debug_uses[u].first;
+    p->proc_end = debug_uses[u].last;
+    emit_label(ir, off);
+}
+
+static bool proc_declarative[1024];
+static int proc_line[1024];
+
+// Debugging procedures for procedure p: a bit per debug use
+static unsigned debug_uses_of_proc(int p) {
+    if (p < 0 || p >= num_procs || proc_declarative[p]) return 0;
+    unsigned m = 0;
+    for (int u = 0; u < num_debug_uses; u++) {
+        AstNode *use = debug_uses[u].use;
+        if (debug_uses[u].first < 0) continue;
+        if (use->text && strcmp(use->text, "ALL") == 0) { m |= 1u << u; continue; }
+        for (AstNode *t = use->children; t; t = t->next)
+            if (!t->is_signed && strcasecmp(t->name, procs[p].name) == 0) m |= 1u << u;
+    }
+    return m;
+}
+
+// Debugging procedures for a USE procedure (a declarative section that is
+// not a debugging one) that a USE runs
+static unsigned debug_uses_of_use_proc(int p) {
+    if (p < 0 || p >= num_procs) return 0;
+    for (int u = 0; u < num_debug_uses; u++)
+        if (debug_uses[u].first == p) return 0;
+    unsigned m = 0;
+    for (int u = 0; u < num_debug_uses; u++) {
+        AstNode *use = debug_uses[u].use;
+        if (debug_uses[u].first < 0) continue;
+        if (use->text && strcmp(use->text, "ALL") == 0) { m |= 1u << u; continue; }
+        for (AstNode *t = use->children; t; t = t->next)
+            if (!t->is_signed && strcasecmp(t->name, procs[p].name) == 0) m |= 1u << u;
+    }
+    return m;
+}
+
+// Insert the debugging procedures for the procedures they name: before a
+// GO TO, PERFORM or ALTER of one, and where control falls into one (or the
+// program starts with it)
+static void insert_procedure_debugging(IrProgram *ir) {
+    IrInstr *prev = NULL;
+    int current = -1;
+    for (IrInstr *i = ir->head; i; prev = i, i = i->next) {
+        int target = -1;
+        const char *text = "";
+        bool start = false, use_proc = false;
+        if (i->op == IR_PROC_ENTRY) {
+            target = (int)i->imm;
+            start = current < 0;
+            if (current >= 0 && proc_declarative[current] && !proc_declarative[target]) target = -1;
+            text = start ? "START PROGRAM" : "FALL THROUGH";
+        } else if (current >= 0 && proc_declarative[current]) {
+            continue;
+        } else if (i->op == IR_GOTO) {
+            target = (int)i->imm;
+            if (current < 0) text = "START PROGRAM";
+        } else if (i->op == IR_PERFORM) {
+            target = (int)i->imm;
+            static const char *kinds[] = { "PERFORM LOOP", "SORT INPUT", "SORT OUTPUT", "MERGE OUTPUT",
+                                           "USE PROCEDURE" };
+            text = kinds[i->digits >= 0 && i->digits <= 4 ? i->digits : 0];
+            if (i->digits == 4) use_proc = true;
+        } else if (i->op == IR_GOTO_ALTERABLE) {
+            // The target is known at run time: a test for each target that
+            // has a debugging procedure (the first one, and every ALTER's)
+            IrProgram tmp = {0};
+            int targets[64], nt = 0;
+            if (i->proc_end >= 0) targets[nt++] = i->proc_end;
+            for (IrInstr *a = ir->head; a; a = a->next)
+                if (a->op == IR_ALTER && a->imm == i->imm && a->proc_end >= 0 && nt < 64) targets[nt++] = a->proc_end;
+            for (int t = 0; t < nt; t++) {
+                bool dup = false;
+                for (int j = 0; j < t; j++) dup |= targets[j] == targets[t];
+                unsigned m = dup ? 0 : debug_uses_of_proc(targets[t]);
+                if (!m) continue;
+                char skip[32];
+                new_label(skip, sizeof(skip), "debug_skip");
+                IrInstr *j = emit(&tmp, IR_ALTER_SLOT_JUMP);
+                j->imm = i->imm;
+                j->proc_end = targets[t];
+                j->jump_target = strdup(skip);
+                for (int u = 0; u < num_debug_uses; u++)
+                    if (m & (1u << u)) emit_debug_call(&tmp, u, procs[targets[t]].name, proc_line[targets[t]], "", NULL, NULL);
+                emit_label(&tmp, skip);
+            }
+            if (tmp.head) {
+                if (prev) prev->next = tmp.head;
+                else ir->head = tmp.head;
+                tmp.tail->next = i;
+                prev = tmp.tail;
+            }
+            continue;
+        } else if (i->op == IR_ALTER) {
+            target = (int)i->imm;
+            text = i->proc_end >= 0 && i->proc_end < num_procs ? procs[i->proc_end].name : "";
+        }
+        if (i->op == IR_PROC_ENTRY) current = (int)i->imm;
+        unsigned m = use_proc ? debug_uses_of_use_proc(target) : debug_uses_of_proc(target);
+        if (!m) continue;
+        IrProgram tmp = {0};
+        for (int u = 0; u < num_debug_uses; u++)
+            if (m & (1u << u)) emit_debug_call(&tmp, u, procs[target].name, proc_line[target], text, NULL, NULL);
+        if (!tmp.head) continue;
+        if (prev) prev->next = tmp.head;
+        else ir->head = tmp.head;
+        tmp.tail->next = i;
+        prev = tmp.tail;
+    }
+}
+
+// Identifiers a statement refers to (not those of statements inside it)
+static void statement_refs(AstNode *n, AstNode **out, int *count, int max, bool top) {
+    for (; n; n = n->next) {
+        if (*count >= max) return;
+        if (!top && (n->kind == AST_THEN_BLOCK || n->kind == AST_ELSE_BLOCK || n->kind == AST_SENTENCE ||
+                     n->kind == AST_WHEN)) {
+            if (n->kind == AST_WHEN) statement_refs(n->extra, out, count, max, false);
+            continue;
+        }
+        if (n->kind == AST_IDENTIFIER) {
+            out[(*count)++] = n;
+            statement_refs(n->children, out, count, max, false);
+            continue;
+        }
+        statement_refs(n->children, out, count, max, false);
+        statement_refs(n->extra, out, count, max, false);
+        statement_refs(n->loop, out, count, max, false);
+        if (top) break;
+    }
+}
+
+static bool debugging_here(void) {
+    return debugging_mode && num_debug_uses && current_proc >= 0 && !proc_declarative[current_proc];
+}
+
+// After an I-O statement on file f (before its AT END / INVALID KEY
+// phrases): the debugging procedures for the file
+static void debug_file_event(IrProgram *ir, AstNode *stmt, int f) {
+    if (!debugging_here() || f < 0) return;
+    // (OPEN, CLOSE, READ, DELETE, START and RETURN: a WRITE or REWRITE is a
+    // reference to its record)
+    if (stmt->kind == AST_STATEMENT_WRITE || stmt->kind == AST_STATEMENT_REWRITE) return;
+    for (int u = 0; u < num_debug_uses; u++) {
+        if (debug_uses[u].first < 0) continue;
+        for (AstNode *t = debug_uses[u].use->children; t; t = t->next) {
+            if (strcasecmp(t->name, files[f].name) != 0) continue;
+            bool read = stmt->kind == AST_STATEMENT_READ || stmt->kind == AST_STATEMENT_RETURN;
+            FieldRef rec;
+            if (read && files[f].largest_record >= 0) {
+                rec = var_field(files[f].largest_record);
+                if (rec.size > DEBUG_CONTENTS_SIZE) rec.size = DEBUG_CONTENTS_SIZE;
+            }
+            // (READ: only when a record was read)
+            char skip[32];
+            new_label(skip, sizeof(skip), "debug_file");
+            if (read) emit_io_jump(ir, 10, 99, skip);
+            emit_debug_call(ir, u, files[f].name, stmt->loc.line, "", read ? &rec : NULL, NULL);
+            emit_label(ir, skip);
+        }
+    }
+}
+
+// The debugging procedures for item reference ref (a VARYING item that
+// changes)
+static void debug_item_event(IrProgram *ir, AstNode *ref, int line) {
+    if (!debugging_here() || ref->kind != AST_IDENTIFIER) return;
+    VarInfo *rv = find_item(ref, false);
+    if (!rv) return;
+    for (int u = 0; u < num_debug_uses; u++) {
+        if (debug_uses[u].first < 0) continue;
+        for (AstNode *t = debug_uses[u].use->children; t; t = t->next) {
+            if (find_item(t, false) != rv) continue;
+            FieldRef c;
+            bool have = resolve_ref(ir, ref, &c) && c.size > 0;
+            if (have && c.size > DEBUG_CONTENTS_SIZE) c.size = DEBUG_CONTENTS_SIZE;
+            emit_debug_call(ir, u, ref->name, line, "", have ? &c : NULL, ref->children);
+            break;
+        }
+    }
+}
+
+// After a statement: the debugging procedures for the items it refers to
+static void debug_after_statement(IrProgram *ir, AstNode *stmt) {
+    if (!debugging_here()) return;
+    if (stmt->kind == AST_STATEMENT_PERFORM) return;    // (its VARYING items: lower_varying_set)
+    // Statements that only read the items they name: for ALL REFERENCES only
+    bool reads_only = stmt->kind == AST_STATEMENT_GOTO || stmt->kind == AST_STATEMENT_IF ||
+                      stmt->kind == AST_STATEMENT_EVALUATE || stmt->kind == AST_STATEMENT_DISPLAY ||
+                      stmt->kind == AST_STATEMENT_SEARCH;
+    AstNode *refs[256];
+    int n = 0;
+    statement_refs(stmt, refs, &n, 256, true);
+    for (int u = 0; u < num_debug_uses; u++) {
+        if (debug_uses[u].first < 0) continue;
+        for (AstNode *t = debug_uses[u].use->children; t; t = t->next) {
+            bool is_file = false;
+            for (int f = 0; f < num_files; f++)
+                if (strcasecmp(files[f].name, t->name) == 0) is_file = true;
+            if (is_file) continue;              // debug_file_event
+            VarInfo *tv = find_item(t, false);
+            if (!tv || tv->is_cond || (reads_only && !t->is_signed)) continue;
+            for (int k = 0; k < n; k++) {
+                AstNode *r = refs[k];
+                if (r->name[0] == '!' || r->name[0] == '#') continue;
+                if (is_file) {
+                    if (strcasecmp(r->name, t->name) != 0) continue;
+                    FieldRef rec;
+                    bool read = stmt->kind == AST_STATEMENT_READ;
+                    int f = -1;
+                    for (int j = 0; j < num_files; j++)
+                        if (strcasecmp(files[j].name, t->name) == 0) f = j;
+                    if (read && f >= 0 && files[f].largest_record >= 0) {
+                        rec = var_field(files[f].largest_record);
+                        if (rec.size > DEBUG_CONTENTS_SIZE) rec.size = DEBUG_CONTENTS_SIZE;
+                    }
+                    emit_debug_call(ir, u, t->name, stmt->loc.line, "", read && f >= 0 ? &rec : NULL, NULL);
+                    break;
+                }
+                if (find_item(r, false) != tv) continue;
+                // MOVE: without ALL REFERENCES, only as a receiver
+                if (!t->is_signed && stmt->kind == AST_STATEMENT_MOVE && r == stmt->children) continue;
+                char name[128];
+                int len = snprintf(name, sizeof(name), "%s", r->name);
+                for (AstNode *q = r->extra; q && len < (int)sizeof(name) - 1; q = q->next)
+                    len += snprintf(name + len, sizeof(name) - len, " IN %s", q->name);
+                FieldRef c;
+                bool have = resolve_ref(ir, r, &c) && c.size > 0;
+                if (have && c.size > DEBUG_CONTENTS_SIZE) c.size = DEBUG_CONTENTS_SIZE;
+                emit_debug_call(ir, u, name, stmt->loc.line, "", have ? &c : NULL, r->children);
+                break;
+            }
+        }
+    }
 }
 
 // Segmentation: a section numbered 50 to 99 is an independent segment,
@@ -4938,6 +5298,9 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
     environment_division = NULL;
     for (AstNode *div = program->children; div; div = div->next)
         if (div->kind == AST_DIVISION && strcasecmp(div->name, "ENVIRONMENT") == 0) environment_division = div;
+    debugging_mode = false;
+    for (AstNode *e = environment_division ? environment_division->children : NULL; e; e = e->next)
+        if (e->kind == AST_SPECIAL && strcmp(e->name, "DEBUGGING") == 0) debugging_mode = true;
     build_data(ir, program);
 
     // PROCEDURE DIVISION USING: the address slots of the LINKAGE items
@@ -4993,6 +5356,13 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
     }
     emit(ir, IR_SIZE_ERR_CLEAR);
     for (int i = 0; i < num_vars; i++) lower_initial_value(ir, i);
+    {
+        FieldRef di = var_field(debug_item);
+        IrInstr *fill = emit(ir, IR_CALL_MOVE_FILL);
+        fill->var_name = strdup(di.label);
+        fill->pad_char = ' ';
+        fill->size = di.size;
+    }
     if (ir->subprogram) {
         emit_label(ir, "$init_done");
         emit(ir, IR_RESET_PERFORM);
@@ -5016,12 +5386,16 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
         for (AstNode *n = div->children; n; n = n->next) {
             if (n->kind == AST_SECTION || n->kind == AST_PARAGRAPH) {
                 if (num_procs >= 1024) { cobalt_error("Too many procedures (1024 limit)"); break; }
+                proc_declarative[num_procs] = n->kind == AST_SECTION && n->is_signed;
+                proc_line[num_procs] = n->loc.line;
                 procs[num_procs++] = (ProcInfo){ n->name, NULL, n->kind == AST_SECTION };
             }
             if (n->kind == AST_SECTION) {
                 for (AstNode *p = n->children; p; p = p->next) {
                     if (p->kind != AST_PARAGRAPH) continue;
                     if (num_procs >= 1024) { cobalt_error("Too many procedures (1024 limit)"); break; }
+                    proc_declarative[num_procs] = n->is_signed;
+                    proc_line[num_procs] = p->loc.line;
                     procs[num_procs++] = (ProcInfo){ p->name, n->name, false };
                 }
             }
@@ -5041,6 +5415,8 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
                     for (AstNode *p = n->children; p; p = p->next) if (p->kind == AST_PARAGRAPH) last++;
                 for (int u = 0; u < num_uses; u++)
                     if (uses[u].section == n) { uses[u].first = first; uses[u].last = last; }
+                for (int u = 0; u < num_debug_uses; u++)
+                    if (debug_uses[u].section == n) { debug_uses[u].first = first; debug_uses[u].last = last; }
                 if (first_normal < 0 && !(n->kind == AST_SECTION && n->is_signed)) first_normal = first;
                 k = last + 1;
             }
@@ -5106,6 +5482,7 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
     }
 
     reset_independent_segments(ir, program);
+    if (debugging_mode && num_debug_uses) insert_procedure_debugging(ir);
 
     // An altered paragraph must consist of a GO TO statement
     for (int p = 0; p < num_procs && p < 1024; p++) {

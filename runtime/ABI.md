@@ -680,3 +680,27 @@ quotient or sum could need more, the intermediate scale is lowered, but not
 below the receiver's scale plus 2. Multiplication and division take shifts up
 to 36 (a 192-bit dividend), so a quotient of items with 17 decimals keeps
 its precision.
+
+## 14. Debugging [implemented]
+
+`WITH DEBUGGING MODE` in SOURCE-COMPUTER compiles the debugging lines (D in
+the indicator area) and the USE FOR DEBUGGING procedures. These run only
+while the object time debugging switch is on: the environment variable
+COB_SET_DEBUG is Y, y, 1 or ON (`runtime_debug_switch` returns 1 then). Every
+program has the DEBUG-ITEM register: DEBUG-LINE X(6), DEBUG-NAME X(30),
+DEBUG-SUB-1 to -3 S9(4) SIGN LEADING SEPARATE, DEBUG-CONTENTS X(200), with
+one space between the fields.
+
+A debugging procedure for a procedure runs before a GO TO (DEBUG-CONTENTS
+spaces), PERFORM ("PERFORM LOOP", "SORT INPUT", "SORT OUTPUT", "MERGE
+OUTPUT", "USE PROCEDURE") or ALTER of it (the new target's name), when
+control falls into it ("FALL THROUGH") and when the program starts with it
+("START PROGRAM"); an altered GO TO tests its current target at run time.
+One for a file runs after OPEN, CLOSE, READ (a record read: the record),
+DELETE, START and RETURN, before their AT END / INVALID KEY phrases. One for
+a data item runs after a statement that refers to it (GO TO DEPENDING:
+before the transfer; without ALL REFERENCES not after statements that only
+read it), and after each change of a PERFORM VARYING item; DEBUG-NAME is its
+name with its qualifiers, the DEBUG-SUB fields its subscripts.
+
+Not yet: references in PERFORM UNTIL conditions.

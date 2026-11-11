@@ -43,6 +43,32 @@ static char open_literal(const char *text) {
     return q;
 }
 
+// WITH DEBUGGING MODE in a SOURCE-COMPUTER paragraph of the source: its
+// debugging lines (D in the indicator area) are compiled
+static bool debugging_lines = false;
+
+bool lexer_debugging_mode(const char *src) {
+    const char *line = src;
+    while (*line) {
+        const char *end = strchr(line, '\n');
+        size_t len = end ? (size_t)(end - line) : strlen(line);
+        if (len > 7 && line[6] != '*' && line[6] != '/') {
+            size_t n = len > 72 ? 72 : len;
+            for (size_t k = 7; k + 9 <= n; k++) {
+                if (strncasecmp(line + k, "DEBUGGING", 9) != 0) continue;
+                size_t m = k + 9;
+                while (m < n && line[m] == ' ') m++;
+                if (m == n || strncasecmp(line + m, "MODE", 4) == 0) return true;
+            }
+        }
+        if (!end) break;
+        line = end + 1;
+    }
+    return false;
+}
+
+void lexer_set_debugging_lines(bool on) { debugging_lines = on; }
+
 char *lexer_reference_format(const char *src) {
     // Collect the converted lines first: a continuation line changes the
     // line it continues.
@@ -64,7 +90,8 @@ char *lexer_reference_format(const char *src) {
         size_t text_len = text_end > 7 ? text_end - 7 : 0;
         sb_append(&out[n], "", 0);
 
-        if (len <= 6 || indicator == '*' || indicator == '/' || indicator == 'D' || indicator == 'd') {
+        if (len <= 6 || indicator == '*' || indicator == '/' ||
+            ((indicator == 'D' || indicator == 'd') && !debugging_lines)) {
             // sequence area only, comment line or debugging line
         } else if (indicator == '-' && last >= 0) {
             StrBuf *prev = &out[last];
