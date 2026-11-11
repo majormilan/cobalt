@@ -31,6 +31,16 @@ Every numeric value is a signed 64-bit integer scaled by a power of ten
   its store's size-error block; the statement's flag is not maintained when
   no ON SIZE ERROR reads it. Error paths are out of line.
 
+- **Constants across statements.** After a store of a constant that fits,
+  a load of the same field gives the constant (no call), and the virtual
+  stack folds what follows; a comparison of two constants becomes a jump or
+  nothing. The known values are forgotten at a store into the same record,
+  at any instruction that may change memory or transfer control, and at a
+  label that something jumps to.
+- **Error bytes written lazily.** The clears of the target and value bytes
+  are written only before code that can set them, or a path that reads them;
+  a statement byte nothing reads (no ON SIZE ERROR) is not updated.
+
 ## Storage
 
 - **Binary items** (COMP, COMP-4, COMP-5, index-names) are loaded and stored
@@ -42,6 +52,12 @@ Every numeric value is a signed 64-bit integer scaled by a power of ten
   then combined in lanes; stores by lane-wise division), the sign digit on
   its own; invalid data takes a digit loop. The compiler calls the `_p`
   entry points, whose arguments are packed in one register.
+- **Descriptors.** A load or store of a static item passes one descriptor:
+  8 bytes in `.rodata`, emitted once per item and kind of call (its address
+  and packed arguments), so a call loads one register.
+- **PACKED-DECIMAL stores** that may not fit are one call: the runtime
+  checks the value and continues into `runtime_num_store` when it does not
+  fit. Out-of-line slow paths are emitted only when something jumps to them.
 - **PACKED-DECIMAL items** convert 16 digits at a time
   (`runtime_packed_load`, `runtime_packed_store`), with exact reads and
   writes of 1 to 10 bytes.
@@ -99,7 +115,8 @@ Every numeric value is a signed 64-bit integer scaled by a power of ten
 
 ## Not done yet
 
-- Reuse of a field loaded or stored earlier in the same basic block.
+- Reuse of a field loaded or stored (with a value in a register) earlier in
+  the same straight-line code.
 - Removing error-flag updates that no statement can observe.
 - Constant stores into DISPLAY and PACKED-DECIMAL items as bytes computed
   at compile time.

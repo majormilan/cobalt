@@ -789,6 +789,73 @@ static void emit_num_store_args_call(FILE *f, const IrInstr *st, int flags) {
 }
 
 // dst = the field's value in memory
+// Constants known to be in fields: a store of a constant that fits, until
+// something may change the field or another path may join (a label some
+// instruction jumps to). A load of such a field is the constant, which the
+// virtual stack then folds.
+typedef struct {
+    char name[96];
+    long long value;
+    int size, usage, flags;
+} KnownValue;
+static KnownValue known[32];
+static int nknown;
+static NameMap jump_labels;     // labels that some instruction jumps to
+
+static void known_clear(void) { nknown = 0; }
+
+// the record part of a field operand ("%r10+79": "%r10")
+static size_t record_prefix(const char *name) {
+    const char *plus = strchr(name, '+');
+    return plus ? (size_t)(plus - name) : strlen(name);
+}
+
+static void known_forget_record(const char *name) {
+    if (!name || name[0] == '*') { known_clear(); return; }
+    size_t n = record_prefix(name);
+    int k = 0;
+    for (int j = 0; j < nknown; j++)
+        if (!(record_prefix(known[j].name) == n && strncmp(known[j].name, name, n) == 0)) known[k++] = known[j];
+    nknown = k;
+}
+
+static const KnownValue *known_find(const IrInstr *i) {
+    if (!i->var_name) return NULL;
+    for (int j = 0; j < nknown; j++)
+        if (!strcmp(known[j].name, i->var_name) && known[j].size == i->size &&
+            known[j].usage == (int)i->usage_type && known[j].flags == (i->flags & ~IR_NUM_KEEP))
+            return &known[j];
+    return NULL;
+}
+
+// Instructions after which the known constants still hold
+static bool keeps_known(const IrInstr *i) {
+    switch (i->op) {
+        case IR_NUM_LOAD: case IR_NUM_CONST: case IR_NUM_RESCALE: case IR_NUM_ADD: case IR_NUM_SUB:
+        case IR_NUM_MUL: case IR_NUM_DIV: case IR_NUM_NEG: case IR_NUM_DUP: case IR_NUM_DROP:
+        case IR_NUM_SWAP: case IR_NUM_TRUNC: case IR_NUM_DEEDIT: case IR_NUM_POW: case IR_NUM_STORE:
+        case IR_ERR_SAVE: case IR_ERR_RESTORE: case IR_SIZE_ERR_CLEAR: case IR_SET_WHERE:
+        case IR_NUM_CMP_JUMP_IF_FALSE: case IR_CALL_DISPLAY_STR: case IR_CALL_DISPLAY_VAR_STR:
+        case IR_EMIT_NEWLINE: case IR_CALL_DISPLAY_FILL: case IR_CHECK_RANGE:
+            return true;
+        case IR_LABEL:
+            return !i->var_name || namemap_get(&jump_labels, i->var_name, strlen(i->var_name)) < 0;
+        default:
+            return false;
+    }
+}
+
+static void collect_jump_labels(const IrProgram *ir) {
+    namemap_free(&jump_labels);
+    memset(&jump_labels, 0, sizeof(jump_labels));
+    for (const IrInstr *i = ir->head; i; i = i->next) {
+        if (i->op == IR_LABEL) continue;
+        if (i->jump_target) namemap_put(&jump_labels, i->jump_target, strlen(i->jump_target), 1);
+        if ((i->op == IR_TIMES_BEGIN || i->op == IR_TIMES_END) && i->var_name)
+            namemap_put(&jump_labels, i->var_name, strlen(i->var_name), 1);
+    }
+}
+
 // Descriptors of items for the runtime's _d entry points: the item's address
 // and the packed arguments of one kind of call, 8 bytes in .rodata emitted
 // once per item and kind; a call then loads one register (edi)
@@ -1403,6 +1470,8 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     IrFlow *flow = ir_flow_new(ir);
     Literals literals;
     literals_collect(&literals, ir);
+    collect_jump_labels(ir);
+    known_clear();
     int pos = -1;                   // position of the instruction being emitted
     char *cold_buf = NULL;
     size_t cold_len = 0;
@@ -1651,6 +1720,7 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
             else val_zero = false;      // (memory left as it was)
             val_pending = false;
         }
+        if (!keeps_known(i)) known_clear();
         // A pending clear of the target byte: needed before control leaves
         // the straight line if a path ahead reads it before it is cleared
         bool resets = !vs_handles(i->op) && !keeps_err_state(i->op);
@@ -1971,6 +2041,11 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 break;
             case IR_NUM_LOAD: {
                 int pk = promo_field(i->var_name);
+                const KnownValue *kv = pk < 0 ? known_find(i) : NULL;
+                if (kv) {                   // a constant stored before: no load
+                    vs_push_const(f, kv->value);
+                    break;
+                }
                 if (pk >= 0 && promo_in_slot(pk)) {
                     char slot[48];
                     promo_slot(pk, slot, sizeof(slot));
@@ -2430,6 +2505,20 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 vs_ensure(f, 1);
                 int pk = i->lit_name ? -1 : promo_field(i->var_name);
                 VEntry v = vs_pop();
+                known_forget_record(i->var_name);
+                if (v.is_const && pk < 0 && !i->lit_name && tgt_zero && i->var_name[0] != '*' &&
+                    i->digits >= 1 && i->digits <= 18 && strlen(i->var_name) < sizeof(known[0].name) &&
+                    nknown < (int)(sizeof(known) / sizeof(known[0])) &&
+                    (v.imm >= 0 || (i->flags & IR_NUM_SIGNED)) &&
+                    (v.imm < 0 ? 0ULL - (unsigned long long)v.imm : (unsigned long long)v.imm) < pow10_ull(i->digits)) {
+                    // it fits, and no error before can keep the old value: the field holds it
+                    KnownValue *kv = &known[nknown++];
+                    snprintf(kv->name, sizeof(kv->name), "%s", i->var_name);
+                    kv->value = v.imm;
+                    kv->size = i->size;
+                    kv->usage = (int)i->usage_type;
+                    kv->flags = i->flags & ~IR_NUM_KEEP;
+                }
                 if (pk >= 0 && !promo_in_slot(pk)) vs_unalias(f, VS_PROMO0 + pk);
                 int L = store_counter++;
                 bool known = tgt_zero;      // no error while computing the value
@@ -2588,6 +2677,14 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                     else if (!strcmp(op, "<")) op = ">";
                     else if (!strcmp(op, ">=")) op = "<=";
                     else if (!strcmp(op, "<=")) op = ">=";
+                }
+                if (a.is_const && b.is_const) {
+                    // both known: the jump is taken or not when compiling
+                    bool t = !op || !strcmp(op, "=") ? a.imm == b.imm : !strcmp(op, "<>") ? a.imm != b.imm :
+                             !strcmp(op, ">") ? a.imm > b.imm : !strcmp(op, "<") ? a.imm < b.imm :
+                             !strcmp(op, ">=") ? a.imm >= b.imm : a.imm <= b.imm;
+                    if (!t) fprintf(f, "    jmp %s\n\n", sanitized_jump);
+                    break;
                 }
                 const char *ra;
                 if (a.is_const) {
