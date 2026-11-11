@@ -236,7 +236,7 @@ void symtab_check_unused_symbols(SymbolTable *table) {
                 // Group items (no PICTURE) are normally used through their
                 // subordinate items, so only elementary items are reported
                 if (current->is_declared && !current->is_used && current->kind == SYM_VAR &&
-                    current->pic_string) {
+                    current->pic_string && !diag_in_copied_text(current->loc)) {
                     diag_warning(W_UNUSED, current->loc, "Data item '%s' is never used", current->name);
                 }
                 current = current->next;

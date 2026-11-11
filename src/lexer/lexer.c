@@ -527,3 +527,55 @@ Token lexer_next(Lexer *l) {
 }
 
 
+
+// The identification area (columns 73-80) of a line, or "" (in buf)
+static const char *ident_area(const char *p, size_t len, char *buf) {
+    size_t n = 0;
+    for (size_t k = 72; k < len && k < 80; k++) buf[n++] = p[k];
+    while (n > 0 && buf[n - 1] == ' ') n--;
+    buf[n] = '\0';
+    return buf;
+}
+
+void lexer_check_columns(const char *raw, const char *filename) {
+    if (!diag_warning_enabled(W_COLUMN)) return;
+    // A program that fills the identification area on purpose writes the same
+    // text there on most lines: then nothing past column 72 is a mistake
+    {
+        char first[16] = "", buf[16];
+        int lines = 0, same = 0;
+        for (const char *p = raw; *p; ) {
+            const char *end = strchr(p, '\n');
+            size_t len = end ? (size_t)(end - p) : strlen(p);
+            if (len > 0 && p[len - 1] == '\r') len--;
+            if (len > 72) {
+                ident_area(p, len, buf);
+                if (lines == 0) snprintf(first, sizeof(first), "%s", buf);
+                lines++;
+                if (*buf && strcmp(buf, first) == 0) same++;
+            }
+            if (!end) break;
+            p = end + 1;
+        }
+        if (lines >= 2 && same * 2 > lines) return;
+    }
+    int line = 1;
+    for (const char *p = raw; *p; line++) {
+        const char *end = strchr(p, '\n');
+        size_t len = end ? (size_t)(end - p) : strlen(p);
+        if (len > 0 && p[len - 1] == '\r') len--;
+        // a word or literal cut at column 72: columns 72 and 73 both hold text
+        if (len > 72 && p[6] != '*' && p[6] != '/' && is_ident_char(p[71]) && is_ident_char(p[72])) {
+            int end73 = 72, start = 71;
+            while (end73 < (int)len && end73 < 80 && is_ident_char(p[end73])) end73++;
+            while (start > 7 && is_ident_char(p[start - 1])) start--;
+            if (diag_warning(W_COLUMN, (SourceLocation){filename, line, start + 1},
+                             "The word '%.*s' runs past column 72, so only '%.*s' of it is read", end73 - start, p + start,
+                             72 - start, p + start))
+                diag_note_plain("in fixed format, columns 73 to 80 are the identification area; "
+                                "continue the line on the next one");
+        }
+        if (!end) break;
+        p = end + 1;
+    }
+}

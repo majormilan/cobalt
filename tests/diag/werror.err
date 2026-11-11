@@ -1,0 +1,53 @@
+tests/diag/warnings.cbl:45:70: warning: The word 'LONG-NAME' runs past column 72, so only 'LON' of it is read [-Wcolumn-overflow]
+    45 |            MOVE SPACES TO                                            LONG-NAME.
+       |                                                                      ^~~~~~~~~
+note: in fixed format, columns 73 to 80 are the identification area; continue the line on the next one
+tests/diag/warnings.cbl:40:11: warning: The statement 'DISPLAY' begins in Area A (column 11); statements belong in Area B, from column 12 [-Warea]
+    40 |           DISPLAY COUNTER.
+       |           ^~~~~~~
+tests/diag/warnings.cbl:45:70: error: 'LON' is not defined
+    45 |            MOVE SPACES TO                                            LONG-NAME.
+       |                                                                      ^~~~~~~~~
+tests/diag/warnings.cbl:30:17: error: The literal "ABCDEFGH" has 8 characters; 'SMALL-CODE' holds 4, so it is truncated [-Werror=truncate]
+    30 |            MOVE "ABCDEFGH" TO SMALL-CODE.
+       |                 ^~~~~~~~~~
+tests/diag/warnings.cbl:22:12: note: 'SMALL-CODE' is declared here
+    22 |        01  SMALL-CODE     PIC X(4)     VALUE SPACES.
+       |            ^~~~~~~~~~
+tests/diag/warnings.cbl:31:17: error: 12345 does not fit 'AMOUNT': its high-order digits are lost [-Werror=truncate]
+    31 |            MOVE 12345 TO AMOUNT.
+       |                 ^~~~~
+tests/diag/warnings.cbl:24:12: note: 'AMOUNT' is declared here
+    24 |        01  AMOUNT         PIC 9(3)V99  VALUE ZERO.
+       |            ^~~~~~
+tests/diag/warnings.cbl:32:17: error: 1.255 has 3 decimal places; 'AMOUNT' keeps 2, so the rest are truncated [-Werror=truncate]
+    32 |            MOVE 1.255 TO AMOUNT.
+       |                 ^
+tests/diag/warnings.cbl:24:12: note: 'AMOUNT' is declared here
+    24 |        01  AMOUNT         PIC 9(3)V99  VALUE ZERO.
+       |            ^~~~~~
+tests/diag/warnings.cbl:36:24: warning: The relation is always false [-Wconstant-condition]
+    36 |            IF AMOUNT > 999.99 DISPLAY "NEVER" END-IF.
+       |                        ^~~
+tests/diag/warnings.cbl:24:12: note: 'AMOUNT' is never above 999.99 (PICTURE 9(3)V99)
+    24 |        01  AMOUNT         PIC 9(3)V99  VALUE ZERO.
+       |            ^~~~~~
+tests/diag/warnings.cbl:37:42: warning: Division by zero: this always raises the size error condition [-Wdivide-by-zero]
+    37 |            COMPUTE AMOUNT = BIG-AMOUNT / 0.
+       |                                          ^
+tests/diag/warnings.cbl:39:36: warning: 'MAIN-PARA' comes before 'LATER-PARA', so control does not return from the range at its end [-Wperform-range]
+    39 |            PERFORM LATER-PARA THRU MAIN-PARA.
+       |                                    ^~~~~~~~~
+tests/diag/warnings.cbl:28:8: note: 'MAIN-PARA' is here
+    28 |        MAIN-PARA.
+       |        ^~~~~~~~~
+tests/diag/warnings.cbl:42:12: warning: This statement is never executed [-Wunreachable]
+    42 |            DISPLAY "AFTER STOP RUN".
+       |            ^~~~~~~
+tests/diag/warnings.cbl:41:12: note: control never passes this STOP RUN
+    41 |            STOP RUN.
+       |            ^~~~
+tests/diag/warnings.cbl:7:12: warning: File 'AUDIT-FILE' is never opened or used [-Wunused-file]
+     7 |            SELECT AUDIT-FILE ASSIGN TO "audit.dat".
+       |            ^~~~~~
+4 errors and 7 warnings generated.

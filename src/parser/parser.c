@@ -127,6 +127,14 @@ static char *tok_value(void) {
     return s;
 }
 
+// The verbs that start statements (for "did you mean")
+static const char *const statement_verbs[] = {
+    "ACCEPT", "ADD", "ALTER", "CALL", "CANCEL", "CLOSE", "COMPUTE", "CONTINUE", "DELETE", "DISPLAY",
+    "DIVIDE", "EVALUATE", "EXIT", "GO", "IF", "INITIALIZE", "INSPECT", "MERGE", "MOVE", "MULTIPLY",
+    "OPEN", "PERFORM", "READ", "RELEASE", "RETURN", "REWRITE", "SEARCH", "SET", "SORT", "START", "STOP",
+    "STRING", "SUBTRACT", "UNSTRING", "WRITE", NULL
+};
+
 // The current token for a message: 'MOVE', '.', "end of file"
 static const char *tok_desc(void) {
     static char buf[96];
@@ -2754,6 +2762,13 @@ static AstNode *parse_statement(void) {
     return NULL;
 }
 
+// A statement starting in Area A (fixed format)
+static void check_statement_area(void) {
+    if (!current_lexer->mode->free_format && tok.column >= 8 && tok.column <= 11 && tok.kind != TOK_EOF)
+        diag_warning(W_AREA, TOK_LOC, "The statement %s begins in Area A (column %d); statements belong in Area B, from column 12",
+                     tok_desc(), tok.column);
+}
+
 // Sentence: statements up to a period. AST_SENTENCE with the statements as children.
 static AstNode *parse_sentence(void) {
     SourceLocation loc = {tok.filename, tok.line, tok.column};
@@ -2762,6 +2777,7 @@ static AstNode *parse_sentence(void) {
     int errors_before = error_count;
 
     while (!at_block_end() && !parser_panic_mode) {
+        check_statement_area();
         AstNode *stmt = parse_statement();
         if (!stmt) break;
         list_append(&sent->children, &tail, stmt);
@@ -2900,6 +2916,9 @@ static void parse_procedure_body(AstNode *div) {
             next();
             if (tok.kind == TOK_SECTION) {
                 next();
+                if (!current_lexer->mode->free_format && loc.column > 11)
+                    diag_warning(W_AREA, loc, "The section name '%s' begins in Area B (column %d); it belongs in Area A, columns 8 to 11",
+                                 name, loc.column);
                 sec = ast_new(AST_SECTION, name, loc);
                 if (tok.kind == TOK_NUMBER) {
                     // segment-number (Segmentation module): kept in digits
@@ -2922,8 +2941,27 @@ static void parse_procedure_body(AstNode *div) {
                 free(name);
                 continue;
             }
+            if (tok.kind != TOK_PERIOD) {
+                // A word followed by something else: a misspelled statement
+                // rather than a paragraph name
+                const char *near = diag_closest(name, statement_verbs, -1);
+                if (near || loc.column > 11 || current_lexer->mode->free_format) {
+                    diag_error(loc, "Expected a statement, found '%s'", name);
+                    if (near) diag_note_plain("did you mean '%s'?", near);
+                    else diag_note_plain("a paragraph name is followed by a period");
+                } else {
+                    diag_error(AFTER_PREV, "Expected '.' after the paragraph name '%s'", name);
+                }
+                free(name);
+                synchronize();
+                parser_panic_mode = false;
+                continue;
+            }
             expect(TOK_PERIOD, ".");
             parser_panic_mode = false;
+            if (!current_lexer->mode->free_format && loc.column > 11)
+                diag_warning(W_AREA, loc, "The paragraph name '%s' begins in Area B (column %d); it belongs in Area A, columns 8 to 11",
+                             name, loc.column);
             node = ast_new(AST_PARAGRAPH, name, loc);
             declare_procedure(name, SYM_PARAGRAPH, loc);
             free(name);

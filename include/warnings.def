@@ -1,7 +1,7 @@
 /* include/warnings.def
  * The named warnings: WARNING(id, -W name, only with -Wextra, what it reports)
  */
-WARNING(W_UNUSED,             "unused",             0, "data items that are never referenced")
+WARNING(W_UNUSED,             "unused",             1, "data items never referenced (not those of copied text)")
 WARNING(W_UNUSED_FILE,        "unused-file",        0, "files that are never opened")
 WARNING(W_UNUSED_PROCEDURE,   "unused-procedure",   1, "paragraphs and sections never reached")
 WARNING(W_TRUNCATE,           "truncate",           0, "literals that do not fit the item they are moved to")

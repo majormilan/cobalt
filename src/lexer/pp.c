@@ -551,6 +551,7 @@ static bool expand(Buf *out, const char *t, int file, int depth, const PpOptions
         }
         char *lib = load_text(raw, opt);
         int lib_file = diag_add_file(path, raw, cur.file, at);
+        if (!opt->free_format) lexer_check_columns(raw, diag_file_name(lib_file));
         free(raw);
         put(out, t + last, w->start - last);
         if (ps.n) {

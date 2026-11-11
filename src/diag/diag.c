@@ -154,6 +154,7 @@ int diag_add_file(const char *name, const char *text, int parent, SourceLocation
         cap_files = cap_files ? cap_files * 2 : 16;
         files = realloc(files, cap_files * sizeof(File));
     }
+    while (name[0] == '.' && name[1] == '/') name += 2;            // "./X.cpy": X.cpy
     files[nfiles] = (File){ strdup(name), text ? strdup(text) : NULL, parent, at, NULL, 0 };
     return nfiles++;
 }
@@ -171,6 +172,11 @@ static File *file_of(const char *name) {
     for (int k = nfiles - 1; k >= 0; k--)
         if (strcmp(files[k].name, name) == 0) return &files[k];
     return NULL;
+}
+
+bool diag_in_copied_text(SourceLocation loc) {
+    File *f = file_of(loc.filename);
+    return f && f->parent >= 0;
 }
 
 static const char *line_of(File *f, int line, int *len) {
@@ -298,8 +304,16 @@ void diag_error(SourceLocation loc, const char *fmt, ...) {
     too_many_errors();
 }
 
+static bool repeated(SourceLocation loc, const char *text);
+
 static bool warn_v(Warning w, SourceLocation loc, const char *fmt, va_list ap) {
     if (!diag_warning_enabled(w)) { last_shown = false; return false; }
+    char text[512];
+    va_list copy;
+    va_copy(copy, ap);
+    vsnprintf(text, sizeof(text), fmt, copy);
+    va_end(copy);
+    if (repeated(loc, text)) { last_shown = false; return false; }
     char option[64];
     bool err = all_errors || as_error[w];
     snprintf(option, sizeof(option), err ? "-Werror=%s" : "-W%s", warnings[w].name);
@@ -400,6 +414,7 @@ const char *diag_closest(const char *word, const char *const *candidates, int n)
     const char *found = NULL;
     int len = (int)strlen(word);
     int limit = len <= 3 ? 1 : len <= 8 ? 2 : 3;
+    if (n < 0) for (n = 0; candidates[n]; n++) {}       // NULL-terminated
     for (int k = 0; k < n; k++) {
         if (!candidates[k]) continue;
         int d = distance(word, candidates[k]);

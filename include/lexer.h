@@ -292,6 +292,10 @@ typedef struct Lexer {
 
 void lexer_init(Lexer *l, const char *source, const CompilerMode *mode, const char *filename);
 
+// Fixed reference format: warn about program text that runs past column 72
+// (-Wcolumn-overflow); filename is the registered name of the text
+void lexer_check_columns(const char *raw, const char *filename);
+
 // Convert fixed reference format (columns 1-6 sequence area, 7 indicator,
 // 8-72 program text) to text the lexer reads as free format. Line numbers
 // and columns are kept; comment lines become empty and continuation lines

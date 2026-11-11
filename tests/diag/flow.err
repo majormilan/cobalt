@@ -1,0 +1,13 @@
+tests/diag/flow.cbl:12:12: warning: This statement is never executed [-Wunreachable]
+    12 |            DISPLAY "NEVER SHOWN".
+       |            ^~~~~~~
+tests/diag/flow.cbl:11:12: note: control never passes this GO TO
+    11 |            GO TO FINISH.
+       |            ^~
+tests/diag/flow.cbl:20:8: warning: Paragraph 'OLD-REPORT' is never performed and cannot be reached [-Wunused-procedure]
+    20 |        OLD-REPORT.
+       |        ^~~~~~~~~~
+tests/diag/flow.cbl:22:8: warning: Paragraph 'OLD-REPORT-EXIT' is never performed and cannot be reached [-Wunused-procedure]
+    22 |        OLD-REPORT-EXIT.
+       |        ^~~~~~~~~~~~~~~
+3 warnings generated.

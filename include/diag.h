@@ -51,6 +51,8 @@ void reset_diagnostics(void);
 // that statement is. Returns the file's number.
 int diag_add_file(const char *name, const char *text, int parent, SourceLocation at);
 const char *diag_file_name(int id);
+// Whether a location is in text brought in by COPY
+bool diag_in_copied_text(SourceLocation loc);
 
 // Options
 void diag_set_strictness(int strictness);      // a Strictness (config.h)
@@ -68,7 +70,8 @@ bool diag_warning_enabled(Warning w);
 // Errors and warnings so far, printed at the end ("2 errors and 1 warning generated.")
 void diag_summary(void);
 
-// The closest of the candidates to a misspelled word, or NULL
+// The closest of the candidates to a misspelled word, or NULL (n < 0: the
+// candidates are NULL-terminated)
 const char *diag_closest(const char *word, const char *const *candidates, int n);
 
 // Diagnostics without a location (command line, files)

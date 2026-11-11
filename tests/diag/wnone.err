@@ -1,0 +1,4 @@
+tests/diag/warnings.cbl:45:70: error: 'LON' is not defined
+    45 |            MOVE SPACES TO                                            LONG-NAME.
+       |                                                                      ^~~~~~~~~
+1 error generated.

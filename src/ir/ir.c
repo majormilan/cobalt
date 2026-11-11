@@ -55,6 +55,8 @@ typedef struct {
     int qual_file;          // LINAGE-COUNTER: the file that qualifies it, else -1
     bool linkage;           // LINKAGE SECTION item
     const char *owner;      // GLOBAL item of a containing program: its entry symbol
+    bool assigned;          // a statement gives it a value (-Wuninitialized)
+    SourceLocation first_read;  // where a statement first reads it, if one does
 } VarInfo;
 
 static bool is_num_edited(const VarInfo *v) { return v->mask && v->num_edited; }
@@ -142,6 +144,7 @@ typedef struct {
     int status_var;         // its FILE STATUS item, or -1
     int nkeys;              // indexed: prime and alternate keys
     int key_item[16];       // their data items
+    bool referenced;        // named by a statement (OPEN, SORT USING ...)
 } FileInfo;
 
 #define FCB_BYTES      192  // runtime/ABI.md section 7
@@ -1405,9 +1408,35 @@ static void undefined_item(const AstNode *ref) {
         }
 }
 
+// -Wuninitialized: the statement being lowered. References in statements
+// that only read data mark items read; any other statement may store into
+// what it names, so its references count as assignments.
+static int stmt_kind_now = -1;
+
+static bool reads_only(int kind) {
+    return kind == AST_STATEMENT_DISPLAY || kind == AST_STATEMENT_IF || kind == AST_STATEMENT_EVALUATE ||
+           kind == AST_STATEMENT_MOVE || kind == AST_STATEMENT_ADD || kind == AST_STATEMENT_SUBTRACT ||
+           kind == AST_STATEMENT_MULTIPLY || kind == AST_STATEMENT_DIVIDE || kind == AST_STATEMENT_COMPUTE ||
+           kind == AST_STATEMENT_GOTO;
+}
+
+static void note_reference(VarInfo *v, const AstNode *ref) {
+    if (stmt_kind_now < 0 || !v) return;
+    if (!reads_only(stmt_kind_now)) v->assigned = true;
+    else if (!v->first_read.line && ref->loc.line) v->first_read = ref->loc;
+}
+
+static VarInfo *find_item_ref(const AstNode *ref, bool report);
+
 // Find the data item an identifier refers to, applying OF/IN qualification.
 // Reports unknown and ambiguous names when report is set.
 static VarInfo *find_item(const AstNode *ref, bool report) {
+    VarInfo *v = find_item_ref(ref, report);
+    if (v && ref->name[0] != '#' && ref->name[0] != '!') note_reference(v, ref);
+    return v;
+}
+
+static VarInfo *find_item_ref(const AstNode *ref, bool report) {
     if (ref->name[0] == '#') return &vars[atoi(ref->name + 1)];
     if (ref->name[0] == '!') return &vars[function_temp(ref)];
     VarInfo *found = NULL;
@@ -1669,6 +1698,8 @@ static bool resolve_ref(IrProgram *ir, AstNode *ref, FieldRef *out) {
 // resolve_ref for the receiving item of a MOVE
 static bool resolve_receiver(IrProgram *ir, AstNode *ref, FieldRef *out) {
     resolving_receiver = true;
+    VarInfo *rv = find_item(ref, false);
+    if (rv) rv->assigned = true;
     bool ok = resolve_ref(ir, ref, out);
     resolving_receiver = false;
     return ok;
@@ -1772,6 +1803,12 @@ static bool num_expr_valid(AstNode *e) {
         case AST_EXPR_DIV: {
             bool left = num_expr_valid(e->children);
             bool right = e->children && num_expr_valid(e->children->next);
+            AstNode *d = e->children ? e->children->next : NULL;
+            long long dv;
+            int ds;
+            if (e->kind == AST_EXPR_DIV && d && ((d->kind == AST_LITERAL_NUMBER && parse_num_literal(d->name, &dv, &ds) && dv == 0) ||
+                                                 figurative_char(d) == '0'))
+                diag_warning(W_DIVIDE_BY_ZERO, d->loc, "Division by zero: this always raises the size error condition");
             return left && right;
         }
         default:
@@ -2082,7 +2119,17 @@ static void debug_after_statement(IrProgram *ir, AstNode *stmt);
 
 // Resolve a procedure name: a paragraph of the current section first, then a
 // section or a paragraph whose name is unique in the program.
+static bool proc_referenced[MAX_PROCS];       // named by a PERFORM, GO TO, ALTER, SORT...
+
+static int resolve_proc_name(AstNode *ref);
+
 static int resolve_proc(AstNode *ref) {
+    int p = resolve_proc_name(ref);
+    if (p >= 0) proc_referenced[p] = true;
+    return p;
+}
+
+static int resolve_proc_name(AstNode *ref) {
     if (ref->extra) {
         // paragraph OF section
         for (int i = 0; i < num_procs; i++) {
@@ -2182,6 +2229,10 @@ static void store_copy(IrProgram *ir, AstNode *recv, int s, bool keep) {
 
 // Compute tree once and store it into every receiver (GIVING, COMPUTE)
 static void lower_giving(IrProgram *ir, AstNode *tree, AstNode **recv, int n, bool keep) {
+    for (int i = 0; i < n; i++) {
+        VarInfo *v = find_item(recv[i], false);
+        if (v) v->assigned = true;
+    }
     if (!num_expr_valid(tree)) return;
     int saved_floor = expr_floor, most = 0;
     for (int i = 0; i < n; i++) {
@@ -2377,6 +2428,8 @@ static void lower_arith_node(IrProgram *ir, AstNode *node) {
                 q->children = mk_bin(AST_EXPR_DIV, ast_clone(dividend), ast_clone(divisor));
                 AstNode *rem = mk_bin(AST_EXPR_SUB, ast_clone(dividend),
                                       mk_bin(AST_EXPR_MUL, q, ast_clone(divisor)));
+                VarInfo *rv = find_item(ops[n - 1], false);
+                if (rv) rv->assigned = true;
                 lower_assign(ir, rem, ops[n - 1], keep);
                 ast_free(rem);
             }
@@ -2460,6 +2513,78 @@ static bool alnum_operand(IrProgram *ir, AstNode *n, FieldRef *f, const char *bu
 }
 
 // Jump to target when (left op right) is false
+// A relation between a numeric item and a literal its PICTURE puts out of
+// reach (or between two literals): always true or always false
+static bool in_condition_name;               // lowering the test of a condition-name
+
+static void check_constant_relation(AstNode *left, AstNode *right, const char *op) {
+    if (!diag_warning_enabled(W_CONSTANT_CONDITION) || in_condition_name) return;
+    long long rv;
+    int rs;
+    if (left->kind == AST_LITERAL_NUMBER && right->kind == AST_LITERAL_NUMBER) {
+        diag_warning(W_CONSTANT_CONDITION, left->loc, "Both operands of the relation are literals, so it never changes");
+        return;
+    }
+    if (left->kind == AST_LITERAL_NUMBER) { AstNode *t = left; left = right; right = t; op = mirror_op(op); }
+    if (left->kind != AST_IDENTIFIER || right->kind != AST_LITERAL_NUMBER || left->loop || left->children) return;
+    VarInfo *v = find_item(left, false);
+    if (!v || !v->is_numeric || v->is_cond || v->decimal_places < 0 || v->is_index) return;
+    if (!parse_num_literal(right->name, &rv, &rs) || rs > 18) return;
+    // compare as scaled integers at the larger scale
+    int scale = v->decimal_places > rs ? v->decimal_places : rs;
+    if (scale > 18 || v->digits > 18) return;
+    long long max = 1;
+    for (int k = 0; k < v->digits; k++) max *= 10;
+    max -= 1;                                           // at the item's scale
+    for (int k = v->decimal_places; k < scale; k++) max *= 10;
+    long long lit = rv;
+    for (int k = rs; k < scale; k++) lit *= 10;
+    long long min = v->is_signed ? -max : 0;
+    int truth = -1;                                     // 0 always false, 1 always true
+    bool eq = !strcmp(op, "="), ne = !strcmp(op, "<>");
+    if (lit > max || lit < min) {
+        bool above = lit > max;
+        if (eq) truth = 0;
+        else if (ne) truth = 1;
+        else if (!strcmp(op, ">") || !strcmp(op, ">=")) truth = above ? 0 : 1;
+        else truth = above ? 1 : 0;
+    } else if (lit == max && !strcmp(op, ">")) truth = 0;
+    else if (lit == max && !strcmp(op, "<=")) truth = 1;
+    else if (lit == min && !strcmp(op, "<")) truth = 0;
+    else if (lit == min && !strcmp(op, ">=")) truth = 1;
+    else if (rs > v->decimal_places) {
+        // a literal with more decimal places than the item can hold
+        long long unit = 1;
+        for (int k = v->decimal_places; k < scale; k++) unit *= 10;
+        if (lit % unit != 0) truth = eq ? 0 : ne ? 1 : -1;
+    }
+    if (truth < 0) return;
+    // the item's largest value (all nines), written with its decimal point
+    char bound[48];
+    {
+        int dp = v->decimal_places, n = 0;
+        int ip = v->digits - dp;
+        if (ip <= 0) bound[n++] = '0';
+        for (int k = 0; k < ip && n < 40; k++) bound[n++] = '9';
+        if (dp > 0) {
+            bound[n++] = '.';
+            for (int k = 0; k < dp && n < 46; k++) bound[n++] = (k < -ip) ? '0' : '9';
+        }
+        bound[n] = '\0';
+    }
+    const char *pic = pic_of(v) ? pic_of(v) : "?";
+    SourceLocation at = v->decl ? v->decl->loc : left->loc;
+    if (diag_warning(W_CONSTANT_CONDITION, right->loc, "The relation is always %s", truth ? "true" : "false")) {
+        if (lit > max) diag_note(at, "'%s' is at most %s (PICTURE %s)", v->name, bound, pic);
+        else if (lit < min) diag_note(at, "'%s' is at least %s%s (PICTURE %s)", v->name, v->is_signed ? "-" : "",
+                                      v->is_signed ? bound : "0", pic);
+        else if (lit == max) diag_note(at, "'%s' is never above %s (PICTURE %s)", v->name, bound, pic);
+        else if (lit == min) diag_note(at, "'%s' is never below %s (PICTURE %s)", v->name, v->is_signed ? right->name : "0", pic);
+        else diag_note(at, "'%s' has %d decimal place%s (PICTURE %s)", v->name, v->decimal_places,
+                       v->decimal_places == 1 ? "" : "s", pic);
+    }
+}
+
 static void emit_relation_false_jump(IrProgram *ir, AstNode *left, AstNode *right,
                                      const char *op, const char *target) {
     int fl = figurative_char(left), fr = figurative_char(right);
@@ -2468,6 +2593,7 @@ static void emit_relation_false_jump(IrProgram *ir, AstNode *left, AstNode *righ
         !(fl == '0' && fr == '0')) {
         // ZERO compared with a numeric operand is the number 0
         if (num_expr_valid(left) && num_expr_valid(right)) {
+            check_constant_relation(left, right, op);
             int W = max_leaf_scale(left);
             if (max_leaf_scale(right) > W) W = max_leaf_scale(right);
             W = W + 2 > 18 ? 18 : W + 2;
@@ -2695,7 +2821,10 @@ static void emit_cond_jump(IrProgram *ir, AstNode *cond, const char *target, boo
                 break;
             }
             AstNode *tree = condition_name_tree(cv, cond);
+            bool saved = in_condition_name;
+            in_condition_name = true;
             emit_cond_jump(ir, tree, target, when);
+            in_condition_name = saved;
             ast_free(tree);
             break;
         }
@@ -2818,9 +2947,85 @@ static void move_text_to_numeric(IrProgram *ir, const FieldRef *sf, VarInfo *dv,
 
 // MOVE src TO dest (one receiver). Receiver subscripts are evaluated just
 // before the data is moved.
+// Digits of a numeric literal: integer (without leading zeros) and decimal
+static void literal_digits(const char *t, int *int_digits, int *frac_digits, bool *negative) {
+    *int_digits = *frac_digits = 0;
+    *negative = *t == '-';
+    while (*t == '+' || *t == '-') t++;
+    while (*t == '0') t++;
+    bool frac = false;
+    for (; *t; t++) {
+        if (*t == '.') frac = true;
+        else if (isdigit((unsigned char)*t)) { if (frac) (*frac_digits)++; else (*int_digits)++; }
+    }
+}
+
+// Integer digit positions of a numeric item (99PP: 4)
+static int int_capacity(const VarInfo *v) {
+    int n = v->digits - v->decimal_places;
+    return n < 0 ? 0 : n;
+}
+
+// Warnings for a MOVE that loses characters or digits
+static void check_move(const AstNode *src, const VarInfo *dv, const AstNode *dest_node) {
+    if (dest_node->loop || dv->is_cond || dv->is_group || dv->size <= 0 || dv->occurs < 0) return;
+    bool dest_value = dv->is_numeric || is_num_edited(dv);
+    if (src->kind == AST_STRING_LITERAL && !dv->is_numeric) {
+        int len = (int)strlen(src->name);
+        if (len > dv->size && diag_warning(W_TRUNCATE, src->loc, "The literal \"%s\" has %d characters; '%s' holds %d, so it is truncated",
+                                           src->name, len, dv->name, dv->size))
+            note_item(dv);
+        return;
+    }
+    if (src->kind == AST_LITERAL_NUMBER && dest_value) {
+        int idig, fdig;
+        bool neg;
+        literal_digits(src->name, &idig, &fdig, &neg);
+        int fcap = dv->decimal_places > 0 ? dv->decimal_places : 0;
+        // decimal zeros at the end lose nothing
+        const char *dot = strchr(src->name, '.');
+        if (dot) {
+            const char *e = src->name + strlen(src->name);
+            while (e > dot + 1 && e[-1] == '0') { e--; fdig--; }
+        }
+        bool shown = false;
+        if (idig > int_capacity(dv))
+            shown = diag_warning(W_TRUNCATE, src->loc, "%s does not fit '%s': its high-order digits are lost", src->name, dv->name);
+        else if (fdig > fcap)
+            shown = diag_warning(W_TRUNCATE, src->loc, "%s has %d decimal place%s; '%s' keeps %d, so the rest are truncated",
+                                 src->name, fdig, fdig == 1 ? "" : "s", dv->name, fcap);
+        else if (neg && !dv->is_signed && dv->is_numeric)
+            shown = diag_warning(W_TRUNCATE, src->loc, "'%s' has no sign, so the value of %s is stored without its sign",
+                                 dv->name, src->name);
+        if (shown) note_item(dv);
+        return;
+    }
+    if (src->kind == AST_LITERAL_NUMBER && !dest_value) {
+        int len = (int)strlen(src->name);
+        if (len > dv->size && diag_warning(W_TRUNCATE, src->loc, "%s has %d characters; '%s' holds %d, so it is truncated",
+                                           src->name, len, dv->name, dv->size))
+            note_item(dv);
+        return;
+    }
+    if (src->kind != AST_IDENTIFIER || src->loop || !diag_warning_enabled(W_NARROWING)) return;
+    VarInfo *sv = find_item(src, false);
+    if (!sv || sv->is_cond || sv->occurs < 0) return;
+    if (sv->is_numeric && dv->is_numeric) {
+        if (int_capacity(sv) > int_capacity(dv) &&
+            diag_warning(W_NARROWING, src->loc, "'%s' has %d integer digits, '%s' %d: high-order digits can be lost",
+                         sv->name, int_capacity(sv), dv->name, int_capacity(dv)))
+            note_item(dv);
+    } else if (!dest_value && !sv->is_numeric && sv->size > dv->size &&
+               diag_warning(W_NARROWING, src->loc, "'%s' has %d characters, '%s' %d: the rest are truncated",
+                            sv->name, sv->size, dv->name, dv->size)) {
+        note_item(dv);
+    }
+}
+
 static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const char *src_lit) {
     VarInfo *dv = find_item(dest_node, true);
     if (!dv) return;
+    check_move(src, dv, dest_node);
     bool whole = !dest_node->loop && !dv->is_cond;
     bool dest_numeric = dv->is_numeric && whole;
     bool dest_num_edited = is_num_edited(dv) && whole;
@@ -3037,6 +3242,10 @@ static void lower_perform(IrProgram *ir, AstNode *node) {
         first = resolve_proc(node->extra);
         last = node->extra->next ? resolve_proc(node->extra->next) : first;
         if (first < 0 || last < 0) return;
+        if (last < first &&
+            diag_warning(W_PERFORM_RANGE, node->extra->next->loc, "'%s' comes before '%s', so control does not return from the range at its end",
+                         procs[last].name, procs[first].name))
+            diag_note(proc_loc_of(last), "'%s' is here", procs[last].name);
     }
     const char *form = node->name ? node->name : "ONCE";
 
@@ -3354,7 +3563,7 @@ static void lower_search(IrProgram *ir, AstNode *node) {
 
 static int find_file(const AstNode *ref) {
     for (int f = 0; f < num_files; f++)
-        if (strcasecmp(files[f].name, ref->name) == 0) return f;
+        if (strcasecmp(files[f].name, ref->name) == 0) { files[f].referenced = true; return f; }
     diag_error(ref->loc, "'%s' is not a file", ref->name);
     return -1;
 }
@@ -3395,6 +3604,18 @@ static void emit_perform_use(IrProgram *ir, int k) {
     p->imm = uses[k].first;
     p->proc_end = uses[k].last;
     p->digits = 4;                      // (for the Debug module: USE PROCEDURE)
+}
+
+// An I-O statement without AT END / INVALID KEY whose exception nothing
+// handles: no FILE STATUS item, no applicable USE procedure
+static void check_unhandled(const AstNode *stmt, int f, bool at_end) {
+    if (f < 0 || stmt->on_error || files[f].status_var >= 0 || files[f].is_sort) return;
+    if (use_for_file(files[f].name) >= 0) return;
+    for (int k = 1; k <= 4; k++) if (use_for_mode(k) >= 0) return;
+    if (diag_warning(W_UNCHECKED_IO, stmt->loc, "Nothing handles the %s condition of this statement; the run stops if it occurs",
+                     at_end ? "at end" : "invalid key"))
+        diag_note_plain("add %s, a FILE STATUS clause for '%s', or a USE procedure", at_end ? "AT END" : "INVALID KEY",
+                        files[f].name);
 }
 
 // Branches after an I-O statement on file f: on_error runs for statuses
@@ -3541,7 +3762,7 @@ static AstNode *environment_division = NULL;
 static int sort_file(AstNode *ref, bool report) {
     for (int f = 0; f < num_files; f++)
         if (strcasecmp(files[f].name, ref->name) == 0) {
-            if (files[f].is_sort) return f;
+            if (files[f].is_sort) { files[f].referenced = true; return f; }
             break;
         }
     if (report) diag_error(ref->loc, "'%s' is not a sort file (SD)", ref->name);
@@ -3798,6 +4019,7 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
                 }
                 emit_label(ir, skip);
             }
+            check_unhandled(node, f, !keyed);
             if (node->is_signed) lower_io_phrases(ir, node, 20, 29, f, 0);
             else lower_io_phrases(ir, node, 10, 19, f, 0);
             break;
@@ -3828,6 +4050,7 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
                 w->size = fi->variable ? rf.size : fi->max_size;   // fixed: the whole area
                 w->flags = dep ? 2 : 0;
                 debug_file_event(ir, node, f);
+                if (org == FILE_ORG_RELATIVE || org == FILE_ORG_INDEXED) check_unhandled(node, f, false);
                 lower_io_phrases(ir, node, 20, 29, f, 0);
                 break;
             }
@@ -3862,6 +4085,11 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
                 emit_io_jump(ir, 10, 99, skip);
                 move_from_item(ir, fi->key_var, relkey);
                 emit_label(ir, skip);
+            }
+            if ((org == FILE_ORG_RELATIVE || org == FILE_ORG_INDEXED) && !node->is_signed) {
+                AstNode bare = *node;
+                bare.on_error = NULL;
+                check_unhandled(&bare, f, false);
             }
             if (node->is_signed || (!node->on_error && !node->not_on_error)) {
                 lower_io_phrases(ir, node->is_signed ? node : &no_phrases, 20, 29, f, 0);
@@ -3921,6 +4149,8 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
                     emit_label(ir, skip);
                 }
             }
+            // DELETE in sequential access has no INVALID KEY phrase
+            if (start || fi->select->access != FILE_ACCESS_SEQUENTIAL) check_unhandled(node, f, false);
             lower_io_phrases(ir, node, 20, 29, f, 0);
             break;
         }
@@ -4795,8 +5025,18 @@ static void lower_accept(IrProgram *ir, AstNode *node) {
     }
 }
 
+static void lower_node_kind(IrProgram *ir, AstNode *node);
+
 static void lower_node(IrProgram *ir, AstNode *node) {
     if (!node) return;
+    int saved = stmt_kind_now;
+    if (node->kind != AST_SENTENCE && node->kind != AST_THEN_BLOCK && node->kind != AST_ELSE_BLOCK)
+        stmt_kind_now = node->kind;
+    lower_node_kind(ir, node);
+    stmt_kind_now = saved;
+}
+
+static void lower_node_kind(IrProgram *ir, AstNode *node) {
 
     switch (node->kind) {
         case AST_SENTENCE: {
@@ -5369,6 +5609,119 @@ static void reset_independent_segments(IrProgram *ir, AstNode *program) {
     #undef SEG
 }
 
+// Elementary WORKING-STORAGE items without VALUE that statements read but
+// none gives a value (-Wuninitialized)
+static void check_uninitialized(void) {
+    if (!diag_warning_enabled(W_UNINITIALIZED)) return;
+    // FILE STATUS items get their values from I-O statements, DEBUG-ITEM
+    // from the Debug module
+    for (int f = 0; f < num_files; f++)
+        if (files[f].status_var >= 0) vars[files[f].status_var].assigned = true;
+    if (debug_item >= 0) vars[debug_item].assigned = true;
+    // RENAMES (level 66) names storage of other items: not followed
+    for (int k = 0; k < num_vars; k++)
+        if (vars[k].level == 66)
+            for (int i = 0; i < num_vars; i++)
+                if (vars[i].record == vars[k].record) vars[i].assigned = true;
+    for (int i = 0; i < num_vars; i++) {
+        VarInfo *v = &vars[i];
+        if (v->assigned || !v->first_read.line || v->is_group || v->is_cond || v->is_index || v->is_filler ||
+            v->value || v->linkage || v->owner || !v->decl || v->qual_file >= 0 || v->redefines >= 0) continue;
+        bool skip = false;
+        for (int a = i; a >= 0 && !skip; a = vars[a].parent) {
+            const VarInfo *x = &vars[a];
+            if (x->assigned || (x != v && x->value) || x->redefines >= 0 || x->file >= 0 || x->linkage || x->owner ||
+                (x->decl && (x->decl->is_external || x->decl->is_global)))
+                skip = true;
+            for (int k = 0; k < num_vars && !skip; k++)
+                if (vars[k].redefines == a) skip = true;
+        }
+        if (skip) continue;
+        if (diag_warning(W_UNINITIALIZED, v->first_read, "'%s' is used, but no statement gives it a value", v->name))
+            diag_note(v->decl->loc, "'%s' is declared here without a VALUE clause", v->name);
+    }
+}
+
+// ── Control flow warnings ────────────────────────────────────────────────────
+// Statements after an unconditional transfer of control in the same
+// procedure (-Wunreachable), and procedures that are neither named by a
+// statement nor entered by falling through (-Wunused-procedure)
+
+static bool proc_ends[MAX_PROCS];             // its last statement transfers control
+
+static bool is_transfer(const AstNode *st, bool subprogram) {
+    if (st->kind == AST_STATEMENT_GOTO) return !st->extra;          // not GO TO ... DEPENDING
+    if (st->kind == AST_STATEMENT_STOP) return true;                // STOP RUN
+    if (st->kind == AST_STATEMENT_EXIT) return subprogram && st->name && strcmp(st->name, "PROGRAM") == 0;
+    return false;
+}
+
+static const char *transfer_text(const AstNode *st) {
+    return st->kind == AST_STATEMENT_GOTO ? "GO TO" : st->kind == AST_STATEMENT_STOP ? "STOP RUN" : "EXIT PROGRAM";
+}
+
+// The sentences of one procedure: true if control does not fall out of them
+static bool body_ends(AstNode *first, bool subprogram) {
+    const AstNode *transfer = NULL;
+    bool reported = false;
+    for (AstNode *s = first; s; s = s->next) {
+        if (s->kind != AST_SENTENCE) continue;
+        for (AstNode *st = s->children; st; st = st->next) {
+            if (transfer && !reported) {
+                reported = true;
+                if (diag_warning(W_UNREACHABLE, st->loc, "This statement is never executed"))
+                    diag_note(transfer->loc, "control never passes this %s", transfer_text(transfer));
+            }
+            if (!transfer && is_transfer(st, subprogram)) transfer = st;
+        }
+    }
+    return transfer != NULL;
+}
+
+static void check_flow(AstNode *program, bool subprogram) {
+    for (AstNode *div = program->children; div; div = div->next) {
+        if (div->kind != AST_DIVISION || strcasecmp(div->name, "PROCEDURE") != 0) continue;
+        bool falls = !body_ends(div->children, subprogram);     // sentences before the first procedure
+        int index = 0;
+        for (AstNode *n = div->children; n; n = n->next) {
+            if (n->kind != AST_SECTION && n->kind != AST_PARAGRAPH) continue;
+            int proc = index++;
+            if (proc >= MAX_PROCS) return;
+            proc_ends[proc] = body_ends(n->kind == AST_SECTION ? n->children : n->children, subprogram);
+            if (n->kind == AST_SECTION)
+                for (AstNode *c = n->children; c; c = c->next)
+                    if (c->kind == AST_PARAGRAPH && index < MAX_PROCS) proc_ends[index++] = body_ends(c->children, subprogram);
+        }
+        bool started = false;
+        for (int p = 0; p < num_procs && p < index; p++) {
+            if (proc_declarative[p]) continue;
+            if (!started) { started = true; falls = falls || p == 0; }
+            bool reached = proc_referenced[p] || falls;
+            // A section's own sentences: report the section only when it has some
+            bool has_body = false;
+            if (!reached) {
+                int k = 0;
+                for (AstNode *n = div->children; n && !has_body; n = n->next) {
+                    if (n->kind != AST_SECTION && n->kind != AST_PARAGRAPH) continue;
+                    if (k == p) {
+                        if (n->kind == AST_PARAGRAPH) has_body = true;
+                        else for (AstNode *c = n->children; c; c = c->next) has_body |= c->kind == AST_SENTENCE;
+                        break;
+                    }
+                    k++;
+                    if (n->kind == AST_SECTION)
+                        for (AstNode *c = n->children; c; c = c->next)
+                            if (c->kind == AST_PARAGRAPH) { if (k == p) { has_body = true; break; } k++; }
+                }
+                if (has_body)
+                    diag_warning(W_UNUSED_PROCEDURE, proc_loc[p], "%s '%s' is never performed and cannot be reached",
+                                 procs[p].is_section ? "Section" : "Paragraph", procs[p].name);
+            }
+            falls = reached && !proc_ends[p];
+        }
+    }
+}
+
 IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const IrUnit *unit) {
     IrProgram *ir = calloc(1, sizeof(IrProgram));
     if (!ir) return NULL;
@@ -5484,6 +5837,7 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
 
     // Lower PROCEDURE DIVISION: procedures laid out in source order
     num_procs = 0;
+    memset(proc_referenced, 0, sizeof(proc_referenced));
     current_section = NULL;
     sentence_end = NULL;
     for (AstNode *div = program->children; div; div = div->next) {
@@ -5590,6 +5944,15 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
 
     reset_independent_segments(ir, program);
     if (debugging_mode && num_debug_uses) insert_procedure_debugging(ir);
+
+    check_flow(program, ir->subprogram);
+    check_uninitialized();
+    // Files no statement names (shared files may be used by other programs)
+    for (int f = 0; f < num_files; f++) {
+        if (files[f].referenced || files[f].owner || files[f].external || !files[f].select) continue;
+        if (files[f].fd && files[f].fd->is_global) continue;
+        diag_warning(W_UNUSED_FILE, files[f].select->loc, "File '%s' is never opened or used", files[f].name);
+    }
 
     // An altered paragraph must consist of a GO TO statement
     for (int p = 0; p < num_procs; p++) {

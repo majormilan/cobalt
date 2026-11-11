@@ -101,12 +101,7 @@ static void print_help(const char *progname) {
     printf("  -i, --input FILE       Input COBOL source file (.cbl); several sources, or\n");
     printf("                         source and object arguments, make one run unit\n");
     printf("  --module               No main program: every program is a called one\n");
-    printf("  --flag-obsolete        Warn about the obsolete elements of COBOL-85 (FIPS flagging)\n\n");
-
-    printf("Output control:\n");
-    printf("  -o, --output FILE      Output file name (default: <input>.asm)\n");
-    printf("                         If -c is used: assembly file only\n");
-    printf("                         Without -c: assembly file + build instructions\n\n");
+    printf("\n");
 
     printf("Mode control:\n");
     printf("  -S, --std STANDARD     COBOL standard (default: COBOL-85)\n");
@@ -124,12 +119,11 @@ static void print_help(const char *progname) {
     printf("        display=stored|pretty        numeric DISPLAY format\n");
     printf("        sign=ascii|ebcdic            overpunched sign encoding\n");
     printf("        binary-truncate=yes|no       COMP items limited to PICTURE digits\n");
-    printf("  -X, --strictness LEVEL Strictness level (default: normal)\n");
-    printf("      Supported:\n");
-    printf("        relaxed\n");
-    printf("        normal         (default)\n");
-    printf("        pedantic\n");
-    printf("        ibm-strict\n");
+    printf("  -X, --strictness LEVEL What is done with elements outside COBOL-85 (default: normal)\n");
+    printf("        relaxed        accepted; reference format (areas, column 72) not checked\n");
+    printf("        normal         accepted, each with a warning (-Wextension)\n");
+    printf("        pedantic       errors; obsolete elements are flagged too (-Wobsolete)\n");
+    printf("        ibm-strict     as pedantic, but IBM Enterprise COBOL's extensions are accepted\n");
     printf("  -E, --extensions EXT   Enable compiler extensions (default: none)\n");
     printf("      Supported:\n");
     printf("        none           (default)\n");
@@ -138,6 +132,19 @@ static void print_help(const char *progname) {
     printf("  -F, --free             Free format source\n");
     printf("  -I DIR                 Copy library directory (also: COBCPY=dir:dir...)\n");
     printf("  -a                     Always dump AST (debug parsing)\n\n");
+
+    printf("Diagnostics:\n");
+    printf("  -Wname, -Wno-name      Turn the warning on or off (names below)\n");
+    printf("  -Wall                  The warnings that are on by default\n");
+    printf("  -Wextra                All warnings, including those marked (-Wextra)\n");
+    printf("  -Werror[=name]         Warnings (or this one) are errors\n");
+    printf("  -w                     No warnings\n");
+    printf("  --flag-obsolete        The obsolete elements of COBOL-85 (FIPS flagging; = -Wobsolete)\n");
+    printf("  -fmax-errors=N         Stop after N errors\n");
+    printf("  -fdiagnostics-color[=always|never|auto]  Colors (default: on a terminal)\n");
+    printf("      Warnings:\n");
+    diag_print_warning_help();
+    printf("\n");
 
     printf("Output (the default is an executable, assembled and linked by cobalt):\n");
     printf("  -o FILE                Output file (default: the input name without .cbl,\n");
@@ -319,6 +326,7 @@ int main(int argc, char **argv) {
         char *source = read_file(sources[k]);
         int file = diag_add_file(sources[k], source, -1, (SourceLocation){0});
         const char *filename = diag_file_name(file);
+        if (!mode.free_format) lexer_check_columns(source, filename);
         lexer_set_debugging_lines(!mode.free_format && lexer_debugging_mode(source));
         if (!mode.free_format) {
             char *converted = lexer_reference_format(source);
