@@ -27,6 +27,9 @@ X_CARDS = {
     "068": "8192",              # OBJECT-COMPUTER MEMORY SIZE (characters)
     "084": "STANDARD",          # LABEL RECORDS ARE ...
     "073": "C01",               # implementor-name of channel 1 (WRITE ADVANCING)
+    "053": "RERUN EVERY 1000 RECORDS", # I-O-CONTROL RERUN clause
+    "074": "FILE-ID",           # VALUE OF clause: implementor-name, value
+    "075": '"TFIL"',
     "086": "PIC X(8)",          # PICTURE of a file label data item (VALUE OF)
     # The 51 characters of the COBOL set in native (ASCII) order, without the
     # quote ($ twice, as in the suite's sample), ascending and descending

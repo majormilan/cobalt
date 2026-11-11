@@ -48,6 +48,7 @@ typedef struct {
     Extensions   extensions;
     bool         fixed_format;      // default true for COBOL-85
     bool         free_format;       // default false
+    bool         flag_obsolete;     // warn about the obsolete elements (FIPS flagging)
 } CompilerMode;
 
 // Helpers for printing / errors

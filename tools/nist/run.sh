@@ -47,7 +47,10 @@ for cbl in "$SRC"/$MODULE*.CBL; do
     if [ "$COMPILER" = gnucobol ]; then
         timeout 60 cobc -x -std=cobol85 -o "$dir/$name" "$cbl" > "$dir/compile.log" 2>&1
     elif [ -z "$ASSEMBLER" ]; then
-        timeout 20 ./bin/cobalt $COBALT_FLAGS -i "$cbl" $extra -o "$dir/$name" > "$dir/compile.log" 2>&1
+        # FIPS flagging programs: with the obsolete elements flagged
+        flagging=""
+        grep -aqi "Message expected for \(above\|following\) statement" "$cbl" && flagging=--flag-obsolete
+        timeout 20 ./bin/cobalt $COBALT_FLAGS $flagging -i "$cbl" $extra -o "$dir/$name" > "$dir/compile.log" 2>&1
     else
         timeout 20 ./bin/cobalt $COBALT_FLAGS -A -i "$cbl" -o "$dir/$name.asm" > "$dir/compile.log" 2>&1 &&
         $ASSEMBLER -f elf64 "$dir/$name.asm" -o "$dir/$name.o" >> "$dir/compile.log" 2>&1 &&
@@ -123,7 +126,10 @@ for cbl in "$SRC"/$MODULE*.CBL; do
     elif grep -aqi "Message expected for \(above\|following\) statement" "$SRC/$name.CBL"; then
         # FIPS flagging programs check compiler messages (OBSOLETE,
         # NON-CONFORMING ...), which COBALT does not issue: not counted
-        printf "%-8s FLAGGING      (checks compiler flagging messages: not applicable)\n" "$name"
+        # The OBSOLETE messages it expects (tools/nist/flags.py)
+        read fp ff fu fs <<< "$(python3 -I tools/nist/flags.py "$cbl" "$dir/compile.log")"
+        passed=$((passed + fp)); failed=$((failed + ff))
+        printf "%-8s FLAGGING      %3d passed, %3d failed (OBSOLETE); %d NON-CONFORMING not checked, %d other\n" "$name" $fp $ff $fu $fs
     else
         printf "%-8s NO-REPORT     (program ran but wrote no report.log)\n" "$name"
     fi

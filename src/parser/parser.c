@@ -109,6 +109,12 @@ static char *tok_value(void) {
     return s;
 }
 
+// FIPS flagging: an obsolete element of COBOL-85 (with --flag-obsolete)
+static void flag_obsolete(int line, int col, const char *what) {
+    if (current_lexer->mode->flag_obsolete)
+        cobalt_warn_loc(current_lexer->original_source, line, col, "OBSOLETE: %s", what);
+}
+
 static void expect(TokenKind k, const char *msg) {
     if (tok.kind != k) {
         if (!parser_panic_mode) { // Only report first error in a sequence
@@ -182,6 +188,7 @@ static AstNode *parse_identification_paragraph(void) {
 
     SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
     char *name = tok_to_str();
+    if (is_known_ident_para(name)) flag_obsolete(tok.line, tok.column, "the paragraph is obsolete");
     next();
     expect(TOK_PERIOD, ".");
     if (parser_panic_mode) { free(name); return NULL; }
@@ -1481,6 +1488,7 @@ static AstNode *parse_statement(void) {
         // STOP literal: shows the literal to the operator and suspends the
         // run; with no operator to resume it, execution continues
         if (tok.kind == TOK_STRING || tok.kind == TOK_NUMBER || is_figurative(tok.kind)) {
+            flag_obsolete(loc.line, loc.column, "STOP literal");
             AstNode *display = ast_new(AST_STATEMENT_DISPLAY, NULL, loc);
             display->children = parse_value_operand();
             return display;
@@ -1824,7 +1832,10 @@ static AstNode *parse_statement(void) {
         AstNode *tail = NULL;
         while (is_procedure_name_token()) list_append(&go->children, &tail, parse_procedure_name());
         // GO TO without a procedure: its target is set by an ALTER statement
-        if (!go->children && tok.kind == TOK_PERIOD) return go;
+        if (!go->children && tok.kind == TOK_PERIOD) {
+            flag_obsolete(loc.line, loc.column, "GO TO without a procedure-name");
+            return go;
+        }
         if (!go->children) { ast_free(go); arith_error("Expected procedure name after GO TO"); return NULL; }
         if (tok.kind == TOK_DEPENDING) {
             next();
@@ -1945,6 +1956,7 @@ static AstNode *parse_statement(void) {
     // ─── ALTER ───────────────────────────────────────────────────────────────
     // ALTER {paragraph TO [PROCEED TO] procedure}+
     else if (tok.kind == TOK_ALTER) {
+        flag_obsolete(loc.line, loc.column, "ALTER");
         next();
         AstNode *alter = ast_new(AST_STATEMENT_ALTER, NULL, loc);
         AstNode *tail = NULL;
@@ -2270,7 +2282,10 @@ static AstNode *parse_statement(void) {
                        tok_is_word("NO") || tok_is_word("REWIND") || tok_is_word("LOCK") ||
                        tok_is_word("REVERSED") || tok.kind == TOK_FOR || tok_is_word("REMOVAL")) {
                     if (tok_is_word("REEL") || tok_is_word("UNIT")) file->digits |= 1;
-                    else if (tok_is_word("REVERSED")) file->digits |= 1;
+                    else if (tok_is_word("REVERSED")) {
+                        file->digits |= 1;
+                        flag_obsolete(tok.line, tok.column, "OPEN REVERSED");
+                    }
                     else if (tok_is_word("REWIND")) file->digits |= 2;
                     else if (tok_is_word("LOCK")) file->digits |= 4;
                     next();
@@ -2281,6 +2296,13 @@ static AstNode *parse_statement(void) {
         }
         if (!stmt->children) { ast_free(stmt); arith_error(is_open ? "Expected OPEN mode and file" : "Expected file name"); return NULL; }
         return stmt;
+    }
+    // ─── ENTER language-name [routine-name]: no other language here
+    else if (tok.kind == TOK_ENTER) {
+        flag_obsolete(loc.line, loc.column, "ENTER");
+        next();
+        while (tok.kind == TOK_IDENT) next();
+        return ast_new(AST_STATEMENT_CONTINUE, NULL, loc);
     }
     // ─── CALL {identifier | literal} [USING {[BY REFERENCE] id... | BY CONTENT
     //     id...}...] [ON OVERFLOW s | [ON EXCEPTION s] [NOT ON EXCEPTION s]] [END-CALL]
@@ -2705,6 +2727,7 @@ static AstNode *parse_use(void) {
             if (!u->children) arith_error("Expected file names or INPUT, OUTPUT, I-O or EXTEND");
         }
     } else if (tok.kind == TOK_FOR) {
+        flag_obsolete(loc.line, loc.column, "USE FOR DEBUGGING (the Debug module)");
         u->name = strdup("DEBUGGING");
         next();
         if (tok_is_word("DEBUGGING")) next();
@@ -2769,6 +2792,7 @@ static void parse_procedure_body(AstNode *div) {
                 sec = ast_new(AST_SECTION, name, loc);
                 if (tok.kind == TOK_NUMBER) {
                     // segment-number (Segmentation module): kept in digits
+                    flag_obsolete(tok.line, tok.column, "segment-number (the Segmentation module)");
                     char *seg = tok_to_str();
                     sec->digits = atoi(seg);
                     sec->decimal_places = 1;      // a segment number was given
@@ -3196,6 +3220,13 @@ static AstNode *parse_file_section(void) {
                 }
                 continue;
             }
+            if (tok_is_word("LABEL") || (tok.kind == TOK_VALUE && peek_token().kind == TOK_OF) ||
+                (tok.kind == TOK_DATA && (peek_token().kind == TOK_RECORD || peek_token().kind == TOK_IDENT))) {
+                flag_obsolete(tok.line, tok.column, tok.kind == TOK_VALUE ? "VALUE OF" :
+                              tok.kind == TOK_DATA ? "DATA RECORDS" : "LABEL RECORDS");
+                next();
+                continue;
+            }
             if (tok_is_word("GLOBAL") || tok_is_word("EXTERNAL")) {
                 if (tok_is_word("GLOBAL")) fd->is_global = true;
                 else fd->is_external = true;
@@ -3323,6 +3354,14 @@ static AstNode *parse_division(void) {
             if (in_file_control && tok.kind == TOK_SELECT) {
                 AstNode *sel = parse_select();
                 if (sel) list_append(&div->children, &sel_tail, sel);
+                continue;
+            }
+            if (tok_is_word("MEMORY") || tok_is_word("RERUN") || tok_is_word("MULTIPLE") ||
+                tok_is_word("SEGMENT-LIMIT")) {
+                flag_obsolete(tok.line, tok.column, tok_is_word("MEMORY") ? "MEMORY SIZE" :
+                              tok_is_word("RERUN") ? "RERUN" : tok_is_word("MULTIPLE") ? "MULTIPLE FILE TAPE" :
+                              "SEGMENT-LIMIT (the Segmentation module)");
+                next();
                 continue;
             }
             if (tok_is_word("DEBUGGING") && peek_token().kind == TOK_MODE) {

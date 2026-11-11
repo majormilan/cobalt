@@ -100,7 +100,8 @@ static void print_help(const char *progname) {
     printf("Required:\n");
     printf("  -i, --input FILE       Input COBOL source file (.cbl); several sources, or\n");
     printf("                         source and object arguments, make one run unit\n");
-    printf("  --module               No main program: every program is a called one\n\n");
+    printf("  --module               No main program: every program is a called one\n");
+    printf("  --flag-obsolete        Warn about the obsolete elements of COBOL-85 (FIPS flagging)\n\n");
 
     printf("Output control:\n");
     printf("  -o, --output FILE      Output file name (default: <input>.asm)\n");
@@ -212,6 +213,7 @@ int main(int argc, char **argv) {
         {"asm",         no_argument,       0, 'A'},
         {"strip",       no_argument,       0, 0},
         {"module",      no_argument,       0, 'M'},
+        {"flag-obsolete", no_argument,     0, 0},
         {"help",        no_argument,       0, 0}, // Handled separately
         {0, 0, 0, 0}
     };
@@ -256,6 +258,7 @@ int main(int argc, char **argv) {
                     return 0;
                 }
                 if (strcmp(long_options[opt_index].name, "strip") == 0) strip = true;
+                if (strcmp(long_options[opt_index].name, "flag-obsolete") == 0) mode.flag_obsolete = true;
                 break;
             default:
                 cobalt_error("Unknown option -%c", optopt);
