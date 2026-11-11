@@ -119,14 +119,23 @@ static bool words_equal(const char *ta, const Word *a, const char *tb, const Wor
 }
 
 // Line (1-based) and column of offset p in t, counting line markers
+// Where offset p of t is (line and column from 1). A cursor carries on from
+// the previous position asked for, so walking forward through a text is linear
+typedef struct { size_t at, line_start; int line; } Cursor;
+
+static void position_at(const char *t, Cursor *cur, size_t p, int *line, int *col) {
+    if (p < cur->at) *cur = (Cursor){ 0, 0, 1 };
+    if (cur->line == 0) cur->line = 1;
+    for (size_t k = cur->at; k < p && t[k]; k++)
+        if (t[k] == '\n') { cur->line++; cur->line_start = k + 1; }
+    cur->at = p;
+    *line = cur->line;
+    *col = (int)(p - cur->line_start) + 1;
+}
+
 static void position(const char *t, size_t p, int *line, int *col) {
-    int l = 1;
-    size_t ls = 0;
-    for (size_t k = 0; k < p && t[k]; k++) {
-        if (t[k] == '\n') { l++; ls = k + 1; }
-    }
-    *line = l;
-    *col = (int)(p - ls) + 1;
+    Cursor cur = {0};
+    position_at(t, &cur, p, line, col);
 }
 
 // ── Comment entries ─────────────────────────────────────────────────────────
@@ -459,12 +468,13 @@ static bool expand(Buf *out, const char *t, const char *filename, int depth, con
     tokenize(t, &ws);
     size_t last = 0;
     bool pseudo = false, ok = true;
+    Cursor cur = {0};
     for (int i = 0; i < ws.n; i++) {
         Word *w = &ws.w[i];
         if (w->kind == W_PSEUDO) { pseudo = !pseudo; continue; }
         if (pseudo || !word_is(t, w, "COPY")) continue;
         int line, col;
-        position(t, w->start, &line, &col);
+        position_at(t, &cur, w->start, &line, &col);
         int j = i + 1;
         if (j >= ws.n || (ws.w[j].kind != W_WORD && ws.w[j].kind != W_LIT)) {
             cobalt_error_loc(depth ? NULL : t, line, col, "Expected a text-name after COPY");
@@ -519,7 +529,7 @@ static bool expand(Buf *out, const char *t, const char *filename, int depth, con
         last = ws.w[j].end;
         if (depth == 0) {
             int l, c;
-            position(t, last, &l, &c);
+            position_at(t, &cur, last, &l, &c);
             char mark[48];
             snprintf(mark, sizeof(mark), "%c%d:%d%c", PP_MARK, l, c, PP_MARK);
             puts_(out, mark);

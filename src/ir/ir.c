@@ -268,11 +268,11 @@ typedef struct {
     bool is_section;
 } ProcInfo;
 
-static ProcInfo procs[1024];
+static ProcInfo procs[MAX_PROCS];
 static int num_procs = 0;
 static const char *current_section = NULL;   // during lowering
 static int current_proc = -1;                // procedure being lowered
-static bool altered[1024];                   // paragraphs named in an ALTER statement
+static bool altered[MAX_PROCS];                   // paragraphs named in an ALTER statement
 static const char *sentence_end = NULL;      // label after the current sentence
 
 static IrInstr *new_instr(IrOpcode op, const char *var_name, const char *lit_name,
@@ -4977,8 +4977,8 @@ static void emit_debug_call(IrProgram *ir, int u, const char *name, int line, co
     emit_label(ir, off);
 }
 
-static bool proc_declarative[1024];
-static int proc_line[1024];
+static bool proc_declarative[MAX_PROCS];
+static int proc_line[MAX_PROCS];
 
 // Debugging procedures for procedure p: a bit per debug use
 static unsigned debug_uses_of_proc(int p) {
@@ -5215,17 +5215,17 @@ static void debug_after_statement(IrProgram *ir, AstNode *stmt) {
 // (GO TO, PERFORM, or falling into it): its altered GO TO statements go to
 // their first targets again
 static void reset_independent_segments(IrProgram *ir, AstNode *program) {
-    static int segment[1024];
+    static int segment[MAX_PROCS];
     int n = 0;
     for (AstNode *div = program->children; div; div = div->next) {
         if (div->kind != AST_DIVISION || strcasecmp(div->name, "PROCEDURE") != 0) continue;
         for (AstNode *x = div->children; x; x = x->next) {
             if (x->kind != AST_SECTION && x->kind != AST_PARAGRAPH) continue;
             int seg = x->kind == AST_SECTION && x->decimal_places ? x->digits : 0;
-            if (n < 1024) segment[n++] = seg;
+            if (n < MAX_PROCS) segment[n++] = seg;
             if (x->kind == AST_SECTION)
                 for (AstNode *c = x->children; c; c = c->next)
-                    if (c->kind == AST_PARAGRAPH && n < 1024) segment[n++] = seg;
+                    if (c->kind == AST_PARAGRAPH && n < MAX_PROCS) segment[n++] = seg;
         }
     }
     bool any = false;
@@ -5385,7 +5385,7 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
         if (div->kind != AST_DIVISION || strcasecmp(div->name, "PROCEDURE") != 0) continue;
         for (AstNode *n = div->children; n; n = n->next) {
             if (n->kind == AST_SECTION || n->kind == AST_PARAGRAPH) {
-                if (num_procs >= 1024) { cobalt_error("Too many procedures (1024 limit)"); break; }
+                if (num_procs >= MAX_PROCS) { cobalt_error("Too many procedures (%d limit)", MAX_PROCS); break; }
                 proc_declarative[num_procs] = n->kind == AST_SECTION && n->is_signed;
                 proc_line[num_procs] = n->loc.line;
                 procs[num_procs++] = (ProcInfo){ n->name, NULL, n->kind == AST_SECTION };
@@ -5393,7 +5393,7 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
             if (n->kind == AST_SECTION) {
                 for (AstNode *p = n->children; p; p = p->next) {
                     if (p->kind != AST_PARAGRAPH) continue;
-                    if (num_procs >= 1024) { cobalt_error("Too many procedures (1024 limit)"); break; }
+                    if (num_procs >= MAX_PROCS) { cobalt_error("Too many procedures (%d limit)", MAX_PROCS); break; }
                     proc_declarative[num_procs] = n->is_signed;
                     proc_line[num_procs] = p->loc.line;
                     procs[num_procs++] = (ProcInfo){ p->name, n->name, false };
@@ -5485,7 +5485,7 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
     if (debugging_mode && num_debug_uses) insert_procedure_debugging(ir);
 
     // An altered paragraph must consist of a GO TO statement
-    for (int p = 0; p < num_procs && p < 1024; p++) {
+    for (int p = 0; p < num_procs; p++) {
         if (!altered[p]) continue;
         bool has_goto = false;
         for (IrInstr *i = ir->head; i && !has_goto; i = i->next)

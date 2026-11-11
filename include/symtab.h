@@ -44,6 +44,7 @@ typedef struct Symbol {
     // --- Other flags ---
     bool is_declared;   // True if fully declared (not just referenced)
     bool is_used;       // True if referenced in executable code
+    struct Symbol *condition_of; // level 88: the item it is a condition of
     
     // Pointer to next symbol in a list (e.g., for hash table chaining)
     struct Symbol *next; 

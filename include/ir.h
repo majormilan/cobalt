@@ -15,6 +15,8 @@ typedef struct IrInstr IrInstr;
 #define IR_NUM_SIGN_SEPARATE 8  // DISPLAY: the sign is a separate + or - character
 #define IR_NUM_NOTRUNC 16   // COMP: limited by its bytes, not its PICTURE digits
 
+#define MAX_PROCS 65536     // sections and paragraphs of a program
+
 // Program-wide runtime settings passed to runtime_init (runtime/ABI.md)
 #define IR_RT_SIGN_EBCDIC 1 // overpunched signs '{' 'A'..'I' / '}' 'J'..'R'
 

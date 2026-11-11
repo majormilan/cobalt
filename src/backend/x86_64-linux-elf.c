@@ -1323,10 +1323,10 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     // Target slots of alterable GO TO statements: an unaltered GO TO without
     // a procedure ends the run
     {
-        static bool slot_done[1024];
+        static bool slot_done[MAX_PROCS];
         memset(slot_done, 0, sizeof(slot_done));
         for (i = ir->head; i; i = i->next) {
-            if (i->op != IR_GOTO_ALTERABLE || i->imm < 0 || i->imm >= 1024 || slot_done[i->imm]) continue;
+            if (i->op != IR_GOTO_ALTERABLE || i->imm < 0 || i->imm >= MAX_PROCS || slot_done[i->imm]) continue;
             slot_done[i->imm] = true;
             if (i->proc_end >= 0) fprintf(f, "align 8\nG_%lld: dq P_%d\n", i->imm, i->proc_end);
             else fprintf(f, "align 8\nG_%lld: dq runtime_exit\n", i->imm);

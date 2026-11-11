@@ -291,6 +291,12 @@ static AstNode *parse_var_decl(void) {
         if (!sym) sym = symtab_declare_symbol(current_symtab, name, SYM_VAR, loc);
         if (sym) sym->level = level_num;
     }
+    {
+        // The conditional variable of the condition-names that follow
+        static Symbol *conditional;
+        if (level_num != 88) conditional = sym;
+        else if (sym && sym != conditional) sym->condition_of = conditional;
+    }
 
     free(name);
     var->text = level_str; // Keep level_str in AST node for now, or just free it.
@@ -3017,6 +3023,10 @@ static void parse_special_names(AstNode *div, AstNode **tail) {
     if (tok.kind == TOK_PERIOD) next();
 }
 
+// Data items named in FILE-CONTROL (declared later): used
+static char **forward_names;
+static int num_forward_names, cap_forward_names;
+
 // SELECT [OPTIONAL] file ASSIGN [TO] name [ORGANIZATION [IS] [LINE|RECORD]
 //   SEQUENTIAL] [ACCESS [MODE] [IS] SEQUENTIAL] [[FILE] STATUS [IS] item]
 //   [RESERVE n [AREA|AREAS]] ... .
@@ -3024,6 +3034,13 @@ static void parse_special_names(AstNode *div, AstNode **tail) {
 // (FILE STATUS, keys): resolved during IR lowering
 static AstNode *parse_forward_identifier(void) {
     AstNode *id = parse_procedure_name();
+    if (id->name) {
+        if (num_forward_names == cap_forward_names) {
+            cap_forward_names = cap_forward_names ? cap_forward_names * 2 : 16;
+            forward_names = realloc(forward_names, cap_forward_names * sizeof(char *));
+        }
+        forward_names[num_forward_names++] = strdup(id->name);
+    }
     if (id->extra) {
         id->extra->next = NULL;
         AstNode *tail = id->extra;
@@ -3550,6 +3567,11 @@ AstNode *parse_program(Lexer *l) {
         last = prog;
     }
 
+    for (int k = 0; k < num_forward_names; k++) {
+        symtab_mark_symbol_as_used(symtab_resolve_symbol(current_symtab, forward_names[k]));
+        free(forward_names[k]);
+    }
+    num_forward_names = 0;
     symtab_check_unused_symbols(current_symtab);
     symtab_free(current_symtab);
     return first;

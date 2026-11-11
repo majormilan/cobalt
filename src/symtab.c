@@ -102,6 +102,7 @@ Symbol *symtab_declare_symbol(SymbolTable *table, const char *name, SymbolKind k
     new_sym->loc = loc;
     new_sym->is_declared = true; // Mark as declared
     new_sym->is_used = false; // Initially not used
+    new_sym->condition_of = NULL;
 
     unsigned int index = hash_string(name);
     new_sym->next = table->current_scope->entries[index];
@@ -144,10 +145,10 @@ Symbol *symtab_find_symbol_in_current_scope(SymbolTable *table, const char *name
     return NULL;
 }
 
+// A condition-name in use uses its conditional variable too
 void symtab_mark_symbol_as_used(Symbol *sym) {
-    if (sym) {
+    for (int depth = 0; sym && depth < 4; sym = sym->condition_of, depth++)
         sym->is_used = true;
-    }
 }
 
 // Function to parse a PIC string and populate symbol attributes
