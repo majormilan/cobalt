@@ -1,6 +1,23 @@
+<div align="center">
+
 # cobalt
 
 **A COBOL-85 compiler with its own assembler, linker and runtime.**
+
+[![CI](https://github.com/majormilan/cobalt/actions/workflows/ci.yml/badge.svg)](https://github.com/majormilan/cobalt/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/badge/release-0.1.0--alpha-orange)](https://github.com/majormilan/cobalt/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![COBOL-85](https://img.shields.io/badge/COBOL-85-005f87)](docs/guide/03-language.md)
+[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20Windows-lightgrey)](docs/guide/08-platforms.md)
+[![Architecture](https://img.shields.io/badge/arch-x86--64-lightgrey)](docs/guide/08-platforms.md)
+
+[Getting started](docs/guide/01-getting-started.md) ·
+[User guide](docs/guide/README.md) ·
+[Examples](examples) ·
+[Downloads](https://github.com/majormilan/cobalt/releases) ·
+[Changelog](CHANGELOG.md)
+
+</div>
 
 cobalt compiles COBOL source into native executables in one step, using only
 itself: the x86-64 assembler and the linker are built in, and the runtime is
@@ -14,14 +31,40 @@ $ ./hello
 Hello, world!
 ```
 
-> **Status: under development.** cobalt is working toward its first release,
-> **0.1.0-alpha**, a feature complete alpha for COBOL-85. The language is
-> largely done and checked with the NIST test suite, but the release work
-> (CI, packaging) is not finished, and options and formats may still
-> change. It is not yet meant for production use.
+<table>
+<tr>
+<td width="33%" valign="top">
+
+**The whole of COBOL-85**<br>
+Every module of the standard but Communication, at its highest level,
+checked with the NIST CCVS85 suite; strictness levels, vendor dialects and
+FIPS flagging.
+
+</td>
+<td width="33%" valign="top">
+
+**Diagnostics like a modern compiler**<br>
+The source line, the place underlined, notes and "did you mean"; named
+warnings; one run reports the errors of the whole program.
+
+</td>
+<td width="33%" valign="top">
+
+**One file, no dependencies**<br>
+No assembler, linker or C library needed to compile; the executables need
+nothing installed to run, and hold only the runtime they use.
+
+</td>
+</tr>
+</table>
+
+> **Status: 0.1.0-alpha.** The first release: a feature complete alpha for
+> COBOL-85 on Linux and Windows. Options, messages and file formats may still
+> change before 1.0; it is not yet meant for production use.
 
 ## Contents
 
+- [Downloads](#downloads)
 - [What works today](#what-works-today)
 - [Targets and platforms](#targets-and-platforms)
 - [Building from source](#building-from-source)
@@ -33,6 +76,19 @@ Hello, world!
 - [Known limitations](#known-limitations)
 - [Documentation](#documentation)
 - [License](#license)
+
+## Downloads
+
+Each [release](https://github.com/majormilan/cobalt/releases) has a package
+for each system, with the README, the license, the release notes, the user
+guide and the examples:
+
+| System | Package |
+|---|---|
+| Linux, x86-64 | `cobalt-<version>-linux-x86_64.tar.gz`: a static `cobalt`, runs on any distribution |
+| Windows, x86-64 | `cobalt-<version>-windows-x86_64.zip`: `cobalt.exe` |
+
+`SHA256SUMS` lists their checksums. Or build cobalt from source (below).
 
 ## What works today
 
@@ -192,11 +248,6 @@ DEBUGGING MODE.
 | `python3 -I tools/bench/compile.py DIR` | writes the compile-time benchmark program into DIR |
 
 ## Roadmap
-
-### For 0.1.0-alpha
-
-The language, both platforms, the documentation and the release builds
-(`make dist`) are done; what is left is tagging the release.
 
 ### After the alpha
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0-alpha (unreleased)
+## 0.1.0-alpha (2026-11-11)
 
 The first release: a COBOL-85 compiler for Linux and Windows on x86-64,
 feature complete for the standard except the Communication module. It is an
@@ -49,6 +49,13 @@ alpha: options, messages and file formats may still change.
   contents of numeric items.
 - File names mapped through the environment (`DD_name`, `dd_name`, `name`,
   `COB_FILE_PATH`); exit status from RETURN-CODE.
+
+### Executables
+
+- Small and self-contained: a program links only the runtime code it uses.
+- Compiled with constant folding across statements, values kept in
+  registers, initial values written into storage when compiling, compact
+  calls to the runtime; numeric loops kept in registers.
 
 ### Toolchain and platforms
 
