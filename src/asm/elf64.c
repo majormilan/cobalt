@@ -37,8 +37,16 @@ typedef struct {
 } SectionHeader;
 
 static void le16(Bytes *b, uint16_t v) { uint8_t p[2] = { (uint8_t)v, (uint8_t)(v >> 8) }; bytes_put(b, p, 2); }
-static void le32(Bytes *b, uint32_t v) { for (int k = 0; k < 4; k++) bytes_byte(b, (uint8_t)(v >> (8 * k))); }
-static void le64(Bytes *b, uint64_t v) { for (int k = 0; k < 8; k++) bytes_byte(b, (uint8_t)(v >> (8 * k))); }
+static void le32(Bytes *b, uint32_t v) {
+    uint8_t t[4];
+    for (int k = 0; k < 4; k++) t[k] = (uint8_t)(v >> (8 * k));
+    bytes_put(b, t, 4);
+}
+static void le64(Bytes *b, uint64_t v) {
+    uint8_t t[8];
+    for (int k = 0; k < 8; k++) t[k] = (uint8_t)(v >> (8 * k));
+    bytes_put(b, t, 8);
+}
 
 static uint32_t add_string(Bytes *tab, const char *s) {
     uint32_t at = (uint32_t)tab->len;

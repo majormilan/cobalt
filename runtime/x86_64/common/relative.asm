@@ -467,3 +467,11 @@ section .rodata
 ; cobrt_os_open mode for each OPEN mode: INPUT reads, OUTPUT creates (read
 ; and write: WRITE checks existing slots), I-O and EXTEND update
 rel_open_modes: dq 0, OS_OPEN_READ, OS_OPEN_RW_TRUNC, OS_OPEN_READWRITE, OS_OPEN_READWRITE
+
+; The operations of the organization, for file.asm (FCB_ORG)
+global cobrt_rel_ops
+section .rodata
+align 8
+cobrt_rel_ops:
+    dq cobrt_rel_open, cobrt_rel_close, cobrt_rel_read, cobrt_rel_write
+    dq cobrt_rel_rewrite, cobrt_rel_delete, cobrt_rel_start

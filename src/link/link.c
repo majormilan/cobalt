@@ -276,7 +276,8 @@ static int compare_u64(const void *a, const void *b) {
 }
 
 // Symbol table and section headers, for debuggers and objdump. Function
-// labels in code get the function type and a size reaching the next one.
+// labels in code get the function type and a size reaching the next one;
+// local labels (L_..., name.local) are left out.
 static void append_section_headers(Linker *lk, Bytes *img, const Layout *L, uint8_t *ehdr) {
     Bytes syms = {0}, str = {0}, shstr = {0};
     uint8_t zero[24] = {0};
@@ -314,6 +315,7 @@ static void append_section_headers(Linker *lk, Bytes *img, const Layout *L, uint
                 if (s.type == STT_SECTION || s.type == STT_FILE || s.shndx == SHN_UNDEF) continue;
                 if ((s.bind == STB_LOCAL) != (pass == 0)) continue;
                 if (s.shndx >= o->nsec || o->sec[s.shndx].cls < 0) continue;
+                if (!is_function_label(s.name)) continue;      // local labels: of no use to a debugger
                 uint8_t e[24] = {0};
                 uint64_t addr = o->sec[s.shndx].addr + s.value;
                 int type = s.type;

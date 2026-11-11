@@ -81,8 +81,17 @@ static void emit_addr(FILE *f, const char *reg, const char *name) {
         if (*rest) fprintf(f, "    add %s, 0%s\n", reg, rest);
         return;
     }
+    // a static address: below 2 GiB (absolute 32-bit addressing), so
+    // mov r32, imm32 (5 bytes, zero-extended) does what lea r64, [disp32]
+    // does in 8
+    static const char *const r64[] = { "rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", NULL };
+    static const char *const r32[] = { "eax", "ecx", "edx", "esi", "edi", "r8d", "r9d" };
     char *label = sanitize_label_name(name);
-    fprintf(f, "    lea %s, [%s]\n", reg, label);
+    const char *short_reg = NULL;
+    for (int k = 0; r64[k]; k++)
+        if (strcmp(reg, r64[k]) == 0) short_reg = r32[k];
+    if (short_reg) fprintf(f, "    mov %s, %s\n", short_reg, label);
+    else fprintf(f, "    lea %s, [%s]\n", reg, label);
     free(label);
 }
 
@@ -720,6 +729,37 @@ static unsigned long long field_bound(const IrInstr *i) {
     return BOUND_UNKNOWN;
 }
 
+// runtime_num_load of the field at rdi: its size, usage and flags packed in
+// one immediate (runtime_num_load_p) when each fits a byte
+static void emit_num_load_call(FILE *f, const IrInstr *i) {
+    if (i->size >= 0 && i->size <= 255 && i->usage_type >= 0 && i->usage_type <= 255 &&
+        i->flags >= 0 && i->flags <= 255) {
+        fprintf(f, "    mov esi, %d\n", i->size | i->usage_type << 16 | i->flags << 24);
+        fprintf(f, "    call runtime_num_load_p\n");
+        return;
+    }
+    emit_size(f, "rsi", i->size);
+    fprintf(f, "    mov rdx, %d\n", i->usage_type);
+    fprintf(f, "    mov rcx, %d\n", i->flags);
+    fprintf(f, "    call runtime_num_load\n");
+}
+
+// runtime_num_store of r9 into the field at rdi (runtime_num_store_p when
+// the arguments fit a byte each)
+static void emit_num_store_args_call(FILE *f, const IrInstr *st, int flags) {
+    if (st->size >= 0 && st->size <= 255 && st->digits >= 0 && st->digits <= 255 &&
+        st->usage_type >= 0 && st->usage_type <= 255 && flags >= 0 && flags <= 255) {
+        fprintf(f, "    mov esi, %d\n", st->size | st->digits << 8 | st->usage_type << 16 | flags << 24);
+        fprintf(f, "    call runtime_num_store_p\n");
+        return;
+    }
+    emit_size(f, "rsi", st->size);
+    fprintf(f, "    mov rdx, %d\n", st->digits);
+    fprintf(f, "    mov rcx, %d\n", st->usage_type);
+    fprintf(f, "    mov r8, %d\n", flags);
+    fprintf(f, "    call runtime_num_store\n");
+}
+
 // dst = the field's value in memory
 static void field_load_to(FILE *f, const IrInstr *i, RegName dst) {
     if (inline_binary(i)) {
@@ -733,10 +773,7 @@ static void field_load_to(FILE *f, const IrInstr *i, RegName dst) {
         fprintf(f, "    mov esi, %d\n", i->size);
         fprintf(f, "    call runtime_packed_load\n");
     } else {
-        emit_size(f, "rsi", i->size);
-        fprintf(f, "    mov rdx, %d\n", i->usage_type);
-        fprintf(f, "    mov rcx, %d\n", i->flags);
-        fprintf(f, "    call runtime_num_load\n");
+        emit_num_load_call(f, i);
     }
     fprintf(f, "    mov %s, rax\n", dst.q);
 }
@@ -758,11 +795,7 @@ static void field_write_from(FILE *f, const IrInstr *st, RegName src) {
         return;
     }
     fprintf(f, "    mov r9, %s\n", src.q);
-    emit_size(f, "rsi", st->size);
-    fprintf(f, "    mov rdx, %d\n", st->digits);
-    fprintf(f, "    mov rcx, %d\n", st->usage_type);
-    fprintf(f, "    mov r8, %d\n", st->flags & ~IR_NUM_KEEP);
-    fprintf(f, "    call runtime_num_store\n");
+    emit_num_store_args_call(f, st, st->flags & ~IR_NUM_KEEP);
 }
 
 // Jump to slow unless V fits the field of store st exactly (the value a
@@ -827,11 +860,7 @@ static void emit_ovf_block(int L) {
 static void emit_num_store_call(FILE *f, const IrInstr *st, const VEntry *v) {
     vs_to(f, v, "r9");
     emit_addr(f, "rdi", st->var_name);
-    emit_size(f, "rsi", st->size);
-    fprintf(f, "    mov rdx, %d\n", st->digits);
-    fprintf(f, "    mov rcx, %d\n", st->usage_type);
-    fprintf(f, "    mov r8, %d\n", st->flags);
-    fprintf(f, "    call runtime_num_store\n");
+    emit_num_store_args_call(f, st, st->flags);
 }
 
 typedef struct {
@@ -1171,6 +1200,7 @@ static bool vs_handles(IrOpcode op) {
         case IR_NUM_NEG: case IR_NUM_DUP: case IR_NUM_DROP: case IR_NUM_SWAP:
         case IR_ERR_SAVE: case IR_ERR_RESTORE: case IR_NUM_STORE:
         case IR_NUM_CMP_JUMP_IF_FALSE: case IR_SIZE_ERR_CLEAR: case IR_NUM_DEEDIT:
+        case IR_NUM_TRUNC:
         case IR_DATA_VAR: case IR_DATA_LIT: case IR_DATA_BSS: case IR_DATA_BYTES:
         case IR_DATA_FILE: case IR_DATA_QWORDS:
             return true;
@@ -1347,11 +1377,15 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
         char *linage = i->cmp_op ? sanitize_label_name(i->cmp_op) : NULL;
         // fd, mode, size, flags, name, status, state, last mode, min size,
         // record length, key, key table, buffer (5), lock, LINAGE block,
-        // private, key of reference, next, sort
+        // private, key of reference, next, sort / the organization's operations
+        // (referenced only by the files that need them, so other programs
+        // do not link their code)
+        const char *ops = i->flags & 0x100 ? "cobrt_rel_ops" : i->flags & 0x200 ? "cobrt_idx_ops" : "0";
+        if (strcmp(ops, "0") != 0) fprintf(f, "extern %s\n", ops);
         if (i->symbol) fprintf(f, "align 8\nglobal %s\n%s:\n", i->symbol, i->symbol);
-        fprintf(f, "align 8\n%s: dq 0, 0, %d, %d, %s, %s, 0, 0, %d, 0, 0, %s, 0, 0, 0, 0, 0, 0, 0, %s, 0, 0, 0, 0\n",
+        fprintf(f, "align 8\n%s: dq 0, 0, %d, %d, %s, %s, 0, 0, %d, 0, 0, %s, 0, 0, 0, 0, 0, 0, 0, %s, 0, 0, 0, %s\n",
                 fcb, i->size, i->flags, name, status ? status : "0", i->digits,
-                keys ? keys : "0", linage ? linage : "0");
+                keys ? keys : "0", linage ? linage : "0", ops);
         free(fcb);
         free(name);
         free(status);
@@ -1717,10 +1751,7 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                     fprintf(f, "    mov esi, %d\n", i->size);
                     fprintf(f, "    call runtime_packed_load\n");
                 } else {
-                    emit_size(f, "rsi", i->size);
-                    fprintf(f, "    mov rdx, %d\n", i->usage_type);
-                    fprintf(f, "    mov rcx, %d\n", i->flags);
-                    fprintf(f, "    call runtime_num_load\n");
+                    emit_num_load_call(f, i);
                 }
                 int r = vs_alloc(f);
                 fprintf(f, "    mov %s, rax\n", vs_regs[r].q);
@@ -2048,13 +2079,29 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 break;
             case IR_NUM_TRUNC: {
                 // keep the low-order imm digits (the remainder keeps the sign)
+                if (i->imm >= 19) break;                    // every value fits
                 long long p = 1;
                 for (long long k = 0; k < i->imm; k++) p *= 10;
-                fprintf(f, "    mov rax, [rsp]\n");
-                fprintf(f, "    cqo\n");
-                fprintf(f, "    mov rcx, %lld\n", p);
-                fprintf(f, "    idiv rcx\n");
-                fprintf(f, "    mov [rsp], rdx\n");
+                vs_ensure(f, 1);
+                VEntry *e = &vs[vs_n - 1];
+                if (e->is_const) {                          // folded
+                    long long v = e->imm % p;
+                    vs_n--;
+                    vs_push_const(f, v);
+                    break;
+                }
+                if (e->bound < (unsigned long long)p) break;  // it fits already
+                VEntry top = *e;
+                vs_n--;                                     // (vs_own must not spill it)
+                int dst = vs_own(f, &top, -1);              // a promoted field's register is copied
+                vs_n++;
+                e = &vs[vs_n - 1];
+                *e = top;
+                fprintf(f, "    mov rax, %s\n    cqo\n    mov rcx, %lld\n    idiv rcx\n    mov %s, rdx\n",
+                        vs_regs[dst].q, p, vs_regs[dst].q);
+                e->reg = dst;
+                e->bound = (unsigned long long)p - 1;
+                e->ctr = false;
                 break;
             }
             case IR_NUM_DUP: {

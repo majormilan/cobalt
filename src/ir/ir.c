@@ -1462,12 +1462,42 @@ static VarInfo *find_item(const AstNode *ref, bool report) {
     return v;
 }
 
+// The data items by name (case-insensitive), each chain in ascending order,
+// so a lookup visits the items of that name in the order a scan would.
+// Items are indexed when looked up after they were made; names do not
+// change once made.
+#define NAME_BUCKETS 8192
+static int name_head[NAME_BUCKETS], name_tail[NAME_BUCKETS], name_next[MAX_VARS];
+static int names_indexed;
+
+static unsigned name_hash(const char *s) {
+    unsigned h = 2166136261u;
+    for (; *s; s++) h = (h ^ (unsigned char)toupper((unsigned char)*s)) * 16777619u;
+    return h & (NAME_BUCKETS - 1);
+}
+
+static int first_named(const char *name) {
+    if (names_indexed == 0) {
+        memset(name_head, -1, sizeof(name_head));
+        memset(name_tail, -1, sizeof(name_tail));
+    }
+    for (; names_indexed < num_vars; names_indexed++) {
+        int i = names_indexed;
+        unsigned b = name_hash(vars[i].name);
+        name_next[i] = -1;
+        if (name_tail[b] < 0) name_head[b] = i;
+        else name_next[name_tail[b]] = i;
+        name_tail[b] = i;
+    }
+    return name_head[name_hash(name)];
+}
+
 static VarInfo *find_item_ref(const AstNode *ref, bool report) {
     if (ref->name[0] == '#') return &vars[atoi(ref->name + 1)];
     if (ref->name[0] == '!') return &vars[function_temp(ref)];
     VarInfo *found = NULL;
     int count = 0;
-    for (int i = 0; i < num_vars; i++) {
+    for (int i = first_named(ref->name); i >= 0; i = name_next[i]) {
         if (vars[i].is_filler || strcasecmp(vars[i].name, ref->name) != 0) continue;
         int a = vars[i].parent;
         bool ok = true, file_used = false;
@@ -6574,6 +6604,7 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
     ir->initial = (program->digits & 2) != 0;
 
     num_vars = 0;
+    names_indexed = 0;
     num_records = 0;
     memset(record_ptr_slot, 0xFF, sizeof(record_ptr_slot));
     for (int r = 0; r < MAX_VARS; r++) {

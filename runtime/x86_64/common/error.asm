@@ -18,7 +18,7 @@ global cobrt_error_text
 global cobrt_error_number
 global cobrt_error_end
 global runtime_check_fail
-extern cobrt_files_close_all
+extern cobrt_close_files
 
 ; Write the zero-terminated string ARG0 to standard error
 cobrt_error_text:
@@ -91,7 +91,11 @@ cobrt_error_end:
     sub rsp, 8
     lea ARG0, [rel msg_nl]
     call cobrt_error_text
-    call cobrt_files_close_all
+    mov rax, [rel cobrt_close_files]
+    test rax, rax
+    jz .closed
+    call rax
+.closed:
     mov ARG0, 1
     call cobrt_os_exit
 

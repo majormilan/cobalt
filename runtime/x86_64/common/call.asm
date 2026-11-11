@@ -20,7 +20,6 @@ global runtime_cancel
 global runtime_external
 
 extern cobrt_program_table
-extern cobrt_files_close_all
 extern cobrt_error_begin
 extern cobrt_error_text
 extern cobrt_error_end

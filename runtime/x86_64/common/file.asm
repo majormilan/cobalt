@@ -21,25 +21,12 @@ global runtime_file_start
 global cobrt_file_status
 global cobrt_files_close_all
 global cobrt_buf_alloc
+extern cobrt_close_files
 
-extern cobrt_rel_open
-extern cobrt_rel_close
-extern cobrt_rel_read
-extern cobrt_rel_write
-extern cobrt_rel_rewrite
 extern cobrt_error_begin
 extern cobrt_error_text
 extern cobrt_error_number
 extern cobrt_error_end
-extern cobrt_rel_delete
-extern cobrt_rel_start
-extern cobrt_idx_open
-extern cobrt_idx_close
-extern cobrt_idx_read
-extern cobrt_idx_write
-extern cobrt_idx_rewrite
-extern cobrt_idx_delete
-extern cobrt_idx_start
 
 ; Set the status of the FCB in rbx to eax; returns it in eax. A status of 30
 ; or more on a file without a FILE STATUS item or USE procedure ends the run.
@@ -343,6 +330,8 @@ runtime_file_open:
     push r14
     push r15
     mov rbx, ARG0
+    lea r11, [rel cobrt_files_close_all]  ; STOP RUN and run-time errors close the files
+    mov [rel cobrt_close_files], r11
     mov r12, ARG1
     and r12, 0xFF                       ; mode
     mov r13, ARG1
@@ -364,13 +353,15 @@ runtime_file_open:
     test qword [rbx + FCB_FLAGS], ORG_RELATIVE
     jz .not_rel
     mov ARG0, r12
-    call cobrt_rel_open
+    mov r11, [rbx + FCB_ORG]
+    call [r11 + ORG_OPEN]
     jmp .opened
 .not_rel:
     test qword [rbx + FCB_FLAGS], ORG_INDEXED
     jz .sequential
     mov ARG0, r12
-    call cobrt_idx_open
+    mov r11, [rbx + FCB_ORG]
+    call [r11 + ORG_OPEN]
 .opened:
     cmp eax, 10
     jae .status
@@ -512,12 +503,14 @@ close_file:
     mov rax, [rbx + FCB_FLAGS]
     test rax, ORG_RELATIVE
     jz .not_rel
-    call cobrt_rel_close
+    mov r11, [rbx + FCB_ORG]
+    call [r11 + ORG_CLOSE]
     jmp .closed
 .not_rel:
     test rax, ORG_INDEXED
     jz .sequential
-    call cobrt_idx_close
+    mov r11, [rbx + FCB_ORG]
+    call [r11 + ORG_CLOSE]
     jmp .closed
 .sequential:
     test qword [rbx + FCB_STATE], ST_ABSENT
@@ -577,14 +570,16 @@ runtime_file_read:
     jz .not_rel
     mov ARG0, r12
     mov ARG1, ARG2
-    call cobrt_rel_read
+    mov r11, [rbx + FCB_ORG]
+    call [r11 + ORG_READ]
     jmp .status
 .not_rel:
     test rax, ORG_INDEXED
     jz .sequential
     mov ARG0, r12
     mov ARG1, ARG2
-    call cobrt_idx_read
+    mov r11, [rbx + FCB_ORG]
+    call [r11 + ORG_READ]
     jmp .status
 .sequential:
     and qword [rbx + FCB_STATE], ~ST_READ_OK
@@ -754,10 +749,12 @@ runtime_file_write:
     mov ARG1, r14
     test rax, ORG_RELATIVE
     jz .indexed
-    call cobrt_rel_write
+    mov r11, [rbx + FCB_ORG]
+    call [r11 + ORG_WRITE]
     jmp .status
 .indexed:
-    call cobrt_idx_write
+    mov r11, [rbx + FCB_ORG]
+    call [r11 + ORG_WRITE]
     jmp .status
 .sequential:
     mov eax, 48                         ; not open for output
@@ -1000,10 +997,12 @@ runtime_file_rewrite:
     mov ARG1, r13
     test rax, ORG_RELATIVE
     jz .indexed
-    call cobrt_rel_rewrite
+    mov r11, [rbx + FCB_ORG]
+    call [r11 + ORG_REWRITE]
     jmp .status
 .indexed:
-    call cobrt_idx_rewrite
+    mov r11, [rbx + FCB_ORG]
+    call [r11 + ORG_REWRITE]
     jmp .status
 .sequential:
     mov eax, 43                         ; no successful READ before
@@ -1055,12 +1054,14 @@ runtime_file_delete:
     mov rax, [rbx + FCB_FLAGS]
     test rax, ORG_RELATIVE
     jz .not_rel
-    call cobrt_rel_delete
+    mov r11, [rbx + FCB_ORG]
+    call [r11 + ORG_DELETE]
     jmp .status
 .not_rel:
     test rax, ORG_INDEXED
     jz .sequential
-    call cobrt_idx_delete
+    mov r11, [rbx + FCB_ORG]
+    call [r11 + ORG_DELETE]
     jmp .status
 .sequential:
     mov eax, 30
@@ -1087,7 +1088,8 @@ runtime_file_start:
     test rax, ORG_RELATIVE
     jz .not_rel
     mov ARG0, ARG1
-    call cobrt_rel_start
+    mov r11, [rbx + FCB_ORG]
+    call [r11 + ORG_START]
     jmp .status
 .not_rel:
     test rax, ORG_INDEXED
@@ -1095,7 +1097,8 @@ runtime_file_start:
     mov ARG0, ARG1
     mov ARG1, ARG2
     mov ARG2, ARG3
-    call cobrt_idx_start
+    mov r11, [rbx + FCB_ORG]
+    call [r11 + ORG_START]
     jmp .status
 .sequential:
     mov eax, 30

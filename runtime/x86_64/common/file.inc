@@ -26,6 +26,17 @@
 %define FCB_KEYREF      168             ; indexed: key of reference (key number)
 %define FCB_NEXT        176             ; next open file
 %define FCB_SORT        184             ; sort files: sort state
+%define FCB_ORG         184             ; relative and indexed files: their operations
+                                        ; (cobrt_rel_ops, cobrt_idx_ops, from the compiler)
+; The operations of an organization, in its table (so a program links the
+; code of the organizations it uses only)
+%define ORG_OPEN        0
+%define ORG_CLOSE       8
+%define ORG_READ        16
+%define ORG_WRITE       24
+%define ORG_REWRITE     32
+%define ORG_DELETE      40
+%define ORG_START       48
 %define FCB_BYTES       192
 
 %define FILE_LINE       1               ; line sequential: text lines

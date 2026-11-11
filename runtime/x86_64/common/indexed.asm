@@ -1761,3 +1761,11 @@ cobrt_idx_start:
 section .rodata
 ; cobrt_os_open mode for each OPEN mode
 idx_open_modes: dq 0, OS_OPEN_READ, OS_OPEN_RW_TRUNC, OS_OPEN_READWRITE, OS_OPEN_READWRITE
+
+; The operations of the organization, for file.asm (FCB_ORG)
+global cobrt_idx_ops
+section .rodata
+align 8
+cobrt_idx_ops:
+    dq cobrt_idx_open, cobrt_idx_close, cobrt_idx_read, cobrt_idx_write
+    dq cobrt_idx_rewrite, cobrt_idx_delete, cobrt_idx_start

@@ -14,6 +14,8 @@ section .text
 
 global runtime_num_load
 global runtime_num_store
+global runtime_num_load_p
+global runtime_num_store_p
 global runtime_packed_load
 global runtime_packed_store
 global runtime_num_rescale
@@ -477,6 +479,31 @@ runtime_packed_store:
 .ps_long9:
     mov [r11], dil
     ret
+
+; runtime_num_load and runtime_num_store with their arguments packed in
+; ARG1, one immediate for the compiler to load (a field of up to 255 bytes):
+; load: size | usage << 16 | flags << 24; store: size | digits << 8 |
+; usage << 16 | flags << 24 (the value in ARG5, as for runtime_num_store)
+runtime_num_load_p:
+    mov ARG3, ARG1
+    shr ARG3, 24
+    mov ARG2, ARG1
+    shr ARG2, 16
+    and ARG2, 0xFF
+    and ARG1, 0xFF
+    jmp runtime_num_load
+
+runtime_num_store_p:
+    mov ARG4, ARG1
+    shr ARG4, 24
+    mov ARG3, ARG1
+    shr ARG3, 16
+    and ARG3, 0xFF
+    mov ARG2, ARG1
+    shr ARG2, 8
+    and ARG2, 0xFF
+    and ARG1, 0xFF
+    jmp runtime_num_store
 
 ; ARG0 = field ptr, ARG1 = size, ARG2 = usage, ARG3 = flags
 ; Returns RET0 = the field's value as an unscaled signed integer.

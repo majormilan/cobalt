@@ -124,11 +124,13 @@ static const char *skip_ws(const char *p) {
 }
 
 // p[0..len) equals the lower-case word w, ignoring case
-static bool word_is(const char *p, size_t len, const char *w) {
-    size_t k = 0;
-    for (; k < len; k++)
-        if (!w[k] || tolower((unsigned char)p[k]) != w[k]) return false;
-    return w[k] == '\0';
+// (inline, so strlen of a literal w is a constant: most calls end at the
+// length test)
+static inline bool word_is(const char *p, size_t len, const char *w) {
+    if (len != strlen(w)) return false;
+    for (size_t k = 0; k < len; k++)
+        if (tolower((unsigned char)p[k]) != w[k]) return false;
+    return true;
 }
 
 // ── Registers ────────────────────────────────────────────────────────────────
@@ -789,6 +791,13 @@ static void parse_line(Asm *as, const char *p, const char *end) {
     while (s < end && (isalnum((unsigned char)*s) || *s == '_')) s++;
     size_t len = (size_t)(s - p);
     const char *rest = skip_ws(s);
+
+    // An instruction (most lines): straight to its parser
+    int word_index;
+    if (lookup_word(p, len, &word_index) == W_MNEMONIC) {
+        parse_statement(as, p, end, 1);
+        return;
+    }
 
     if (word_is(p, len, "section") || word_is(p, len, "segment")) {
         const char *n = rest, *ne = n;

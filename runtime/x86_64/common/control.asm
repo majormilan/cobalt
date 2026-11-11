@@ -14,7 +14,7 @@ global runtime_exit
 global runtime_switch_status
 global runtime_switch_set
 global runtime_debug_switch
-extern cobrt_files_close_all
+global cobrt_close_files
 extern cobrt_return_code
 
 ; ARG0 = stack pointer at program entry (for the environment),
@@ -71,7 +71,11 @@ runtime_switch_set:
 ; the value of RETURN-CODE when a program uses it, else 0.
 runtime_exit:
     sub rsp, 8
-    call cobrt_files_close_all
+    mov rax, [rel cobrt_close_files]
+    test rax, rax
+    jz .closed
+    call rax
+.closed:
     call cobrt_return_code
     mov ARG0, rax
     call cobrt_os_exit
@@ -115,6 +119,9 @@ runtime_debug_switch:
 
 section .bss
 cobrt_runtime_flags: resq 1
+; Closes the open files: cobrt_files_close_all, set by the first OPEN (so a
+; program without files does not link the file code)
+cobrt_close_files: resq 1
 
 section .data
 switches: times 10 db SWITCH_UNKNOWN    ; state of SWITCH-n, until first read

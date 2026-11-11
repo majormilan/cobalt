@@ -171,6 +171,7 @@ positions in the PICTURE.
 | `runtime_accept_numeric` | `ptr, size, digits, scale, usage, flags` | Reads one line and stores it as a number: optional spaces, optional sign, digits and an optional point; the first other character ends the number; extra decimals are dropped. |
 | `runtime_num_load` | `ptr, size, usage, flags` | Returns the field's value as an unscaled signed integer in `RET0`. |
 | `runtime_num_store` | `ptr, size, digits, usage, flags, value` | Stores an unscaled value (already at the field's scale). Returns 1 in `RET0` on size error, after truncating, or without storing when `NUM_KEEP` is set. |
+| `runtime_num_load_p`, `runtime_num_store_p` | `ptr, packed` (store: `value` in ARG5) | The same with ARG1 packed, one immediate for the compiler: `size \| usage << 16 \| flags << 24` for a load, `size \| digits << 8 \| usage << 16 \| flags << 24` for a store (each part below 256). |
 | `runtime_packed_load` | `ptr, size` | Value of a COMP-3 item of 1 to 10 bytes in `RET0` (as `runtime_num_load`). Changes only caller-saved registers. |
 | `runtime_packed_store` | `ptr, size, value, flags` | Stores a value into a COMP-3 item of 1 to 10 bytes; the value must fit (below `10^digits`, at most 18 digits). Sign nibble C or D with `NUM_SIGNED`, else F and the magnitude. No result. |
 | `runtime_num_to_digits` | `buffer, count, value` | Writes `|value|` as `count` digits, zero padded on the left (the low-order digits when it has more). |
@@ -422,7 +423,8 @@ unsigned binary data items to it.
 | 152 | LINAGE | address of the LINAGE block, or 0 |
 | 160 | private | organization state |
 | 168 | key of reference | indexed: the key READ NEXT follows (the program sets it for READ KEY IS; START sets it) |
-| 176-191 | | runtime state |
+| 176 | next | runtime state: the next open file |
+| 184 | sort / operations | sort files: the sort state; RELATIVE and INDEXED files: the address of their organization's operations, `cobrt_rel_ops` or `cobrt_idx_ops` (from the compiler) |
 
 The routines: `runtime_file_open(fcb, mode | options << 8)` (options: 1
 REVERSED, 2 NO REWIND), `runtime_file_close(fcb, options)` (1 REEL/UNIT, 2 NO
@@ -434,7 +436,16 @@ REWIND, 4 LOCK), `runtime_file_read(fcb, area, how)` (0 next, 1 by key),
 I-O status code and stores it as two digits in the FILE STATUS item, if there
 is one. A status of 30 or more on a file without a FILE STATUS item or an
 applicable USE procedure ends the run with a message on stderr and exit
-status 1. Open files are closed at STOP RUN.
+status 1. Open files are closed at STOP RUN and at a run-time error, through
+`cobrt_close_files`, which the first OPEN sets.
+
+**Linking only what is used.** The runtime is linked object by object, so
+a program links the code it references. `file.asm` calls the RELATIVE and
+INDEXED code through the table at offset 184 (open, close, read, write,
+rewrite, delete, start), which only the FCBs of such files reference; the
+end of the run closes the files through a pointer set by the first OPEN.
+A program without files links no file code, and one with sequential files
+only links neither the relative nor the indexed code.
 
 | Status | Meaning |
 |---|---|
