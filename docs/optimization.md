@@ -37,6 +37,14 @@ Every numeric value is a signed 64-bit integer scaled by a power of ten
   nothing. The known values are forgotten at a store into the same record,
   at any instruction that may change memory or transfer control, and at a
   label that something jumps to.
+- **Loaded values reused** (`src/backend/peephole.c`, a pass over the
+  generated assembly). A numeric item loaded into a callee-saved register is
+  taken from that register by a later load of the same item, while nothing
+  can have changed it: no write to the register, no call but the loads and
+  the console output, no write to memory other than the stack, the error
+  bytes and the PERFORM slots, no label, unconditional jump or return in
+  between. The same pass drops instructions after an unconditional jump,
+  up to the next label (branches decided by folded constants).
 - **Error bytes written lazily.** The clears of the target and value bytes
   are written only before code that can set them, or a path that reads them;
   a statement byte nothing reads (no ON SIZE ERROR) is not updated.
@@ -115,9 +123,10 @@ Every numeric value is a signed 64-bit integer scaled by a power of ten
 
 ## Not done yet
 
-- Reuse of a field loaded or stored (with a value in a register) earlier in
-  the same straight-line code.
-- Removing error-flag updates that no statement can observe.
+- Reuse of the value a field was just stored with (a store whose value is
+  known to fit).
+- Removing the remaining clears of the target error byte (those before code
+  that may set it).
 - Constant stores into DISPLAY and PACKED-DECIMAL items as bytes computed
   at compile time.
 - Inline loads and stores of short DISPLAY items.
