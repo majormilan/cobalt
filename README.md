@@ -260,12 +260,15 @@ work (details in [docs/release-checklist.md](docs/release-checklist.md)):
   either system, but other linkers cannot use them on Windows.
 - In the Report Writer, the data-name of a SUM entry names its printed
   field, not the sum counter.
+- An exponent with decimals (`2 ** 0.5`) is a size error.
+
+[docs/guide/09-limits.md](docs/guide/09-limits.md) has the complete list.
 
 ## Documentation
 
 | Document | About |
 |---|---|
-| [docs/diagnostics.md](docs/diagnostics.md) | errors, warnings, strictness levels, FIPS flagging |
+| [docs/guide](docs/guide/README.md) | the user guide: getting started, the command line, the language, strictness and dialects, diagnostics, files, running programs, platforms, limits |
 | [docs/release-checklist.md](docs/release-checklist.md) | the road to 0.1.0-alpha |
 | [runtime/ABI.md](runtime/ABI.md) | the runtime: data formats, files, CALL, run-time errors, the Report Writer, the OS layers |
 | [docs/assembler.md](docs/assembler.md) | the built-in assembler |

@@ -75,6 +75,39 @@ static int embed_command(int argc, char **argv) {
 
 typedef enum { EMIT_EXECUTABLE, EMIT_OBJECT, EMIT_ASSEMBLY } EmitKind;
 
+// Archives (the ar format): the object file of a source with several
+// programs holds the object of each as a member "<k>.o"
+static bool write_archive(FILE *f, uint8_t **images, size_t *sizes, int n) {
+    if (fwrite("!<arch>\n", 1, 8, f) != 8) return false;
+    for (int k = 0; k < n; k++) {
+        char header[61], name[17];
+        snprintf(name, sizeof(name), "%d.o/", k);
+        snprintf(header, sizeof(header), "%-16s%-12s%-6s%-6s%-8s%-10zu`\n", name, "0", "0", "0", "644", sizes[k]);
+        if (fwrite(header, 1, 60, f) != 60 || fwrite(images[k], 1, sizes[k], f) != sizes[k]) return false;
+        if (sizes[k] % 2 && fputc('\n', f) == EOF) return false;
+    }
+    return true;
+}
+
+// The members of an archive in memory (pointers into data), or -1 when data
+// is not an archive
+static int archive_members(const uint8_t *data, size_t size, const uint8_t **member, size_t *msize, int max) {
+    if (size < 8 || memcmp(data, "!<arch>\n", 8) != 0) return -1;
+    int n = 0;
+    for (size_t at = 8; at + 60 <= size && n < max;) {
+        const uint8_t *h = data + at;
+        size_t len = (size_t)strtoull((const char *)h + 48, NULL, 10);
+        if (at + 60 + len > size) break;
+        // skip the symbol table and long name table of other archivers
+        if (!(h[0] == '/' && (h[1] == ' ' || h[1] == '/'))) {
+            member[n] = h + 60;
+            msize[n++] = len;
+        }
+        at += 60 + len + (len % 2);
+    }
+    return n;
+}
+
 static uint8_t *read_binary(const char *path, size_t *size) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
@@ -282,7 +315,8 @@ int main(int argc, char **argv) {
     while ((opt = getopt_long(argc, argv, ":i:o:t:S:X:D:f:I:W:wcaAFM", long_options, &opt_index)) != -1) {
         switch (opt) {
             case 'i':
-                if (nsources < 64) sources[nsources++] = optarg;
+                if (nsources == 64) { cobalt_error("Too many sources (64 limit)"); return 1; }
+                sources[nsources++] = optarg;
                 break;
             case 'M': module = true; break;
             case 'o': output_file = optarg; break;
@@ -381,8 +415,10 @@ int main(int argc, char **argv) {
     for (int k = optind; k < argc; k++) {
         size_t n = strlen(argv[k]);
         if (n > 2 && strcmp(argv[k] + n - 2, ".o") == 0) {
-            if (nobjects < 64) objects[nobjects++] = argv[k];
-        } else if (nsources < 64) {
+            if (nobjects == 64) { cobalt_error("Too many object files (64 limit)"); return 1; }
+            objects[nobjects++] = argv[k];
+        } else {
+            if (nsources == 64) { cobalt_error("Too many sources (64 limit)"); return 1; }
             sources[nsources++] = argv[k];
         }
     }
@@ -431,31 +467,35 @@ int main(int argc, char **argv) {
         if (!ast) return 1;
         SemaContext ctx = { .mode = &mode, .original_source = source };
         // Programs in order, each followed by the programs nested in it
-        AstNode *stack[64];
-        int stack_parent[64];
-        int depth = 0;
-        for (AstNode *p = ast; p; p = p->next) { stack_parent[depth] = -1; stack[depth++] = p; }
-        // (reverse so the first program comes first)
-        for (int lo = 0, hi = depth - 1; lo < hi; lo++, hi--) {
-            AstNode *t = stack[lo]; stack[lo] = stack[hi]; stack[hi] = t;
-        }
-        while (depth > 0) {
-            depth--;
-            AstNode *p = stack[depth];
-            int parent = stack_parent[depth];
-            int me = nprograms;
-            if (nprograms < 256) {
-                program_parent[nprograms] = parent;
-                programs[nprograms++] = p;
-            }
-            sema_basic_check(p, &ctx);
-            AstNode *nested[64];
-            int nn = 0;
-            for (AstNode *c = p->children; c; c = c->next)
-                if (c->kind == AST_PROGRAM && nn < 64) nested[nn++] = c;
-            for (int j = nn - 1; j >= 0 && depth < 64; j--) {
-                stack_parent[depth] = me;
-                stack[depth++] = nested[j];
+        AstNode *stack[512];
+        int stack_parent[512];
+        for (AstNode *top = ast; top; top = top->next) {
+            int depth = 0;
+            stack_parent[depth] = -1;
+            stack[depth++] = top;
+            while (depth > 0) {
+                depth--;
+                AstNode *p = stack[depth];
+                int parent = stack_parent[depth];
+                int me = nprograms;
+                if (nprograms < 256) {
+                    program_parent[nprograms] = parent;
+                    programs[nprograms++] = p;
+                } else {
+                    static bool reported;
+                    if (!reported) diag_error(p->loc, "Too many programs in one run unit (256 limit)");
+                    reported = true;
+                    me = -1;
+                }
+                sema_basic_check(p, &ctx);
+                AstNode *nested[64];
+                int nn = 0;
+                for (AstNode *c = p->children; c; c = c->next)
+                    if (c->kind == AST_PROGRAM && nn < 64) nested[nn++] = c;
+                for (int j = nn - 1; j >= 0 && depth < 512; j--) {
+                    stack_parent[depth] = me;
+                    stack[depth++] = nested[j];
+                }
             }
         }
         if (dump_ast) {
@@ -541,12 +581,6 @@ int main(int argc, char **argv) {
             cobalt_error("Internal error: the generated assembly did not assemble");
             return 1;
         }
-        if (emit == EMIT_OBJECT) {
-            bool ok = asm_write_elf64(obj, name_k);
-            asm_free(obj);
-            if (!ok) { cobalt_error("Cannot write %s", name_k); return 1; }
-            continue;
-        }
         asm_elf64_image(obj, &images[nlink], &image_sizes[nlink]);
         asm_free(obj);
         link_objects[nlink] = (LinkObject){ images[nlink], image_sizes[nlink], input_file };
@@ -554,6 +588,17 @@ int main(int argc, char **argv) {
     }
     for (int k = 0; k < nsources; k++) { free(texts[k]); free(sources_text[k]); }
     if (error_count > 0) return 1;
+    if (emit == EMIT_OBJECT) {
+        // One object file: the object of the program, or an archive (ar) of
+        // the objects of the programs (each program is an object of its own)
+        FILE *f = fopen(out_name, "wb");
+        bool ok = f != NULL;
+        if (ok && nlink == 1) ok = fwrite(images[0], 1, image_sizes[0], f) == image_sizes[0];
+        else if (ok) ok = write_archive(f, images, image_sizes, nlink);
+        if (f && fclose(f) != 0) ok = false;
+        if (!ok) { cobalt_error("Cannot write %s", out_name); return 1; }
+        return 0;
+    }
     if (emit != EMIT_EXECUTABLE) return 0;
 
     // Objects given as arguments, and the program table: every called
@@ -562,17 +607,28 @@ int main(int argc, char **argv) {
         size_t size;
         uint8_t *data = read_binary(objects[k], &size);
         if (!data) { cobalt_error("Cannot read %s", objects[k]); return 1; }
-        link_objects[nlink++] = (LinkObject){ data, size, objects[k] };
-        char **names = NULL;
-        int n = link_object_globals(&link_objects[nlink - 1], "cobinfo_", &names);
-        for (int j = 0; j < n; j++) {
-            if (tn < (int)sizeof(table) - 200) {
-                tn += snprintf(table + tn, sizeof(table) - tn, "    dq %s\n", names[j]);
-                en += snprintf(externs + en, sizeof(externs) - en, "extern %s\n", names[j]);
-            }
-            free(names[j]);
+        // an object, or an archive of objects (cobalt -c of several programs)
+        const uint8_t *member[256];
+        size_t member_size[256];
+        int nmembers = archive_members(data, size, member, member_size, 256);
+        if (nmembers < 0) {
+            member[0] = data;
+            member_size[0] = size;
+            nmembers = 1;
         }
-        free(names);
+        for (int m = 0; m < nmembers && nlink < 299; m++) {
+            link_objects[nlink++] = (LinkObject){ member[m], member_size[m], objects[k] };
+            char **names = NULL;
+            int n = link_object_globals(&link_objects[nlink - 1], "cobinfo_", &names);
+            for (int j = 0; j < n; j++) {
+                if (tn < (int)sizeof(table) - 200) {
+                    tn += snprintf(table + tn, sizeof(table) - tn, "    dq %s\n", names[j]);
+                    en += snprintf(externs + en, sizeof(externs) - en, "extern %s\n", names[j]);
+                }
+                free(names[j]);
+            }
+            free(names);
+        }
     }
     snprintf(table + tn, sizeof(table) - tn, "    dq 0\n%s", externs);
     AsmObject *tobj = asm_assemble(table, "(program table)", NULL);

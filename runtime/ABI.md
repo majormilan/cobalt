@@ -636,7 +636,9 @@ in too): the first program of the first source is the main program, the
 executable's entry (`--module`: none is, for objects of called programs).
 Each program, nested programs included, becomes an object of its own, so
 the labels of generated code never meet; a table of the called programs,
-`cobrt_program_table`, is generated for the executable.
+`cobrt_program_table`, is generated for the executable. With `-c`, the
+objects of a source of several programs go into one `ar` archive
+(docs/linker.md).
 
 **Called programs.** A program that is not the main program has an entry
 `cob_<NAME>` (its PROGRAM-ID in upper case, other characters than letters

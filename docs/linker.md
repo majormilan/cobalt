@@ -53,6 +53,11 @@ from `KERNEL32.dll`: it resolves to the function's slot in the import address
 table, which the Windows loader fills. The stack reserve is 8 MiB. Objects
 from `-c` stay ELF: cobalt links them for either system.
 
+`-c` writes one object file per source. With several programs (each
+program is an object of its own) the file is an `ar` archive whose members
+are named `0.o`, `1.o`, ...; the linker takes the members of an archive
+given as an object, all of them, as if each had been given.
+
 ## The embedded runtime
 
 The build (Makefile) assembles the runtime with the first-stage cobalt

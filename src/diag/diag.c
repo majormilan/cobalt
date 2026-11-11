@@ -258,8 +258,8 @@ static void location_prefix(SourceLocation loc) {
 static void too_many_errors(void) {
     if (max_errors && error_count >= max_errors) {
         fprintf(stderr, "%sfatal error:%s too many errors emitted, stopping now [-fmax-errors=%d]\n", RED, RESET, max_errors);
-        diag_summary();
-        exit(1);
+        exit(1);              // diag_summary runs at exit
+
     }
 }
 

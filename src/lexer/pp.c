@@ -560,7 +560,7 @@ static bool expand(Buf *out, const char *t, int file, int depth, const PpOptions
             continue;
         }
         if (depth > 50) {
-            diag_error(at, "COPY nested too deeply (recursive COPY of '%s'?)", name);
+            diag_error(at, "COPY nested more than 50 deep (recursive COPY of '%s'?)", name);
             free(name); free(library); free(path); free(raw); patterns_free(&ps);
             free(ws.w);
             return false;

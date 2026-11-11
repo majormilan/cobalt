@@ -4060,7 +4060,12 @@ static AstNode *parse_select(void) {
                    (tok.kind == TOK_RECORD && peek_token().kind == TOK_SEQUENTIAL)) {
             if (tok.kind == TOK_ORGANIZATION) next();
             if (tok.kind == TOK_IS) next();
-            if (tok.kind == TOK_LINE) { sel->org = FILE_ORG_LINE_SEQUENTIAL; sel->decimal_places = 1; next(); }
+            if (tok.kind == TOK_LINE) {
+                diag_extension(EXT_IBM, TOK_LOC, "ORGANIZATION LINE SEQUENTIAL");
+                sel->org = FILE_ORG_LINE_SEQUENTIAL;
+                sel->decimal_places = 1;
+                next();
+            }
             else if (tok.kind == TOK_RECORD) next();
             if (tok.kind == TOK_INDEXED) { PEND(TOK_LOC, "ORGANIZATION IS INDEXED", 1, MOD_IX); sel->org = FILE_ORG_INDEXED; next(); }
             else if (tok.kind == TOK_RELATIVE) { PEND(TOK_LOC, "ORGANIZATION IS RELATIVE", 1, MOD_RL); sel->org = FILE_ORG_RELATIVE; next(); }

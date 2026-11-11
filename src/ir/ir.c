@@ -761,7 +761,11 @@ static void build_data(IrProgram *ir, AstNode *program) {
     for (AstNode *div = program->children; div; div = div->next) {
         if (div->kind != AST_DIVISION || strcasecmp(div->name, "ENVIRONMENT") != 0) continue;
         for (AstNode *sel = div->children; sel; sel = sel->next) {
-            if (sel->kind != AST_SELECT || num_files >= 64) continue;
+            if (sel->kind != AST_SELECT) continue;
+            if (num_files >= 64) {
+                diag_error(sel->loc, "Too many files in one program (64 limit)");
+                continue;
+            }
             files[num_files++] = (FileInfo){ .name = sel->name, .select = sel, .first_record = -1,
                                              .largest_record = -1, .fcb_record = -1,
                                              .linage_record = -1, .same_group = -1, .status_var = -1 };
@@ -799,7 +803,11 @@ static void build_data(IrProgram *ir, AstNode *program) {
                         if (ed->kind == AST_DIVISION && strcasecmp(ed->name, "ENVIRONMENT") == 0)
                             for (AstNode *e = ed->children; e; e = e->next)
                                 if (e->kind == AST_SELECT && strcasecmp(e->name, fd->name) == 0) sel = e;
-                    if (hidden || !sel || num_files >= 64) continue;
+                    if (hidden || !sel) continue;
+                    if (num_files >= 64) {
+                        diag_error(sel->loc, "Too many files in one program (64 limit)");
+                        continue;
+                    }
                     files[num_files++] = (FileInfo){ .name = sel->name, .select = sel, .first_record = -1,
                                                      .largest_record = -1, .fcb_record = -1,
                                                      .linage_record = -1, .same_group = -1,
@@ -863,8 +871,10 @@ static void build_data(IrProgram *ir, AstNode *program) {
                     int f = -1;
                     for (int k = 0; k < num_files; k++)
                         if (strcasecmp(files[k].name, entry->name) == 0) f = k;
-                    if (f < 0)
-                        diag_error(entry->loc, "FD '%s' has no SELECT", entry->name);
+                    if (f < 0) {
+                        if (num_files < 64)      // past the limit, already reported
+                            diag_error(entry->loc, "FD '%s' has no SELECT", entry->name);
+                    }
                     else {
                         files[f].fd = entry;
                         files[f].is_sort = entry->is_numeric;
@@ -999,6 +1009,13 @@ static void build_data(IrProgram *ir, AstNode *program) {
                         diag_error(decl->loc, "OCCURS %d TO %d is not a valid range", occurs->digits, v->occurs);
                     if (v->occurs < 1 || level == 1 || level == 77) {
                         diag_error(decl->loc, "Invalid OCCURS on '%s'", decl->name);
+                        v->occurs = 0;
+                    }
+                    int dims = 0;
+                    for (const VarInfo *a = v; a; a = a->parent >= 0 ? &vars[a->parent] : NULL)
+                        if (a->occurs) dims++;
+                    if (dims > 16) {
+                        diag_error(decl->loc, "'%s' is a table of %d dimensions (16 limit)", decl->name, dims);
                         v->occurs = 0;
                     }
                     for (AstNode *ix = occurs->children; ix; ix = ix->next) {
@@ -5709,7 +5726,11 @@ static void rw_setup(AstNode *program) {
         if (div->kind != AST_DIVISION || strcasecmp(div->name, "DATA") != 0) continue;
         for (AstNode *sec = div->children; sec; sec = sec->next) {
             if (sec->kind != AST_SECTION || !sec->name || strcmp(sec->name, "REPORT") != 0) continue;
-            for (AstNode *rd = sec->children; rd && rw_num_reports < 16; rd = rd->next) {
+            for (AstNode *rd = sec->children; rd; rd = rd->next) {
+                if (rw_num_reports == 16) {
+                    diag_error(rd->loc, "Too many reports in one program (16 limit)");
+                    break;
+                }
                 RwReport *r = &rw_reports[rw_num_reports];
                 memset(r, 0, sizeof(*r));
                 r->rd = rd;

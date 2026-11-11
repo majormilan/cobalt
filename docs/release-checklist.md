@@ -95,20 +95,20 @@ is not supported (1.3).
 - [x] **4.1 LICENSE** (MIT).
 - [x] **4.2 README.** What cobalt is, status (alpha, COBOL-85), supported
   platforms, install, a first program, links to the docs, license.
-- [ ] **4.3 User guide** (`docs/`):
-  - [ ] getting started (install, compile, run, several sources, CALL)
-  - [ ] command-line reference (every option, generated from or checked
+- [x] **4.3 User guide** (`docs/guide/`):
+  - [x] getting started (install, compile, run, several sources, CALL)
+  - [x] command-line reference (every option, generated from or checked
     against `--help`)
-  - [ ] language support: what of COBOL-85 is implemented, module by
+  - [x] language support: what of COBOL-85 is implemented, module by
     module, and what is not
-  - [ ] strictness and dialects (`-X`, `-D`, `-f`): the extensions each
-    level accepts (from `docs/diagnostics.md`)
-  - [ ] diagnostics and warnings (`docs/diagnostics.md`, reviewed)
-  - [ ] files: organizations, ASSIGN, status codes, the record and index
+  - [x] strictness and dialects (`-X`, `-D`, `-f`): the extensions each
+    level accepts
+  - [x] diagnostics and warnings
+  - [x] files: organizations, ASSIGN, status codes, the record and index
     formats on disk
-  - [ ] runtime: environment variables (COB_SWITCH_n, COB_SET_DEBUG,
-    file mapping), exit status, error messages
-  - [ ] known limitations
+  - [x] runtime: environment variables (COB_SWITCH_n, COB_SET_DEBUG,
+    no file mapping in this release), exit status, error messages
+  - [x] known limitations
 - [ ] **4.4 Developer docs** reviewed: build from source on Linux and
   Windows, architecture overview (lexer, preprocessor, parser, IR, backend,
   assembler, linker, runtime), `runtime/ABI.md`, `docs/assembler.md`,

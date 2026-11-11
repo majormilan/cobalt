@@ -1,0 +1,4 @@
+tests/diag/dimensions.cbl:23:15: error: 'L16' is a table of 17 dimensions (16 limit)
+    23 |            18 L16 OCCURS 2 PIC X.
+       |               ^~~
+1 error generated.
