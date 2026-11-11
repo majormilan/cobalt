@@ -1,0 +1,17 @@
+tests/diag/communication.cbl:8:8: error: The COMMUNICATION SECTION belongs to the Communication module, which cobalt does not support
+     8 |        COMMUNICATION SECTION.
+       |        ^~~~~~~~~~~~~
+note: the Communication module (message queues of a host system) is obsolete in practice; most COBOL compilers leave it out
+tests/diag/communication.cbl:12:12: error: 'ENABLE' belongs to the Communication module, which cobalt does not support
+    12 |            ENABLE INPUT INPUT-QUEUE WITH KEY "SECRET".
+       |            ^~~~~~
+tests/diag/communication.cbl:13:12: error: ACCEPT MESSAGE COUNT belongs to the Communication module, which cobalt does not support
+    13 |            ACCEPT INPUT-QUEUE MESSAGE COUNT.
+       |            ^~~~~~
+tests/diag/communication.cbl:14:12: error: 'RECEIVE' belongs to the Communication module, which cobalt does not support
+    14 |            RECEIVE INPUT-QUEUE MESSAGE INTO QUEUE-NAME.
+       |            ^~~~~~~
+tests/diag/communication.cbl:15:12: error: 'SEND' belongs to the Communication module, which cobalt does not support
+    15 |            SEND INPUT-QUEUE FROM QUEUE-NAME.
+       |            ^~~~
+5 errors generated.

@@ -5,8 +5,8 @@ The goal: a **feature complete alpha for COBOL-85** on Linux and Windows
 is done when its "Done when" holds; tick it in the same commit.
 
 Status as of 2026-11-11: NIST CCVS85 passes on NC, SM, SQ, RL, IX, ST, IC,
-IF and SG with no failures (IX110A and ST301M excluded, see 1.6); DB has 6
-failures; RW and CM are not implemented.
+IF, SG and DB with no failures (IX110A and ST301M excluded, see 1.6); RW is
+not implemented; CM is not supported (1.3).
 
 ## 1. Language (COBOL-85)
 
@@ -15,15 +15,14 @@ failures; RW and CM are not implemented.
   INITIATE, GENERATE, TERMINATE, USE BEFORE REPORTING, PAGE-COUNTER,
   LINE-COUNTER.
   Done when: the NIST RW programs compile and pass.
-- [ ] **1.2 Debug module (DB).** Fix the 6 failing tests (PERFORM UNTIL
-  condition references and others).
-  Done when: DB passes with 0 failures.
-- [ ] **1.3 Communication (CM module): decision.** Recommended: not
-  supported in this release (it is obsolete in practice; GnuCOBOL does not
-  support it either). The compiler gives a clear error for CD entries and
-  SEND / RECEIVE / ENABLE / DISABLE / PURGE / ACCEPT MESSAGE COUNT.
-  Done when: the decision is in the release notes and the error has a
-  diagnostics test.
+- [x] **1.2 Debug module (DB).** The 6 failing tests fixed (PERFORM UNTIL
+  evaluations, sending operands of arithmetic statements, WRITE / REWRITE
+  before the record is written, DEBUG-CONTENTS of 2048 characters).
+  DB passes with 0 failures.
+- [x] **1.3 Communication (CM module): not supported in this release.**
+  The COMMUNICATION SECTION, SEND, RECEIVE, ENABLE, DISABLE, PURGE and
+  ACCEPT MESSAGE COUNT get a clear error (`tests/diag/communication`).
+  To be stated in the release notes (4.5).
 - [ ] **1.4 Subset flagging (FIPS).** Under `-X pedantic`, flag elements
   above the chosen subset level ("NON-CONFORMING"), like the obsolete
   elements are flagged now.

@@ -703,7 +703,12 @@ before the transfer; without ALL REFERENCES not after statements that only
 read it), and after each change of a PERFORM VARYING item; DEBUG-NAME is its
 name with its qualifiers, the DEBUG-SUB fields its subscripts.
 
-Not yet: references in PERFORM UNTIL conditions.
+Each evaluation of a PERFORM UNTIL condition (and of the UNTIL conditions
+of VARYING and AFTER) runs the procedures of the items it names, whatever
+its outcome. WRITE and REWRITE run them before the record is written (after
+the move of FROM). Without ALL REFERENCES, the sending operands of MOVE and
+of the arithmetic statements do not count. DEBUG-CONTENTS has 2048
+characters.
 
 ## 15. Run-time errors [implemented]
 

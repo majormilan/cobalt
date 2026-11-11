@@ -148,6 +148,16 @@ static const char *tok_desc(void) {
     return buf;
 }
 
+// The Communication module (CD entries, SEND, RECEIVE, ENABLE, DISABLE,
+// PURGE, ACCEPT MESSAGE COUNT) is not supported (docs/release-checklist.md 1.3)
+static void communication_unsupported(SourceLocation loc, const char *what) {
+    static bool noted;
+    diag_error(loc, "%s belongs to the Communication module, which cobalt does not support", what);
+    if (!noted) diag_note_plain("the Communication module (message queues of a host system) is obsolete in practice; "
+                    "most COBOL compilers leave it out");
+    noted = true;
+}
+
 // FIPS flagging: an obsolete element of COBOL-85 (with --flag-obsolete)
 static void flag_obsolete(int line, int col, const char *what) {
     diag_warning(W_OBSOLETE, (SourceLocation){tok.filename, line, col}, "OBSOLETE: %s", what);
@@ -2746,6 +2756,15 @@ static AstNode *parse_statement(void) {
         AstNode *accept_stmt = ast_new(AST_STATEMENT_ACCEPT, NULL, loc);
 
         if (tok.kind == TOK_IDENT) {
+            Token p = peek_token();
+            if (p.kind == TOK_IDENT && p.length == 7 && strncasecmp(p.lexeme, "MESSAGE", 7) == 0) {
+                communication_unsupported(loc, "ACCEPT MESSAGE COUNT");
+                ast_free(accept_stmt);
+                synchronize();
+                return NULL;
+            }
+        }
+        if (tok.kind == TOK_IDENT) {
             accept_stmt->children = parse_identifier();
             if (tok.kind == TOK_FROM) {
                 // FROM DATE | DAY | DAY-OF-WEEK | TIME, or a device (the console)
@@ -2816,6 +2835,12 @@ static AstNode *parse_statement(void) {
         return compute;
     }
 
+    if (tok.kind == TOK_SEND || tok.kind == TOK_RECEIVE || tok.kind == TOK_ENABLE || tok.kind == TOK_DISABLE ||
+        tok.kind == TOK_PURGE) {
+        communication_unsupported(TOK_LOC, tok_desc());
+        synchronize();
+        return NULL;
+    }
     if (tok.kind != TOK_EOF) {
         diag_error(TOK_LOC, "Expected a statement, found %s", tok_desc());
         synchronize(); // Try to recover
@@ -2846,6 +2871,8 @@ static AstNode *parse_sentence(void) {
     if (tok.kind == TOK_PERIOD) {
         next();
         synced_in_sentence = false;
+    } else if (synced_at_period) {
+        // error recovery already went past the period that ends the sentence
     } else if (tok.kind != TOK_IDENT && tok.kind != TOK_EOF && !is_division_start(tok.kind) &&
                !(tok.kind == TOK_END && end_program_follows())) {
         // A token that cannot continue the sentence (e.g. a stray ELSE)
@@ -3043,6 +3070,11 @@ static void parse_procedure_body(AstNode *div) {
     }
 }
 
+// COMMUNICATION SECTION or REPORT SECTION: another section of the DATA DIVISION
+static bool data_section_header(void) {
+    return (tok_spelled("COMMUNICATION") || tok_spelled("REPORT")) && peek_token().kind == TOK_SECTION;
+}
+
 // DATA DIVISION section body: data description entries
 static AstNode *parse_section(void) {
     SourceLocation loc = {tok.filename, tok.line, tok.column};
@@ -3054,7 +3086,8 @@ static AstNode *parse_section(void) {
     AstNode *last = NULL;
 
     while (tok.kind != TOK_EOF && !is_division_start(tok.kind) &&
-           tok.kind != TOK_FILE && tok.kind != TOK_LINKAGE && tok.kind != TOK_WORKING_STORAGE) {
+           tok.kind != TOK_FILE && tok.kind != TOK_LINKAGE && tok.kind != TOK_WORKING_STORAGE &&
+           !data_section_header()) {
         const char *before = tok.lexeme;
         parser_panic_mode = false;
         if (tok.kind == TOK_NUMBER) {
@@ -3654,7 +3687,9 @@ static AstNode *parse_division(void) {
                 if (sec) list_append(&div->children, &sec_tail, sec);
                 continue;
             }
-            {
+            if (tok_is_word("COMMUNICATION")) {
+                communication_unsupported(TOK_LOC, "The COMMUNICATION SECTION");
+            } else {
                 diag_error(TOK_LOC, "Expected a DATA DIVISION section, found %s", tok_desc());
             }
             // Skip to the next section of this division

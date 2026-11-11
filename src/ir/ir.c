@@ -192,7 +192,7 @@ static int num_debug_uses = 0;
 static bool debugging_mode = false;         // WITH DEBUGGING MODE
 static int debug_item = -1;                 // DEBUG-ITEM and its fields (vars)
 static int debug_line, debug_name, debug_sub[3], debug_contents;
-#define DEBUG_CONTENTS_SIZE 200
+#define DEBUG_CONTENTS_SIZE 2048   // DEBUG-CONTENTS: records up to this size whole
 
 // The data-name of the RELATIVE / RECORD key clause of file f, or NULL
 static AstNode *file_key(int f, const char *what) {
@@ -2210,6 +2210,7 @@ static AstNode *fold_ops(AstKind kind, AstNode *first, AstNode **ops, int n) {
 
 static void lower_block(IrProgram *ir, AstNode *block);
 static void debug_item_event(IrProgram *ir, AstNode *ref, int line);
+static bool debugging_here(void);
 static void debug_file_event(IrProgram *ir, AstNode *stmt, int f);
 static void debug_after_statement(IrProgram *ir, AstNode *stmt);
 
@@ -3277,6 +3278,49 @@ static void lower_perform_body(IrProgram *ir, AstNode *node, int first, int last
 // TEST AFTER:   set all identifiers; B: body;
 //   for k = n..1: if not condk { augment idk; set id(k+1..n) to FROM; goto B }
 //   done
+// The identifiers of a condition (and of its expressions and subscripts)
+static void condition_idents(AstNode *n, AstNode **out, int *count, int max) {
+    for (; n; n = n->next) {
+        if (n->kind == AST_IDENTIFIER && *count < max) out[(*count)++] = n;
+        condition_idents(n->children, out, count, max);
+        if (n->kind != AST_IDENTIFIER) condition_idents(n->extra, out, count, max);
+    }
+}
+
+// A PERFORM UNTIL condition: jump to target when it is `when`. Under the
+// Debug module, each evaluation of an item the condition names runs its
+// debugging procedures (after the evaluation, whatever the outcome).
+static void until_cond_jump(IrProgram *ir, AstNode *cond, const char *target, bool when) {
+    AstNode *ids[64];
+    int n = 0;
+    if (debugging_here()) {
+        AstNode *saved = cond->next;
+        cond->next = NULL;              // this condition only
+        condition_idents(cond, ids, &n, 64);
+        cond->next = saved;
+    }
+    if (n == 0) {
+        emit_cond_jump(ir, cond, target, when);
+        return;
+    }
+    char yes[32], no[32];
+    new_label(yes, sizeof(yes), "until_yes");
+    new_label(no, sizeof(no), "until_no");
+    emit_cond_jump(ir, cond, yes, when);
+    for (int pass = 0; pass < 2; pass++) {
+        if (pass == 1) emit_label(ir, yes);
+        // each item once per evaluation
+        for (int k = 0; k < n; k++) {
+            VarInfo *v = find_item(ids[k], false);
+            bool seen = false;
+            for (int j = 0; j < k && !seen; j++) seen = find_item(ids[j], false) == v;
+            if (v && !seen) debug_item_event(ir, ids[k], cond->loc.line);
+        }
+        emit_jump(ir, IR_JUMP, pass == 0 ? no : target);
+    }
+    emit_label(ir, no);
+}
+
 static void lower_varying(IrProgram *ir, AstNode *node, AstNode *clauses, int first, int last) {
     AstNode *cl[16];
     int n = 0;
@@ -3296,11 +3340,11 @@ static void lower_varying(IrProgram *ir, AstNode *node, AstNode *clauses, int fi
         for (int k = 0; k < n; k++) {
             emit_label(ir, test_lbl[k]);
             if (k == 0) {
-                emit_cond_jump(ir, COND(0), done_lbl, true);
+                until_cond_jump(ir, COND(0), done_lbl, true);
             } else {
                 char cont[32];
                 new_label(cont, sizeof(cont), "vary_cont");
-                emit_cond_jump(ir, COND(k), cont, false);
+                until_cond_jump(ir, COND(k), cont, false);
                 lower_varying_set(ir, VAR(k - 1), BY(k - 1), true);
                 lower_varying_set(ir, VAR(k), FROM(k), false);
                 emit_jump(ir, IR_JUMP, test_lbl[k - 1]);
@@ -3318,7 +3362,7 @@ static void lower_varying(IrProgram *ir, AstNode *node, AstNode *clauses, int fi
         for (int k = n - 1; k >= 0; k--) {
             char next_lbl[32];
             new_label(next_lbl, sizeof(next_lbl), "vary_next");
-            emit_cond_jump(ir, COND(k), next_lbl, true);
+            until_cond_jump(ir, COND(k), next_lbl, true);
             lower_varying_set(ir, VAR(k), BY(k), true);
             for (int j = k + 1; j < n; j++) lower_varying_set(ir, VAR(j), FROM(j), false);
             emit_jump(ir, IR_JUMP, body_lbl);
@@ -3373,9 +3417,9 @@ static void lower_perform(IrProgram *ir, AstNode *node) {
         new_label(loop_lbl, sizeof(loop_lbl), "until");
         new_label(done_lbl, sizeof(done_lbl), "until_done");
         emit_label(ir, loop_lbl);
-        if (!node->is_signed) emit_cond_jump(ir, node->loop, done_lbl, true);
+        if (!node->is_signed) until_cond_jump(ir, node->loop, done_lbl, true);
         lower_perform_body(ir, node, first, last);
-        if (node->is_signed) emit_cond_jump(ir, node->loop, done_lbl, true);
+        if (node->is_signed) until_cond_jump(ir, node->loop, done_lbl, true);
         emit_jump(ir, IR_JUMP, loop_lbl);
         emit_label(ir, done_lbl);
     } else if (strcmp(form, "VARYING") == 0) {
@@ -4141,6 +4185,7 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
             if (dep) move_to_item(ir, dep, fi->reclen_var);
             bool is_write = node->kind == AST_STATEMENT_WRITE;
             if (!is_write) {
+                if (debugging_mode) debug_after_statement(ir, node);    // (before the record is written)
                 IrInstr *w = emit_file_op(ir, IR_FILE_REWRITE, f);
                 w->lit_name = strdup(rf.label);
                 w->size = fi->variable ? rf.size : fi->max_size;   // fixed: the whole area
@@ -4168,6 +4213,7 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
                     }
                 }
             }
+            if (debugging_mode) debug_after_statement(ir, node);    // (before the record is written)
             IrInstr *w = emit_file_op(ir, IR_FILE_WRITE, f);
             w->lit_name = strdup(rf.label);
             w->size = fi->variable || fi->select->decimal_places == 1 || mode ? rf.size : fi->max_size;
@@ -5302,9 +5348,12 @@ static void debug_item_event(IrProgram *ir, AstNode *ref, int line);
 
 static void lower_block(IrProgram *ir, AstNode *block) {
     for (AstNode *n = block; n; n = n->next) {
+        // WRITE and REWRITE: the debugging procedures of the items they name
+        // run before the record is written (after the move of FROM)
+        bool before = n->kind == AST_STATEMENT_WRITE || n->kind == AST_STATEMENT_REWRITE;
         lower_node(ir, n);
         if (debugging_mode && n->kind != AST_SENTENCE && n->kind != AST_PARAGRAPH && n->kind != AST_SECTION &&
-            n->kind != AST_STATEMENT_GOTO)
+            n->kind != AST_STATEMENT_GOTO && !before)
             debug_after_statement(ir, n);
     }
 }
@@ -5613,6 +5662,26 @@ static void debug_item_event(IrProgram *ir, AstNode *ref, int line) {
     }
 }
 
+// An operand of an arithmetic statement that is only a sending item (not a
+// receiver): for USE FOR DEBUGGING without ALL REFERENCES it does not count
+static bool arith_source(const AstNode *stmt, const AstNode *r) {
+    int first_receiver;
+    bool giving = stmt->is_numeric;
+    switch (stmt->kind) {
+        case AST_STATEMENT_ADD:      first_receiver = stmt->decimal_places; break;
+        case AST_STATEMENT_SUBTRACT: first_receiver = stmt->decimal_places + (giving ? 1 : 0); break;
+        case AST_STATEMENT_MULTIPLY:
+        case AST_STATEMENT_DIVIDE:   first_receiver = giving ? 2 : 1; break;
+        case AST_STATEMENT_COMPUTE:  first_receiver = 1; break;
+        default: return false;
+    }
+    if (stmt->name && strcmp(stmt->name, "CORR") == 0) return false;
+    int k = 0;
+    for (const AstNode *c = stmt->children; c; c = c->next, k++)
+        if (c == r) return k < first_receiver;
+    return true;            // inside an expression or a subscript: sent
+}
+
 // After a statement: the debugging procedures for the items it refers to
 static void debug_after_statement(IrProgram *ir, AstNode *stmt) {
     if (!debugging_here()) return;
@@ -5651,8 +5720,9 @@ static void debug_after_statement(IrProgram *ir, AstNode *stmt) {
                     break;
                 }
                 if (find_item(r, false) != tv) continue;
-                // MOVE: without ALL REFERENCES, only as a receiver
+                // MOVE and arithmetic: without ALL REFERENCES, only as a receiver
                 if (!t->is_signed && stmt->kind == AST_STATEMENT_MOVE && r == stmt->children) continue;
+                if (!t->is_signed && arith_source(stmt, r)) continue;
                 char name[128];
                 int len = snprintf(name, sizeof(name), "%s", r->name);
                 for (AstNode *q = r->extra; q && len < (int)sizeof(name) - 1; q = q->next)
