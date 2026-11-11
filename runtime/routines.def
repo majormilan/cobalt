@@ -40,6 +40,8 @@ RUNTIME_ROUTINE(runtime_sort_sort)
 RUNTIME_ROUTINE(runtime_sort_return)
 RUNTIME_ROUTINE(runtime_sort_end)
 RUNTIME_ROUTINE(runtime_call)
+RUNTIME_ROUTINE(runtime_check_fail)
+RUNTIME_ROUTINE(cobrt_where)          /* data: the prefix of run-time error messages */
 RUNTIME_ROUTINE(runtime_cancel)
 RUNTIME_ROUTINE(runtime_external)
 RUNTIME_ROUTINE(runtime_function)

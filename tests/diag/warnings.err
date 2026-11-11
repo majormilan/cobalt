@@ -56,7 +56,7 @@ tests/diag/warnings.cbl:24:12: note: 'AMOUNT' is never above 999.99 (PICTURE 9(3
 tests/diag/warnings.cbl:37:42: warning: Division by zero: this always raises the size error condition [-Wdivide-by-zero]
     37 |            COMPUTE AMOUNT = BIG-AMOUNT / 0.
        |                                          ^
-tests/diag/warnings.cbl:38:12: warning: Nothing handles the invalid key condition of this statement; the run stops if it occurs [-Wunchecked-io]
+tests/diag/warnings.cbl:38:12: warning: Nothing handles the invalid key condition of this statement, so the program cannot tell when it occurs [-Wunchecked-io]
     38 |            READ MASTER-FILE.
        |            ^~~~
 note: add INVALID KEY, a FILE STATUS clause for 'MASTER-FILE', or a USE procedure

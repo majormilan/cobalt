@@ -27,6 +27,7 @@ typedef struct {
     int offset;             // offset of the first occurrence in the record
     int size;               // bytes of one occurrence
     int occurs;             // OCCURS count (the maximum with DEPENDING ON), 0 without OCCURS
+    int occurs_min;         // OCCURS min TO max DEPENDING ON: the minimum
     AstNode *depending;     // OCCURS DEPENDING ON item (owned by the AST), or NULL
     int redefines;          // item redefined by this one, or -1
     int first_index;        // table: its first index-name, or -1
@@ -986,6 +987,7 @@ static void build_data(IrProgram *ir, AstNode *program) {
                 if (occurs) {
                     v->occurs = atoi(occurs->name);
                     v->depending = occurs->extra;
+                    v->occurs_min = occurs->digits > 0 ? occurs->digits : 0;
                     if (v->depending && (occurs->digits < 0 || occurs->digits >= v->occurs))
                         diag_error(decl->loc, "OCCURS %d TO %d is not a valid range", occurs->digits, v->occurs);
                     if (v->occurs < 1 || level == 1 || level == 77) {
@@ -1545,6 +1547,48 @@ static VarInfo *odo_table_in(const VarInfo *v) {
 // plus its current occurrences. Returns the size of the length slot. A
 // receiving group that also holds the DEPENDING ON item has its maximum
 // length (the count arrives with the data).
+// ── Run-time errors and checks (-fcheck) ────────────────────────────────────
+
+bool ir_runtime_checks;                       // -fcheck: range checks
+static const char *where_program;             // the program being lowered
+static const AstNode *where_stmt;             // the statement being lowered
+
+// The prefix of run-time error messages for a location:
+// "FILE:LINE: run-time error in program P: " (a data literal, one per line)
+static const char *where_label(IrProgram *ir, SourceLocation loc) {
+    static char label[32];
+    static const char *last_file;
+    static int last_line = -1;
+    static IrProgram *last_ir;
+    if (last_ir == ir && last_file == loc.filename && last_line == loc.line) return label;
+    char text[512];
+    if (loc.filename && loc.line)
+        snprintf(text, sizeof(text), "%s:%d: run-time error in program %s: ", loc.filename, loc.line,
+                 where_program ? where_program : "?");
+    else
+        snprintf(text, sizeof(text), "run-time error in program %s: ", where_program ? where_program : "?");
+    emit_data_lit(ir, "where", text, label, sizeof(label));
+    last_ir = ir;
+    last_file = loc.filename;
+    last_line = loc.line;
+    return label;
+}
+
+// Check that the value on top of the numeric stack is low..high (high < 0:
+// the depending item is the limit), naming it by what
+static void emit_check(IrProgram *ir, SourceLocation loc, const char *what, int low, int high, AstNode *limit) {
+    char wl[32], tl[32];
+    snprintf(wl, sizeof(wl), "%s", where_label(ir, where_stmt ? where_stmt->loc : loc));
+    emit_data_lit(ir, "what", what, tl, sizeof(tl));
+    if (limit) push_int(ir, limit);
+    IrInstr *c = emit(ir, IR_CHECK_RANGE);
+    c->var_name = strdup(wl);
+    c->lit_name = strdup(tl);
+    c->size = low;
+    c->imm = high;
+    c->flags = limit ? 1 : 0;
+}
+
 static int odo_length(IrProgram *ir, const VarInfo *v, const VarInfo *t) {
     VarInfo *dv = find_item(t->depending, true);
     if (resolving_receiver && dv)
@@ -1556,6 +1600,11 @@ static int odo_length(IrProgram *ir, const VarInfo *v, const VarInfo *t) {
     }
     int slot = addr_slots++;
     push_int(ir, t->depending);
+    if (ir_runtime_checks) {
+        char what[160];
+        snprintf(what, sizeof(what), "the value of '%s' (OCCURS DEPENDING ON of '%s')", dv->name, t->name);
+        emit_check(ir, t->depending->loc, what, t->occurs_min, t->occurs, NULL);
+    }
     emit_num(ir, IR_NUM_CONST, t->size, 0);
     emit_num(ir, IR_NUM_MUL, 0, 0);
     emit_num(ir, IR_NUM_CONST, t->offset - v->offset, 0);
@@ -1648,6 +1697,27 @@ static bool resolve_ref(IrProgram *ir, AstNode *ref, FieldRef *out) {
         else if (len_const && length) size = (int)len_val;
     }
 
+    // -fcheck: the item with OCCURS of each dimension (outermost first), and
+    // literal subscripts of tables with OCCURS DEPENDING ON (their limit is
+    // known only at run time)
+    const VarInfo *dim_var[16] = {0};
+    char what[200];
+    if (ir_runtime_checks) {
+        int d = ndims;
+        for (const VarInfo *a = v; a && d > 0; a = a->parent >= 0 ? &vars[a->parent] : NULL)
+            if (a->occurs) dim_var[--d] = a;
+        k = 0;
+        for (AstNode *s = ref->children; s; s = s->next, k++) {
+            long long n;
+            if (!is_int_literal(s, &n) || !dim_var[k] || !dim_var[k]->depending) continue;
+            emit_num(ir, IR_NUM_CONST, n, 0);
+            if (ndims == 1) snprintf(what, sizeof(what), "the subscript of '%s'", ref->name);
+            else snprintf(what, sizeof(what), "subscript %d of '%s'", k + 1, ref->name);
+            emit_check(ir, s->loc, what, 1, counts[k], dim_var[k]->depending);       // the current number
+            emit(ir, IR_NUM_DROP);
+        }
+    }
+
     // A group holding a table with OCCURS DEPENDING ON: its length follows
     // the current number of occurrences (the table ends the group)
     VarInfo *odo = ref->loop ? NULL : odo_table_in(v);
@@ -1668,12 +1738,23 @@ static bool resolve_ref(IrProgram *ir, AstNode *ref, FieldRef *out) {
         long long n;
         if (is_int_literal(s, &n)) continue;
         push_int(ir, s);
+        if (ir_runtime_checks) {
+            if (ndims == 1) snprintf(what, sizeof(what), "the subscript of '%s'", ref->name);
+            else snprintf(what, sizeof(what), "subscript %d of '%s'", k + 1, ref->name);
+            // the OCCURS maximum, then (OCCURS DEPENDING ON) the current number
+            emit_check(ir, s->loc, what, 1, counts[k], NULL);
+            if (dim_var[k] && dim_var[k]->depending) emit_check(ir, s->loc, what, 1, counts[k], dim_var[k]->depending);
+        }
         IrInstr *add = emit(ir, IR_ADDR_ADD);
         add->imm = slot;
         add->size = strides[k];
     }
     if (ref->loop && !start_const) {
         push_int(ir, start);
+        if (ir_runtime_checks) {
+            snprintf(what, sizeof(what), "the reference modification start of '%s'", ref->name);
+            emit_check(ir, start->loc, what, 1, length && len_const ? v->size - (int)len_val + 1 : v->size, NULL);
+        }
         IrInstr *add = emit(ir, IR_ADDR_ADD);
         add->imm = slot;
         add->size = 1;
@@ -1682,6 +1763,21 @@ static bool resolve_ref(IrProgram *ir, AstNode *ref, FieldRef *out) {
         // Length known only at run time
         if (length) {
             push_int(ir, length);
+            if (ir_runtime_checks) {
+                snprintf(what, sizeof(what), "the reference modification length of '%s'", ref->name);
+                emit_check(ir, length->loc, what, 1, start_const ? v->size - (int)start_val + 1 : v->size, NULL);
+                if (!start_const) {
+                    // the last character: start + length - 1
+                    emit(ir, IR_NUM_DUP);
+                    push_int(ir, start);
+                    emit_num(ir, IR_NUM_ADD, 0, 0);
+                    emit_num(ir, IR_NUM_CONST, 1, 0);
+                    emit_num(ir, IR_NUM_SUB, 0, 0);
+                    snprintf(what, sizeof(what), "the end of the reference modification of '%s'", ref->name);
+                    emit_check(ir, length->loc, what, 1, v->size, NULL);
+                    emit(ir, IR_NUM_DROP);
+                }
+            }
         } else {
             emit_num(ir, IR_NUM_CONST, v->size + 1, 0);
             push_int(ir, start);
@@ -3612,7 +3708,7 @@ static void check_unhandled(const AstNode *stmt, int f, bool at_end) {
     if (f < 0 || stmt->on_error || files[f].status_var >= 0 || files[f].is_sort) return;
     if (use_for_file(files[f].name) >= 0) return;
     for (int k = 1; k <= 4; k++) if (use_for_mode(k) >= 0) return;
-    if (diag_warning(W_UNCHECKED_IO, stmt->loc, "Nothing handles the %s condition of this statement; the run stops if it occurs",
+    if (diag_warning(W_UNCHECKED_IO, stmt->loc, "Nothing handles the %s condition of this statement, so the program cannot tell when it occurs",
                      at_end ? "at end" : "invalid key"))
         diag_note_plain("add %s, a FILE STATUS clause for '%s', or a USE procedure", at_end ? "AT END" : "INVALID KEY",
                         files[f].name);
@@ -5027,13 +5123,27 @@ static void lower_accept(IrProgram *ir, AstNode *node) {
 
 static void lower_node_kind(IrProgram *ir, AstNode *node);
 
+// Statements that can end the run with a run-time error: they tell the
+// runtime where the program is first
+static bool can_fail(AstKind k) {
+    return k == AST_STATEMENT_CALL || k == AST_STATEMENT_OPEN || k == AST_STATEMENT_CLOSE ||
+           k == AST_STATEMENT_READ || k == AST_STATEMENT_WRITE || k == AST_STATEMENT_REWRITE ||
+           k == AST_STATEMENT_DELETE || k == AST_STATEMENT_START || k == AST_STATEMENT_SORT ||
+           k == AST_STATEMENT_RELEASE || k == AST_STATEMENT_RETURN;
+}
+
 static void lower_node(IrProgram *ir, AstNode *node) {
     if (!node) return;
     int saved = stmt_kind_now;
-    if (node->kind != AST_SENTENCE && node->kind != AST_THEN_BLOCK && node->kind != AST_ELSE_BLOCK)
+    const AstNode *saved_stmt = where_stmt;
+    if (node->kind != AST_SENTENCE && node->kind != AST_THEN_BLOCK && node->kind != AST_ELSE_BLOCK) {
         stmt_kind_now = node->kind;
+        where_stmt = node;
+        if (can_fail(node->kind)) emit(ir, IR_SET_WHERE)->var_name = strdup(where_label(ir, node->loc));
+    }
     lower_node_kind(ir, node);
     stmt_kind_now = saved;
+    where_stmt = saved_stmt;
 }
 
 static void lower_node_kind(IrProgram *ir, AstNode *node) {
@@ -5729,6 +5839,7 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
     if (dialect->sign_encoding == SIGN_ENCODING_EBCDIC) ir->runtime_flags |= IR_RT_SIGN_EBCDIC;
     ir->subprogram = !unit->main;
     ir->program_name = strdup(program->name ? program->name : "MAIN");
+    where_program = ir->program_name;
     char entry[160], info[160];
     ir_program_symbols(ir->program_name, entry, info, sizeof(entry));
     ir->entry_symbol = strdup(entry);

@@ -1,0 +1,2 @@
+tests/runerr/io_error.cbl:13: run-time error in program IO-ERROR: I-O error on file 'no-such-master.dat': status 35 (the file does not exist)
+[exit 1]

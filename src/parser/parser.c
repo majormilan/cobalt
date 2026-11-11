@@ -683,12 +683,73 @@ static void undefined_name(SourceLocation loc, const char *name) {
     }
 }
 
+// The RETURN-CODE special register (an extension): an item the compiler
+// declares in a program that uses it, PIC S9(9) COMP-5 EXTERNAL, so every
+// program of the run unit shares it; STOP RUN ends the run with its value
+#define LEVEL_RETURN_CODE (-66)
+static bool uses_return_code;                   // the program being parsed
+
+static Symbol *use_return_code(SourceLocation loc) {
+    static const char *reported_file;
+    Symbol *sym = symtab_resolve_symbol(current_symtab, "RETURN-CODE");
+    if (!sym) {
+        sym = symtab_declare_symbol(current_symtab, "RETURN-CODE", SYM_VAR, (SourceLocation){0});
+        if (sym) sym->level = LEVEL_RETURN_CODE;
+    }
+    if (!uses_return_code && reported_file != loc.filename) {
+        diag_extension(EXT_IBM, loc, "the RETURN-CODE special register");
+        reported_file = loc.filename;
+    }
+    uses_return_code = true;
+    return sym;
+}
+
+// 01 RETURN-CODE PIC S9(9) COMP-5 EXTERNAL, in the WORKING-STORAGE SECTION
+static void declare_return_code(AstNode *prog) {
+    SourceLocation none = {0};
+    AstNode *data = NULL, *last = NULL;
+    for (AstNode *d = prog->children; d; d = d->next) {
+        if (d->kind == AST_DIVISION && strcasecmp(d->name, "DATA") == 0) data = d;
+        if (d->kind == AST_DIVISION && strcasecmp(d->name, "ENVIRONMENT") == 0 && !data) last = d;
+        if (d->kind == AST_DIVISION && strcasecmp(d->name, "IDENTIFICATION") == 0 && !last) last = d;
+    }
+    if (!data) {
+        // a DATA DIVISION after the ENVIRONMENT (or IDENTIFICATION) DIVISION
+        data = ast_new(AST_DIVISION, "DATA", none);
+        if (last) { data->next = last->next; last->next = data; }
+        else { data->next = prog->children; prog->children = data; }
+    }
+    AstNode *ws = NULL, *ws_after = NULL;
+    for (AstNode *c = data->children; c; c = c->next) {
+        if (c->name && strcasecmp(c->name, "WORKING-STORAGE") == 0) ws = c;
+        if (c->name && strcasecmp(c->name, "FILE") == 0) ws_after = c;
+    }
+    if (!ws) {
+        ws = ast_new(AST_SECTION, "WORKING-STORAGE", none);
+        if (ws_after) { ws->next = ws_after->next; ws_after->next = ws; }
+        else { ws->next = data->children; data->children = ws; }
+    }
+    AstNode *rc = ast_new(AST_VAR_DECL, "RETURN-CODE", none);
+    rc->text = strdup("01");
+    rc->is_external = true;
+    AstNode *pic = ast_new(AST_PIC_CLAUSE, "S9(9)", none);
+    AstNode *usage = ast_new(AST_USAGE_CLAUSE, NULL, none);
+    usage->usage_type = USAGE_COMP5;
+    rc->children = pic;
+    pic->next = usage;
+    AstNode **tail = &ws->children;
+    while (*tail) tail = &(*tail)->next;
+    *tail = rc;
+}
+
 static AstNode *parse_identifier(void) {
     if (tok_is_word("FUNCTION")) return parse_function();
     SourceLocation loc = {tok.filename, tok.line, tok.column};
     char *name = tok_to_str();
     AstNode *id = ast_new(AST_IDENTIFIER, name, loc);
     Symbol *sym = symtab_resolve_symbol(current_symtab, name);
+    if ((!sym && strcasecmp(name, "RETURN-CODE") == 0) || (sym && sym->level == LEVEL_RETURN_CODE))
+        sym = use_return_code(loc);
     if (sym) symtab_mark_symbol_as_used(sym);
     else undefined_name(loc, name);
     free(name);
@@ -3611,6 +3672,8 @@ static AstNode *parse_division(void) {
 static AstNode *parse_one_program(void) {
     SourceLocation loc = {tok.filename, tok.line, tok.column};
     AstNode *prog = ast_new(AST_PROGRAM, NULL, loc);
+    bool outer_uses_return_code = uses_return_code;
+    uses_return_code = false;
     AstNode *last = NULL;
     int has_proc = 0;
     int error_count_before = error_count;
@@ -3678,6 +3741,8 @@ static AstNode *parse_one_program(void) {
 
     if (!has_proc && error_count == error_count_before)
         diag_error(prog->loc, "Program '%s' has no PROCEDURE DIVISION", prog->name ? prog->name : "");
+    if (uses_return_code) declare_return_code(prog);
+    uses_return_code = outer_uses_return_code;
     return prog;
 }
 

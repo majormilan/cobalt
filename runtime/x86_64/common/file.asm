@@ -27,6 +27,10 @@ extern cobrt_rel_close
 extern cobrt_rel_read
 extern cobrt_rel_write
 extern cobrt_rel_rewrite
+extern cobrt_error_begin
+extern cobrt_error_text
+extern cobrt_error_number
+extern cobrt_error_end
 extern cobrt_rel_delete
 extern cobrt_rel_start
 extern cobrt_idx_open
@@ -61,41 +65,37 @@ cobrt_file_status:
 .ret:
     ret
 .fatal:
-    push rax
-    mov ARG0, COBRT_STDERR
-    lea ARG1, [rel msg_io]
-    mov ARG2, msg_io_len
-    call cobrt_os_write
-    mov rsi, [rbx + FCB_NAME]           ; file name
-    xor edx, edx
-.name_len:
-    cmp byte [rsi + rdx], 0
-    je .name_done
-    inc rdx
-    jmp .name_len
-.name_done:
-    mov ARG2, rdx
-    mov ARG1, rsi
-    mov ARG0, COBRT_STDERR
-    call cobrt_os_write
-    pop rax
-    sub rsp, 8                          ; status digits
-    xor edx, edx
-    mov r8d, 10
-    div r8d
-    add al, '0'
-    add dl, '0'
-    mov byte [rsp], ' '
-    mov [rsp + 1], al
-    mov [rsp + 2], dl
-    mov byte [rsp + 3], 10
-    mov ARG0, COBRT_STDERR
-    mov ARG1, rsp
-    mov ARG2, 4
-    call cobrt_os_write
-    call cobrt_files_close_all
-    mov ARG0, 1
-    call cobrt_os_exit
+    ; <where>I-O error on file 'NAME': status NN (meaning). The run ends,
+    ; so r12 and r13 need not be kept; the push aligns the stack.
+    push r12
+    mov r12, rax                        ; the status
+    call cobrt_error_begin
+    lea ARG0, [rel msg_io]
+    call cobrt_error_text
+    mov ARG0, [rbx + FCB_NAME]
+    call cobrt_error_text
+    lea ARG0, [rel msg_io_status]
+    call cobrt_error_text
+    mov ARG0, r12
+    call cobrt_error_number
+    lea r13, [rel io_meanings]
+.meaning:
+    mov rdx, [r13]
+    test rdx, rdx
+    jz .meaning_done                    ; (end of the table)
+    cmp rdx, r12
+    je .meaning_found
+    add r13, 16
+    jmp .meaning
+.meaning_found:
+    lea ARG0, [rel msg_io_open]
+    call cobrt_error_text
+    mov ARG0, [r13 + 8]
+    call cobrt_error_text
+    lea ARG0, [rel msg_io_close]
+    call cobrt_error_text
+.meaning_done:
+    call cobrt_error_end
 
 ; The I-O buffer of the FCB in rbx (allocated once, kept after CLOSE);
 ; returns it in rax, or 0
@@ -1110,5 +1110,28 @@ open_files: resq 1                      ; FCBs of the open files (FCB_NEXT chain
 section .rodata
 ; cobrt_os_open mode for each OPEN mode (index OPEN_*)
 open_modes: dq 0, OS_OPEN_READ, OS_OPEN_WRITE, OS_OPEN_READWRITE, OS_OPEN_APPEND_OLD
-msg_io: db "COBALT runtime: I/O error on file "
-msg_io_len equ $ - msg_io
+msg_io:        db "I-O error on file '", 0
+msg_io_status: db "': status ", 0
+msg_io_open:   db " (", 0
+msg_io_close:  db ")", 0
+
+; Status codes of the permanent and logic errors (COBOL-85), with what they mean
+align 8
+io_meanings:
+    dq 30, st30, 34, st34, 35, st35, 37, st37, 38, st38, 39, st39
+    dq 41, st41, 42, st42, 43, st43, 44, st44, 46, st46, 47, st47, 48, st48, 49, st49
+    dq 0, 0
+st30: db "permanent error", 0
+st34: db "boundary violation: the file is full", 0
+st35: db "the file does not exist", 0
+st37: db "the file cannot be opened in this mode (permission)", 0
+st38: db "the file was closed WITH LOCK", 0
+st39: db "the file's attributes conflict with its description", 0
+st41: db "the file is already open", 0
+st42: db "the file is not open", 0
+st43: db "no successful READ before this REWRITE or DELETE", 0
+st44: db "the record size is not valid for the file", 0
+st46: db "no next record: at end, or the last READ failed", 0
+st47: db "the file is not open INPUT or I-O", 0
+st48: db "the file is not open OUTPUT, I-O or EXTEND", 0
+st49: db "the file is not open I-O", 0

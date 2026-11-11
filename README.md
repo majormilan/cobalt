@@ -34,6 +34,9 @@ what is left.
   mean"), follow COPY into the copybook, and named warnings in the style of
   gcc and clang (`-Wall`, `-Wextra`, `-Werror`). See
   [docs/diagnostics.md](docs/diagnostics.md).
+- **Run-time errors** name the source line and the program
+  (`LEDGER.cbl:42: run-time error in program LEDGER: the subscript of
+  'ENTRY' is 11, out of range 1 to 10`); `-fcheck` adds range checks.
 - **Fast builds.** On a 64,000-line program (`tools/bench/compile.py`)
   cobalt builds the executable in 2.5 s when cobalt itself is compiled with
   `-O2` (5 s with the default debug build), against 12 to 15 s for
@@ -67,6 +70,7 @@ cobalt hello.cbl                       # executable ./hello
 cobalt main.cbl sub.cbl -o payroll     # several programs, one executable (CALL)
 cobalt -I copylib ledger.cbl           # copybooks from copylib/
 cobalt -X pedantic -Wextra ledger.cbl  # strict COBOL-85, all warnings
+cobalt -fcheck ledger.cbl              # subscripts and reference modification checked at run time
 cobalt -c ledger.cbl                   # object file ledger.o
 cobalt --help                          # every option
 ```

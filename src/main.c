@@ -140,6 +140,11 @@ static void print_help(const char *progname) {
     printf("        sign=ascii|ebcdic            overpunched sign encoding\n");
     printf("        binary-truncate=yes|no       COMP items limited to PICTURE digits\n\n");
 
+    printf("Run time:\n");
+    printf("  -fcheck                Check subscripts, OCCURS DEPENDING ON values and reference\n");
+    printf("                         modification at run time; a failed check ends the run\n");
+    printf("                         with the source line (status 1)\n\n");
+
     printf("Diagnostics:\n");
     printf("  -Wname, -Wno-name      Turn the warning on or off (names below)\n");
     printf("  -Wall                  The warnings that are on by default\n");
@@ -246,6 +251,8 @@ int main(int argc, char **argv) {
                 }
                 break;
             case 'f':
+                if (strcmp(optarg, "check") == 0) { ir_runtime_checks = true; break; }
+                if (strcmp(optarg, "no-check") == 0) { ir_runtime_checks = false; break; }
                 if (strncmp(optarg, "max-errors", 10) == 0 || strncmp(optarg, "diagnostics-color", 17) == 0 ||
                     strncmp(optarg, "no-diagnostics-color", 20) == 0) {
                     char arg[256];

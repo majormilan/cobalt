@@ -1,0 +1,2 @@
+tests/runerr/odo.cbl:12: run-time error in program ODO: the subscript of 'E' is 4, out of range 1 to 3
+[exit 1]

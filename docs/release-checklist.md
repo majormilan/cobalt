@@ -66,16 +66,19 @@ failures; RW and CM are not implemented.
 
 ## 3. Runtime
 
-- [ ] **3.1 Run-time checks** (an option, e.g. `-fcheck` or `--debug`):
-  subscripts and indexes, reference modification, OCCURS DEPENDING ON
-  values, numeric data that is not numeric where it is used.
-  Done when: a failing check stops the run with the program name, the
-  source line and what failed, and each check has a test.
-- [ ] **3.2 Run-time error messages.** Every runtime stop (missing program
+- [x] **3.1 Run-time checks** (`-fcheck`): subscripts and their OCCURS
+  (and the current OCCURS DEPENDING ON value), OCCURS DEPENDING ON values,
+  reference modification start, length and end. A failed check stops the
+  run with the source line, the program and the value
+  (`tests/runerr`, `runtime/ABI.md` section 15).
+- [ ] **3.1b Numeric data check** (`-fcheck`): a numeric DISPLAY or
+  PACKED-DECIMAL item that does not hold a valid number where it is used.
+- [x] **3.2 Run-time error messages.** Every runtime stop (missing program
   on CALL, file errors without handling, checks) reports the program and
   the source line, with a nonzero exit status.
   Done when: documented and tested.
-- [ ] **3.3 Exit status.** STOP RUN exits with RETURN-CODE; documented.
+- [x] **3.3 Exit status.** STOP RUN exits with RETURN-CODE (an extension,
+  shared by the programs of the run unit); documented.
 - [ ] **3.4 File assignment.** ASSIGN names mapped through environment
   variables and a search path (for example `DD_name`, `dd_name`, `name`,
   and `COB_FILE_PATH` as GnuCOBOL does, or cobalt's own documented scheme).

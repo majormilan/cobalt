@@ -93,6 +93,10 @@ typedef enum {
     IR_ADDR_SET,            // A_<imm> = address of var_name
     IR_ADDR_ADD,            // pop v; A_<imm> += (v - 1) * size
     IR_LEN_SET,             // pop v; N_<imm> = v
+    IR_SET_WHERE,           // cobrt_where = &var_name (a data literal: "FILE:LINE: run-time error in program P: ")
+    IR_CHECK_RANGE,         // -fcheck: the top value v (kept) must be size..limit, limit = imm, or popped
+                            //   first when flags & 1; else runtime_check_fail(var_name (where),
+                            //   lit_name (what), v, size, limit)
     IR_CALL_REPLICATE,      // copy the first size bytes of var_name over the
                             //   following imm - 1 occurrences
     // Sequential files (runtime/ABI.md section 7). var_name is the file
@@ -217,6 +221,10 @@ typedef struct {
 } IrUnit;
 
 IrProgram *lower_to_ir(AstNode *program, const Dialect *dialect, const IrUnit *unit);
+
+// -fcheck: subscripts, OCCURS DEPENDING ON values and reference modification
+// are checked at run time
+extern bool ir_runtime_checks;
 
 // The symbol names of a program's entry and descriptor
 void ir_program_symbols(const char *program_name, char *entry, char *info, size_t size);

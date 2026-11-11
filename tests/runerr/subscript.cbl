@@ -1,0 +1,11 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. SUBSCRIPT.
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01  T.
+           05  E PIC 9 OCCURS 3 TIMES.
+       01  I PIC 99 VALUE 7.
+       PROCEDURE DIVISION.
+           MOVE 5 TO E (I).
+           DISPLAY "SURVIVED".
+           STOP RUN.

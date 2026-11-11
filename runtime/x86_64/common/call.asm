@@ -21,6 +21,9 @@ global runtime_external
 
 extern cobrt_program_table
 extern cobrt_files_close_all
+extern cobrt_error_begin
+extern cobrt_error_text
+extern cobrt_error_end
 
 ; The descriptor of the program named by ARG0 (ARG1 bytes, trailing spaces
 ; ignored, case ignored) in rax, or 0
@@ -91,24 +94,27 @@ runtime_call:
     mov eax, 1
     test rbx, rbx
     jnz .done
-    ; No ON EXCEPTION: the run ends
+    ; No ON EXCEPTION: the run ends (the name without trailing spaces)
+.trim_name:
+    test ARG1, ARG1
+    jz .trimmed_name
+    cmp byte [ARG0 + ARG1 - 1], ' '
+    jne .trimmed_name
+    dec ARG1
+    jmp .trim_name
+.trimmed_name:
     push ARG0
     push ARG1
-    mov ARG0, COBRT_STDERR
-    lea ARG1, [rel msg_missing]
-    mov ARG2, msg_missing_len
-    call cobrt_os_write
+    call cobrt_error_begin
+    lea ARG0, [rel msg_missing]
+    call cobrt_error_text
     pop ARG2
     pop ARG1
     mov ARG0, COBRT_STDERR
     call cobrt_os_write
-    mov ARG0, COBRT_STDERR
-    lea ARG1, [rel msg_nl]
-    mov ARG2, 1
-    call cobrt_os_write
-    call cobrt_files_close_all
-    mov ARG0, 1
-    call cobrt_os_exit
+    lea ARG0, [rel msg_quote]
+    call cobrt_error_text
+    call cobrt_error_end
 .done:
     pop r13
     pop r12
@@ -186,10 +192,41 @@ runtime_external:
     pop rbx
     ret
 
+; The value of RETURN-CODE (the EXTERNAL item a program using it declares),
+; or 0 when no program has it: RET0, for the exit status of STOP RUN
+global cobrt_return_code
+cobrt_return_code:
+    mov rcx, [rel externals]
+.next:
+    xor eax, eax
+    test rcx, rcx
+    jz .done
+    cmp qword [rcx + 16], rc_name_len
+    jne .skip
+    mov rdx, [rcx + 8]
+    mov rax, [rdx]                      ; the first 8 characters
+    cmp rax, [rel rc_name]
+    jne .skip
+    movzx eax, word [rdx + 8]
+    cmp ax, [rel rc_name + 8]
+    jne .skip
+    movzx eax, byte [rdx + 10]
+    cmp al, [rel rc_name + 10]
+    jne .skip
+    mov rax, [rcx + 24]
+    movsxd rax, dword [rax]             ; PIC S9(9) COMP-5
+    ret
+.skip:
+    mov rcx, [rcx]
+    jmp .next
+.done:
+    ret
+
 section .bss
 externals: resq 1
 
 section .rodata
-msg_missing: db "COBALT runtime: CALL of a program that does not exist: "
-msg_missing_len equ $ - msg_missing
-msg_nl: db 10
+msg_missing: db "CALL of a program that is not in the run unit: '", 0
+msg_quote: db "'", 0
+rc_name: db "RETURN-CODE"
+rc_name_len equ $ - rc_name

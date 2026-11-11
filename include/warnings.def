@@ -15,4 +15,4 @@ WARNING(W_AREA,               "area",               0, "names and statements in 
 WARNING(W_EXTENSION,          "extension",          0, "elements outside COBOL-85 (by -X strictness)")
 WARNING(W_OBSOLETE,           "obsolete",           1, "obsolete elements of COBOL-85 (FIPS flagging)")
 WARNING(W_UNINITIALIZED,      "uninitialized",      1, "items read but never given a value")
-WARNING(W_UNCHECKED_IO,       "unchecked-io",       1, "I-O statements whose exceptions nothing handles")
+WARNING(W_UNCHECKED_IO,       "unchecked-io",       1, "I-O statements whose AT END / INVALID KEY nothing handles")

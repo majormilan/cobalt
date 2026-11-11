@@ -1,0 +1,2 @@
+tests/runerr/call_missing.cbl:8: run-time error in program CALLER: CALL of a program that is not in the run unit: 'NOSUCH'
+[exit 1]

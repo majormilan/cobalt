@@ -2331,6 +2331,31 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 emit_pop(f, "rax");
                 fprintf(f, "    mov [rel N_%lld], rax\n", i->imm);
                 break;
+            case IR_SET_WHERE:
+                emit_addr(f, "rax", i->var_name);
+                fprintf(f, "    mov [rel cobrt_where], rax\n");
+                break;
+            case IR_CHECK_RANGE: {
+                static int check_counter = 0;
+                int c = check_counter++;
+                if (i->flags & 1) emit_pop(f, "rcx");
+                else fprintf(f, "    mov rcx, %lld\n", i->imm);
+                fprintf(f, "    mov rax, [rsp]\n");
+                fprintf(f, "    cmp rax, %d\n", i->size);
+                fprintf(f, "    jl L_chk_fail_%d\n", c);
+                fprintf(f, "    cmp rax, rcx\n");
+                fprintf(f, "    jle L_chk_ok_%d\n", c);
+                fprintf(f, "L_chk_fail_%d:\n", c);
+                fprintf(f, "    mov r8, rcx\n");
+                fprintf(f, "    mov rdx, rax\n");
+                fprintf(f, "    mov rcx, %d\n", i->size);
+                emit_addr(f, "rdi", i->var_name);
+                emit_addr(f, "rsi", i->lit_name);
+                fprintf(f, "    and rsp, -16\n");
+                fprintf(f, "    call runtime_check_fail\n");
+                fprintf(f, "L_chk_ok_%d:\n", c);
+                break;
+            }
             case IR_CALL_REPLICATE:
                 emit_addr(f, "rdi", i->var_name);
                 fprintf(f, "    mov rsi, %d\n", i->size);

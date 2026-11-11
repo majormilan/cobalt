@@ -704,3 +704,53 @@ read it), and after each change of a PERFORM VARYING item; DEBUG-NAME is its
 name with its qualifiers, the DEBUG-SUB fields its subscripts.
 
 Not yet: references in PERFORM UNTIL conditions.
+
+## 15. Run-time errors [implemented]
+
+A run-time error writes one line to standard error, closes the open files
+and ends the run with status 1:
+
+```
+PAYROLL.cbl:42: run-time error in program PAYROLL: <what happened>
+```
+
+The prefix up to the colon after the program name is a zero-terminated
+string the compiler emits for each source line that needs one; `cobrt_where`
+(a qword of the runtime) holds its address. Generated code sets it before
+every statement that can end the run: CALL, OPEN, CLOSE, READ, WRITE,
+REWRITE, DELETE, START, SORT, MERGE, RELEASE and RETURN. When it is 0 the
+message starts with `run-time error: `.
+
+| Routine | Arguments | |
+|---|---|---|
+| `cobrt_error_begin` | | writes the prefix |
+| `cobrt_error_text` | ARG0 = zero-terminated string | writes it |
+| `cobrt_error_number` | ARG0 = signed integer | writes it in decimal |
+| `cobrt_error_end` | | newline, closes the files, exits with status 1 |
+| `runtime_check_fail` | ARG0 = prefix, ARG1 = what, ARG2 = value, ARG3 = lowest, ARG4 = highest | a failed `-fcheck` check |
+
+The errors:
+
+- **CALL** of a program that is not in the run unit, without ON EXCEPTION /
+  ON OVERFLOW: `CALL of a program that is not in the run unit: 'NAME'`.
+- **I-O**: a status of 30 or more on a file with neither a FILE STATUS item
+  nor an applicable USE procedure: `I-O error on file 'NAME': status 35 (the
+  file does not exist)`, with the meaning of each COBOL-85 status from 30 to
+  49. (Statuses below 30, such as at end and invalid key, do not end the run.)
+- **Range checks** (compiled with `-fcheck`): `the subscript of 'E' is 7,
+  out of range 1 to 3`. Checked: each subscript that is not a literal
+  against its OCCURS (against the current value of the DEPENDING ON item for
+  a table with OCCURS DEPENDING ON, literal subscripts too); the DEPENDING
+  ON item, wherever the length of its table is used, against OCCURS min TO
+  max; reference modification start, length and end against the length of
+  the item. The check is `IR_CHECK_RANGE`: the value is on the numeric
+  stack, kept; the limit is a constant or popped from the stack.
+
+### Exit status
+
+STOP RUN (and the end of the main program) ends the run with status 0, or
+with the value of RETURN-CODE when a program of the run unit uses it.
+RETURN-CODE is an extension (IBM, GnuCOBOL): a program that names it
+without declaring it gets `01 RETURN-CODE PIC S9(9) COMP-5 EXTERNAL`, so
+every program shares one item, found by `cobrt_return_code` through the
+EXTERNAL list (section 12).

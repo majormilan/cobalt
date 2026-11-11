@@ -143,5 +143,7 @@ test: $(EXEC) check-runtime
 	[ $$failed -eq 0 ]
 	@echo "Running diagnostics tests..."
 	@bash tools/diag_test.sh
+	@echo "Running run-time error tests..."
+	@bash tools/runerr_test.sh
 
 .PHONY: all clean test runtime check-runtime
