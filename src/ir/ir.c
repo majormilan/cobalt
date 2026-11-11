@@ -4850,6 +4850,58 @@ void ir_program_symbols(const char *program_name, char *entry, char *info, size_
     snprintf(info, size, "cobinfo_%s", m);
 }
 
+// Segmentation: a section numbered 50 to 99 is an independent segment,
+// in its initial state whenever control comes to it from another segment
+// (GO TO, PERFORM, or falling into it): its altered GO TO statements go to
+// their first targets again
+static void reset_independent_segments(IrProgram *ir, AstNode *program) {
+    static int segment[1024];
+    int n = 0;
+    for (AstNode *div = program->children; div; div = div->next) {
+        if (div->kind != AST_DIVISION || strcasecmp(div->name, "PROCEDURE") != 0) continue;
+        for (AstNode *x = div->children; x; x = x->next) {
+            if (x->kind != AST_SECTION && x->kind != AST_PARAGRAPH) continue;
+            int seg = x->kind == AST_SECTION && x->decimal_places ? x->digits : 0;
+            if (n < 1024) segment[n++] = seg;
+            if (x->kind == AST_SECTION)
+                for (AstNode *c = x->children; c; c = c->next)
+                    if (c->kind == AST_PARAGRAPH && n < 1024) segment[n++] = seg;
+        }
+    }
+    bool any = false;
+    for (int k = 0; k < n; k++) any |= segment[k] >= 50;
+    if (!any) return;
+    #define SEG(p) ((p) >= 0 && (p) < n ? segment[p] : 0)
+    IrInstr *prev = NULL;
+    int current = -1;
+    for (IrInstr *i = ir->head; i; prev = i, i = i->next) {
+        int target = -1, from = SEG(current);
+        if (i->op == IR_GOTO || i->op == IR_PERFORM) target = (int)i->imm;
+        else if (i->op == IR_PROC_ENTRY) {
+            target = (int)i->imm;
+            current = target;
+            // falling into it: from the procedure before
+            from = SEG(target - 1);
+        }
+        int seg = SEG(target);
+        if (target < 0 || seg < 50 || seg == from) continue;
+        if (i->op == IR_PROC_ENTRY && (target == 0 || !prev)) continue;
+        // the resets, before the transfer
+        for (IrInstr *g = ir->head; g; g = g->next) {
+            if (g->op != IR_GOTO_ALTERABLE || SEG(g->imm) != seg) continue;
+            IrInstr *a = calloc(1, sizeof(IrInstr));
+            a->op = IR_ALTER;
+            a->imm = g->imm;
+            a->proc_end = g->proc_end;
+            a->next = i;
+            if (prev) prev->next = a;
+            else ir->head = a;
+            prev = a;
+        }
+    }
+    #undef SEG
+}
+
 IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const IrUnit *unit) {
     IrProgram *ir = calloc(1, sizeof(IrProgram));
     if (!ir) return NULL;
@@ -5052,6 +5104,8 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
         snprintf(label, sizeof(label), "%%r%d", r);
         append_instr(ir, new_instr(IR_DATA_VAR, label, NULL, NULL, 0, record_size[r], 0, 0, USAGE_DISPLAY));
     }
+
+    reset_independent_segments(ir, program);
 
     // An altered paragraph must consist of a GO TO statement
     for (int p = 0; p < num_procs && p < 1024; p++) {

@@ -1523,7 +1523,8 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 fprintf(f, "    jmp [rel G_%lld]\n\n", i->imm);
                 break;
             case IR_ALTER:
-                fprintf(f, "    lea rax, [rel P_%d]\n", i->proc_end);
+                if (i->proc_end < 0) fprintf(f, "    lea rax, [rel runtime_exit]\n");    // GO TO.
+                else fprintf(f, "    lea rax, [rel P_%d]\n", i->proc_end);
                 fprintf(f, "    mov [rel G_%lld], rax\n\n", i->imm);
                 break;
             case IR_TIMES_BEGIN:
