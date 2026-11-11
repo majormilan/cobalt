@@ -169,6 +169,10 @@ int diag_add_file(const char *name, const char *text, int parent, SourceLocation
     return nfiles++;
 }
 
+int diag_file_parent(int id) {
+    return id >= 0 && id < nfiles ? files[id].parent : -1;
+}
+
 const char *diag_file_name(int id) {
     return id >= 0 && id < nfiles ? files[id].name : NULL;
 }

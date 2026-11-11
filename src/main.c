@@ -9,6 +9,7 @@
 #include "target.h"
 #include "backend.h"
 #include "asm.h"
+#include "pp.h"
 #include "link.h"
 #include <stdint.h>
 #include <stdio.h>
@@ -73,7 +74,30 @@ static int embed_command(int argc, char **argv) {
     return 0;
 }
 
-typedef enum { EMIT_EXECUTABLE, EMIT_OBJECT, EMIT_ASSEMBLY } EmitKind;
+typedef enum {
+    EMIT_EXECUTABLE, EMIT_OBJECT, EMIT_ASSEMBLY,
+    EMIT_NOTHING,               // -fsyntax-only: every check, no output
+    EMIT_SOURCE,                // -E: the source after COPY and REPLACE
+} EmitKind;
+
+// -MD: a make rule for the output, its prerequisites every file read (the
+// sources and their copybooks); -MP: an empty rule for each copybook
+static void write_dependencies(const char *out_name, bool phony) {
+    char dep[600];
+    snprintf(dep, sizeof(dep), "%s", out_name);
+    char *slash = strrchr(dep, '/'), *dot = strrchr(dep, '.');
+    if (dot && (!slash || dot > slash)) *dot = '\0';
+    strncat(dep, ".d", sizeof(dep) - strlen(dep) - 1);
+    FILE *f = fopen(dep, "w");
+    if (!f) { cobalt_error("Cannot write %s", dep); return; }
+    fprintf(f, "%s:", out_name);
+    for (int k = 0; diag_file_name(k); k++) fprintf(f, " \\\n  %s", diag_file_name(k));
+    fprintf(f, "\n");
+    if (phony)
+        for (int k = 0; diag_file_name(k); k++)
+            if (diag_file_parent(k) >= 0) fprintf(f, "\n%s:\n", diag_file_name(k));
+    fclose(f);
+}
 
 // Archives (the ar format): the object file of a source with several
 // programs holds the object of each as a member "<k>.o"
@@ -188,6 +212,10 @@ static void print_help(const char *progname) {
     printf("  -c                     Compile to an object file only\n");
     printf("  -A, --asm              Compile to assembly only (NASM syntax)\n");
     printf("  --strip                Executable without symbols\n");
+    printf("  -fsyntax-only          Check the program; write nothing\n");
+    printf("  -E                     Write the source after COPY and REPLACE (to -o, or stdout)\n");
+    printf("  -MD, -MP               Also write OUTPUT.d, a make rule listing the sources and\n");
+    printf("                         copybooks (-MP: an empty rule for each copybook)\n");
 #ifdef _WIN32
     printf("  -t, --target TRIPLE    Target (default: x86_64-pc-windows-msvc)\n");
 #else
@@ -200,7 +228,7 @@ static void print_help(const char *progname) {
     printf("\n");
 
     printf("Language:\n");
-    printf("  -S, --std STANDARD     COBOL-85 (the only one in this release)\n");
+    printf("  -S, --std, -std=STANDARD  COBOL-85 (the only one in this release)\n");
     printf("  -X, --strictness LEVEL What is done with elements outside COBOL-85 (default: normal)\n");
     printf("        relaxed        accepted; reference format (areas, column 72) not checked\n");
     printf("        normal         accepted, each with a warning (-Wextension)\n");
@@ -311,8 +339,28 @@ int main(int argc, char **argv) {
         {0, 0, 0, 0}
     };
 
+    // Options in gcc's spellings that getopt would split: -std=NAME (as
+    // --std), -MD and -MP (dependency files); taken out before getopt
+    bool deps = false, deps_phony = false;
+    {
+        int n = 1;
+        for (int k = 1; k < argc; k++) {
+            if (!strcmp(argv[k], "-MD") || !strcmp(argv[k], "-MMD")) { deps = true; continue; }
+            if (!strcmp(argv[k], "-MP")) { deps_phony = true; continue; }
+            if (!strncmp(argv[k], "-std=", 5)) {
+                static char buf[16][80];
+                snprintf(buf[k % 16], sizeof(buf[0]), "-%s", argv[k]);
+                argv[n++] = buf[k % 16];
+                continue;
+            }
+            argv[n++] = argv[k];
+        }
+        argc = n;
+        argv[argc] = NULL;
+    }
+
     opterr = 0;
-    while ((opt = getopt_long(argc, argv, ":i:o:t:S:X:D:f:I:W:wcaAFM", long_options, &opt_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, ":i:o:t:S:X:D:f:I:W:wcaAFMEg", long_options, &opt_index)) != -1) {
         switch (opt) {
             case 'i':
                 if (nsources == 64) { cobalt_error("Too many sources (64 limit)"); return 1; }
@@ -337,6 +385,7 @@ int main(int argc, char **argv) {
                 break;
             case 'f':
                 if (strcmp(optarg, "check") == 0) { ir_runtime_checks = true; break; }
+                if (strcmp(optarg, "syntax-only") == 0) { emit = EMIT_NOTHING; break; }
                 if (strcmp(optarg, "no-check") == 0) { ir_runtime_checks = false; break; }
                 if (strncmp(optarg, "max-errors", 10) == 0 || strncmp(optarg, "diagnostics-color", 17) == 0 ||
                     strncmp(optarg, "no-diagnostics-color", 20) == 0) {
@@ -358,6 +407,11 @@ int main(int argc, char **argv) {
                 break;
             case 'R': mode.free_format = false; break;
             case 'c': emit = EMIT_OBJECT; break;
+            case 'E': emit = EMIT_SOURCE; break;
+            case 'g':
+                fprintf(stderr, "cobalt: warning: -g: this release writes no debugging information "
+                                "(the symbol table names the procedures)\n");
+                break;
             case 'A': emit = EMIT_ASSEMBLY; break;
             case 'a': dump_ast = true; break;
             case 0: // long option without a short option
@@ -460,6 +514,24 @@ int main(int argc, char **argv) {
         PpOptions pp = { copy_dirs, ncopy_dirs, mode.free_format };
         char *text = pp_process(source, file, &pp);
         if (!text) { free(source); return 1; }
+        if (emit == EMIT_SOURCE) {
+            // the text the compiler reads: line markers and debugging-line
+            // marks left out
+            FILE *out = output_file ? fopen(output_file, k == 0 ? "w" : "a") : stdout;
+            if (!out) { cobalt_error("Cannot open output file: %s", output_file); return 1; }
+            for (const char *p = text; *p; p++) {
+                if (*p == PP_MARK) {
+                    const char *e = strchr(p + 1, PP_MARK);
+                    if (e) { p = e; continue; }
+                }
+                if (*p != PP_DEBUG_BEGIN && *p != PP_DEBUG_END) fputc(*p, out);
+            }
+            fputc('\n', out);
+            if (out != stdout) fclose(out);
+            free(text);
+            free(source);
+            continue;
+        }
         Lexer lexer;
         lexer_init(&lexer, source, &mode, filename);
         lexer.src = text;
@@ -506,6 +578,7 @@ int main(int argc, char **argv) {
             printf("\n");
         }
     }
+    if (emit == EMIT_SOURCE) return error_count ? 1 : 0;
     current_filename = input_file;
     // Undefined names leave a sound syntax tree: the later stages still run,
     // and report what they find too
@@ -528,6 +601,16 @@ int main(int argc, char **argv) {
         else strncat(out_name, target->exe_suffix, sizeof(out_name) - strlen(out_name) - 1);
     }
     const EmbeddedObject *runtime = embedded_runtime(target);
+    if (emit == EMIT_NOTHING) {
+        // every program through its checks, nothing written
+        for (int k = 0; k < nprograms; k++) {
+            IrUnit unit = { .main = k == 0 && !module };
+            for (int a = program_parent[k]; a >= 0 && unit.nancestors < 16; a = program_parent[a])
+                unit.ancestors[unit.nancestors++] = programs[a];
+            ir_free(lower_to_ir(programs[k], &mode.dialect, &unit));
+        }
+        return error_count ? 1 : 0;
+    }
     if (emit == EMIT_EXECUTABLE && !runtime) {
         cobalt_error("This cobalt has no runtime for %s built in: use -A or -c", target->name);
         return 1;
@@ -591,6 +674,7 @@ int main(int argc, char **argv) {
     }
     for (int k = 0; k < nsources; k++) { free(texts[k]); free(sources_text[k]); }
     if (error_count > 0) return 1;
+    if (deps) write_dependencies(out_name, deps_phony);
     if (emit == EMIT_OBJECT) {
         // One object file: the object of the program, or an archive (ar) of
         // the objects of the programs (each program is an object of its own)

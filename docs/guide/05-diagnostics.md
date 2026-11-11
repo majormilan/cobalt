@@ -85,9 +85,10 @@ The options apply in order: `-Wextra -Wno-unused` is every warning but
 |---|---|---|
 | `truncate` | by default | a literal that does not fit the item it is moved to (characters, high-order digits, decimal places, the sign) |
 | `unreachable` | by default | a statement after GO TO, STOP RUN (or EXIT PROGRAM in a called program) in the same procedure |
-| `constant-condition` | by default | a relation always true or always false by the item's PICTURE (`PIC 9(3)` compared with 1000) |
+| `constant-condition` | by default | a relation always true or always false: by the item's PICTURE (`PIC 9(3)` compared with 1000), an item compared with itself, a numeric item compared for equality with a literal that is not all digits |
 | `divide-by-zero` | by default | division by the literal zero |
 | `perform-range` | by default | PERFORM A THRU B where B comes before A |
+| `recursive-perform` | by default | PERFORM of the paragraph, or the section, the PERFORM is in (undefined in COBOL-85) |
 | `unused-file` | by default | a file no statement opens or names |
 | `column-overflow` | by default | a word that runs past column 72 (columns 73 to 80 are ignored) |
 | `area` | by default | in area B, what belongs in area A (division and section headers, paragraph names, FD, SD, RD, level 01 and 77, DECLARATIVES); a statement in area A |
@@ -96,7 +97,9 @@ The options apply in order: `-Wextra -Wno-unused` is every warning but
 | `obsolete` | `-Wextra`, `-X pedantic`, `--flag-obsolete` | an obsolete element of COBOL-85 (chapter 4) |
 | `unused` | `-Wextra` | a data item never referenced (not those of copied text) |
 | `unused-procedure` | `-Wextra` | a paragraph or section neither performed nor reached by falling into it |
-| `narrowing` | `-Wextra` | MOVE of an item to a smaller one |
+| `narrowing` | `-Wextra` | MOVE of an item to a smaller one: characters or integer digits, decimal places, or the sign (signed to unsigned) lost |
+| `group-move` | `-Wextra` | MOVE of a group to an elementary numeric item (its characters are moved unconverted) |
+| `compare` | `-Wextra` | a numeric operand compared with a nonnumeric one: they are compared as characters |
 | `uninitialized` | `-Wextra` | an item statements read but none gives a value, without a VALUE clause |
 | `unchecked-io` | `-Wextra` | an I-O statement without AT END or INVALID KEY whose exception no FILE STATUS item or USE procedure handles |
 

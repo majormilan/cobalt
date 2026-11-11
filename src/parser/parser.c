@@ -318,6 +318,8 @@ static void append_child(AstNode *parent, AstNode **tail, AstNode *child) {
 // subordinate entries are being read (0: none)
 static int redefines_level;
 
+static void record_declaration(Symbol *sym, int level);
+
 static AstNode *parse_var_decl(void) {
     if (tok.kind != TOK_NUMBER) return NULL;
     if (parser_panic_mode) return NULL; // Don't parse if in panic mode
@@ -349,6 +351,7 @@ static AstNode *parse_var_decl(void) {
         if (!sym) sym = symtab_declare_symbol(current_symtab, name, SYM_VAR, loc);
         if (sym) sym->level = level_num;
     }
+    record_declaration(sym, level_num);
     {
         // The conditional variable of the condition-names that follow
         static Symbol *conditional;
@@ -3360,6 +3363,42 @@ static int pic_positions(const char *pic) {
     return n;
 }
 
+// The data description entries in order, with their levels: an item is used
+// when a group that holds it is (-Wunused)
+typedef struct { Symbol *sym; int level; } DeclaredItem;
+static DeclaredItem *declared;
+static int num_declared, cap_declared;
+
+static void record_declaration(Symbol *sym, int level) {
+    if (num_declared == cap_declared) {
+        cap_declared = cap_declared ? cap_declared * 2 : 256;
+        declared = realloc(declared, (size_t)cap_declared * sizeof(DeclaredItem));
+    }
+    declared[num_declared++] = (DeclaredItem){ sym, level };
+}
+
+// Mark the items whose group is used
+static void mark_used_through_groups(void) {
+    int levels[64];
+    bool used[64];
+    int depth = 0;
+    for (int k = 0; k < num_declared; k++) {
+        int level = declared[k].level;
+        if (level == 88 || level == 66) continue;
+        if (level == 1 || level == 77) depth = 0;
+        while (depth > 0 && levels[depth - 1] >= level) depth--;
+        bool via = depth > 0 && used[depth - 1];
+        Symbol *s = declared[k].sym;
+        if (s && via) s->is_used = true;
+        if (depth < 64) {
+            levels[depth] = level;
+            used[depth] = via || (s && s->is_used);
+            depth++;
+        }
+    }
+    num_declared = 0;
+}
+
 static AstNode *rw_decl(const char *name, const char *level, const char *pic, AstNode *value, SourceLocation loc) {
     AstNode *d = ast_new(AST_VAR_DECL, name, loc);
     d->text = strdup(level);
@@ -4717,6 +4756,7 @@ AstNode *parse_program(Lexer *l) {
         free(forward_names[k]);
     }
     num_forward_names = 0;
+    mark_used_through_groups();
     symtab_check_unused_symbols(current_symtab);
     symtab_free(current_symtab);
     return first;

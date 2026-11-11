@@ -34,7 +34,13 @@ static int option_choice(const char *value, const char *const choices[]) {
 bool dialect_set_option(Dialect *d, const char *setting) {
     const char *eq = strchr(setting, '=');
     if (!eq) {
-        cobalt_error("Expected key=value, got '%s'", setting);
+        // not a dialect setting: an -f option of its own, misspelled?
+        static const char *const flags[] = { "check", "no-check", "syntax-only", "max-errors=",
+                                             "diagnostics-color", "no-diagnostics-color", "display=",
+                                             "sign=", "binary-truncate=", NULL };
+        const char *near = diag_closest(setting, flags, -1);
+        if (near) cobalt_error("Unknown option '-f%s'; did you mean '-f%s'?", setting, near);
+        else cobalt_error("Unknown option '-f%s' (see --help)", setting);
         return false;
     }
     size_t klen = (size_t)(eq - setting);

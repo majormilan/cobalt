@@ -35,6 +35,10 @@ after the `-I` ones: separated by `:` on Linux and by `;` on Windows.
 | `-c` | An object file instead of an executable. |
 | `-A`, `--asm` | Assembly (NASM syntax) instead of an executable. |
 | `--strip` | An executable without a symbol table (smaller; debuggers show no names). |
+| `-fsyntax-only` | Checks the program (every error and warning) and writes nothing. |
+| `-E` | Writes the source as the compiler reads it, after COPY and REPLACE, to the `-o` file or standard output. |
+| `-MD` | Also writes `OUTPUT.d` (the output's name without its extension, plus `.d`): a make rule whose prerequisites are the sources and every copybook read. |
+| `-MP` | With `-MD`: an empty rule for each copybook, so make does not fail when one is removed. |
 | `-t TRIPLE`, `--target TRIPLE` | The system to build for: `x86_64-linux-elf` or `x86_64-pc-windows-msvc`. The default is the system cobalt runs on. |
 
 Without `-o`, the output is named after the first source, without its
@@ -52,7 +56,7 @@ of each other program to `<output>.<PROGRAM-ID>`.
 
 | Option | Meaning |
 |---|---|
-| `-S STANDARD`, `--std STANDARD` | The COBOL standard. `COBOL-85` (also `COBOL85`, `85`), the only one of this release. |
+| `-S STANDARD`, `--std STANDARD`, `-std=STANDARD` | The COBOL standard. `COBOL-85` (also `COBOL85`, `85`), the only one of this release. |
 | `-X LEVEL`, `--strictness LEVEL` | What is done with the elements outside COBOL-85: `relaxed`, `normal` (the default), `pedantic` or `ibm-strict`. Chapter 4. |
 | `-D NAME`, `--dialect NAME` | How what the standard leaves to the implementor behaves: `standard` (the default), `ibm`, `gnucobol` or `microfocus`. Chapter 4. |
 | `-f KEY=VALUE` | One setting of the dialect, after `-D`: `display=stored\|pretty`, `sign=ascii\|ebcdic`, `binary-truncate=yes\|no`. Chapter 4. |
@@ -85,6 +89,7 @@ of each other program to `<output>.<PROGRAM-ID>`.
 | `--version` | The version and the targets. |
 | `--help` | A summary of the options and the warnings. |
 | `-a` | Prints the syntax tree (for working on cobalt). |
+| `-g` | Accepted for compatibility, with a warning: this release writes no debugging information. |
 
 ## Exit status
 

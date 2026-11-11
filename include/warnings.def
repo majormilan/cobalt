@@ -17,3 +17,6 @@ WARNING(W_SUBSET,             "subset",             0, "elements outside the FIP
 WARNING(W_OBSOLETE,           "obsolete",           1, "obsolete elements of COBOL-85 (FIPS flagging)")
 WARNING(W_UNINITIALIZED,      "uninitialized",      1, "items read but never given a value")
 WARNING(W_UNCHECKED_IO,       "unchecked-io",       1, "I-O statements whose AT END / INVALID KEY nothing handles")
+WARNING(W_COMPARE,            "compare",            1, "numeric operands compared with nonnumeric ones (as characters)")
+WARNING(W_GROUP_MOVE,         "group-move",         1, "MOVE of a group to an elementary numeric item")
+WARNING(W_RECURSIVE_PERFORM,  "recursive-perform",  0, "PERFORM of a range from inside that range")

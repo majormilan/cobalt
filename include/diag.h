@@ -52,6 +52,7 @@ void reset_diagnostics(void);
 // that statement is. Returns the file's number.
 int diag_add_file(const char *name, const char *text, int parent, SourceLocation at);
 const char *diag_file_name(int id);
+int diag_file_parent(int id);       // the file that copies it, or -1
 // Whether a location is in text brought in by COPY
 bool diag_in_copied_text(SourceLocation loc);
 

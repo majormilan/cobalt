@@ -1,0 +1,37 @@
+tests/diag/categories.cbl:16:19: warning: 'A' is numeric and holds digits only, so it is never equal to "ABC": the relation is always false [-Wconstant-condition]
+    16 |            IF A = "ABC" DISPLAY "X".
+       |                   ^~~~~
+tests/diag/categories.cbl:17:15: warning: 5 is a number and 'B' is not: they are compared as characters [-Wcompare]
+    17 |            IF B = 5 DISPLAY "Y".
+       |               ^
+tests/diag/categories.cbl:18:19: warning: 'A' is numeric and the literal "001" is not: they are compared as characters [-Wcompare]
+    18 |            IF A = "001" DISPLAY "Z".
+       |                   ^~~~~
+tests/diag/categories.cbl:19:17: warning: 'N' has 2 decimal places, 'A' 0: the rest are truncated [-Wnarrowing]
+    19 |            MOVE N TO A.
+       |                 ^
+tests/diag/categories.cbl:8:12: note: 'A' is declared here
+     8 |        01  A PIC 9(3) VALUE 1.
+       |            ^
+tests/diag/categories.cbl:20:17: warning: 'M' is signed and 'A' is not: a negative value loses its sign [-Wnarrowing]
+    20 |            MOVE M TO A.
+       |                 ^
+tests/diag/categories.cbl:8:12: note: 'A' is declared here
+     8 |        01  A PIC 9(3) VALUE 1.
+       |            ^
+tests/diag/categories.cbl:21:17: warning: 'G' is a group: its characters are moved to the numeric item 'A' as they are, not converted [-Wgroup-move]
+    21 |            MOVE G TO A.
+       |                 ^
+tests/diag/categories.cbl:8:12: note: 'A' is declared here
+     8 |        01  A PIC 9(3) VALUE 1.
+       |            ^
+tests/diag/categories.cbl:22:19: warning: Both sides of the relation are 'A', so it is always true [-Wconstant-condition]
+    22 |            IF A = A DISPLAY "W".
+       |                   ^
+tests/diag/categories.cbl:23:29: warning: PERFORM of 'P1' from inside it: COBOL-85 leaves a recursive PERFORM undefined (control does not return where expected) [-Wrecursive-perform]
+    23 |            IF A > 2 PERFORM P1.
+       |                             ^~
+tests/diag/categories.cbl:15:8: note: 'P1' is here
+    15 |        P1.
+       |        ^~
+8 warnings generated.

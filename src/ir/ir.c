@@ -1495,6 +1495,10 @@ static int first_named(const char *name) {
 }
 
 static VarInfo *find_item_ref(const AstNode *ref, bool report) {
+    if (!ref->name) {                   // not a data name (an expression where one was expected)
+        if (report) diag_error(ref->loc, "Expected a data name here");
+        return NULL;
+    }
     if (ref->name[0] == '#') return &vars[atoi(ref->name + 1)];
     if (ref->name[0] == '!') return &vars[function_temp(ref)];
     VarInfo *found = NULL;
@@ -2739,6 +2743,50 @@ static void check_constant_relation(AstNode *left, AstNode *right, const char *o
     }
 }
 
+// The same item on both sides, with no subscripts or reference modification
+static bool same_plain_item(const AstNode *a, const AstNode *b) {
+    if (a->kind != AST_IDENTIFIER || b->kind != AST_IDENTIFIER || a->loop || b->loop ||
+        a->children || b->children || strcasecmp(a->name, b->name) != 0)
+        return false;
+    VarInfo *va = find_item(a, false), *vb = find_item(b, false);
+    return va && va == vb && !va->is_cond;
+}
+
+// Relations whose outcome or meaning the categories of their operands decide
+static void check_relation_operands(AstNode *left, AstNode *right, const char *op) {
+    if (in_condition_name) return;
+    bool eq = !strcmp(op, "="), ne = !strcmp(op, "<>");
+    if (same_plain_item(left, right)) {
+        bool truth = eq || !strcmp(op, ">=") || !strcmp(op, "<=");
+        diag_warning(W_CONSTANT_CONDITION, right->loc, "Both sides of the relation are '%s', so it is always %s",
+                     left->name, truth ? "true" : "false");
+        return;
+    }
+    bool ln = is_numeric_operand(left), rn = is_numeric_operand(right);
+    if (ln == rn) return;
+    AstNode *num = ln ? left : right, *other = ln ? right : left;
+    if (other->kind == AST_STRING_LITERAL && num->kind == AST_IDENTIFIER && (eq || ne)) {
+        // a numeric item holds digits only
+        bool digits = other->name[0] != '\0';
+        for (const char *p = other->name; *p; p++) if (!isdigit((unsigned char)*p)) digits = false;
+        if (!digits) {
+            diag_warning(W_CONSTANT_CONDITION, other->loc,
+                         "'%s' is numeric and holds digits only, so it is never equal to \"%s\": the relation is always %s",
+                         num->name, other->name, eq ? "false" : "true");
+            return;
+        }
+    }
+    char nn[96];
+    if (num->kind == AST_IDENTIFIER) snprintf(nn, sizeof(nn), "'%s' is numeric", num->name);
+    else if (num->kind == AST_LITERAL_NUMBER) snprintf(nn, sizeof(nn), "%s is a number", num->name);
+    else snprintf(nn, sizeof(nn), "the expression is numeric");
+    if (other->kind == AST_STRING_LITERAL)
+        diag_warning(W_COMPARE, other->loc, "%s and the literal \"%s\" is not: they are compared as characters",
+                     nn, other->name);
+    else if (other->kind == AST_IDENTIFIER)
+        diag_warning(W_COMPARE, other->loc, "%s and '%s' is not: they are compared as characters", nn, other->name);
+}
+
 static void emit_relation_false_jump(IrProgram *ir, AstNode *left, AstNode *right,
                                      const char *op, const char *target) {
     int fl = figurative_char(left), fr = figurative_char(right);
@@ -2747,7 +2795,8 @@ static void emit_relation_false_jump(IrProgram *ir, AstNode *left, AstNode *righ
         !(fl == '0' && fr == '0')) {
         // ZERO compared with a numeric operand is the number 0
         if (num_expr_valid(left) && num_expr_valid(right)) {
-            check_constant_relation(left, right, op);
+            if (same_plain_item(left, right)) check_relation_operands(left, right, op);
+            else check_constant_relation(left, right, op);
             int W = max_leaf_scale(left);
             if (max_leaf_scale(right) > W) W = max_leaf_scale(right);
             W = W + 2 > 18 ? 18 : W + 2;
@@ -2785,6 +2834,7 @@ static void emit_relation_false_jump(IrProgram *ir, AstNode *left, AstNode *righ
         }
     } else {
         FieldRef lf, rf;
+        check_relation_operands(left, right, op);
         if (alnum_operand(ir, left, &lf, "$numtext") && alnum_operand(ir, right, &rf, "$numtext2")) {
             jump = emit(ir, IR_ALNUM_CMP_JUMP_IF_FALSE);
             jump->var_name = strdup(lf.label);
@@ -3161,13 +3211,29 @@ static void check_move(const AstNode *src, const VarInfo *dv, const AstNode *des
             note_item(dv);
         return;
     }
-    if (src->kind != AST_IDENTIFIER || src->loop || !diag_warning_enabled(W_NARROWING)) return;
+    if (src->kind != AST_IDENTIFIER || src->loop) return;
     VarInfo *sv = find_item(src, false);
     if (!sv || sv->is_cond || sv->occurs < 0) return;
+    if (sv->is_group && dv->is_numeric && !src->children) {
+        if (diag_warning(W_GROUP_MOVE, src->loc, "'%s' is a group: its characters are moved to the numeric item '%s' "
+                         "as they are, not converted", sv->name, dv->name))
+            note_item(dv);
+        return;
+    }
+    if (!diag_warning_enabled(W_NARROWING)) return;
     if (sv->is_numeric && dv->is_numeric) {
         if (int_capacity(sv) > int_capacity(dv) &&
             diag_warning(W_NARROWING, src->loc, "'%s' has %d integer digits, '%s' %d: high-order digits can be lost",
                          sv->name, int_capacity(sv), dv->name, int_capacity(dv)))
+            note_item(dv);
+        else if (sv->decimal_places > dv->decimal_places && dv->decimal_places >= 0 &&
+                 diag_warning(W_NARROWING, src->loc, "'%s' has %d decimal place%s, '%s' %d: the rest are truncated",
+                              sv->name, sv->decimal_places, sv->decimal_places == 1 ? "" : "s", dv->name,
+                              dv->decimal_places))
+            note_item(dv);
+        else if (sv->is_signed && !dv->is_signed &&
+                 diag_warning(W_NARROWING, src->loc, "'%s' is signed and '%s' is not: a negative value loses its sign",
+                              sv->name, dv->name))
             note_item(dv);
     } else if (!dest_value && !sv->is_numeric && sv->size > dv->size &&
                diag_warning(W_NARROWING, src->loc, "'%s' has %d characters, '%s' %d: the rest are truncated",
@@ -3509,6 +3575,15 @@ static void lower_perform_form(IrProgram *ir, AstNode *node) {
         first = resolve_proc(node->extra);
         last = node->extra->next ? resolve_proc(node->extra->next) : first;
         if (first < 0 || last < 0) return;
+        // (a range of several procedures may be entered past the current one
+        // by GO TO: only the procedure itself, or its own section)
+        bool inside = current_proc == first ||
+                      (first == last && procs[first].is_section && current_proc >= 0 &&
+                       procs[current_proc].section && !strcasecmp(procs[current_proc].section, procs[first].name));
+        if (inside &&
+            diag_warning(W_RECURSIVE_PERFORM, node->extra->loc, "PERFORM of '%s' from inside it: COBOL-85 leaves a "
+                         "recursive PERFORM undefined (control does not return where expected)", procs[first].name))
+            diag_note(proc_loc_of(first), "'%s' is here", procs[first].name);
         if (last < first &&
             diag_warning(W_PERFORM_RANGE, node->extra->next->loc, "'%s' comes before '%s', so control does not return from the range at its end",
                          procs[last].name, procs[first].name))
