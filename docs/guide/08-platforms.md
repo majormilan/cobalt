@@ -81,7 +81,10 @@ $ make CFLAGS="-O2 -Iinclude -Iruntime -include compat.h"
 `make clean` removes `obj/` and `bin/`, including the NIST suite under
 `obj/nist/` (downloaded again when needed).
 
-There is no `make install`: copy `bin/cobalt` (or `bin/cobalt.exe`) to a
+`make install` copies `bin/cobalt` to `$(PREFIX)/bin` (`PREFIX` is
+`/usr/local` unless given, `DESTDIR` is put before it for packaging) and the
+README, the license and this guide to `$(PREFIX)/share/doc/cobalt`;
+`make uninstall` removes them. On Windows, copy `bin/cobalt.exe` to a
 directory on the PATH.
 
 ## Testing cobalt
@@ -89,6 +92,7 @@ directory on the PATH.
 | Command | Runs |
 |---|---|
 | `make test` | the test programs of `tests/` (each output compared with its `.expected` file), the diagnostics tests of `tests/diag/` and the run-time error tests |
+| `make examples` | the programs of `examples/`, built and run, their output and the files they write compared with `expected/` (also part of `make test`) |
 | `make test-windows` | the test programs built for Windows and run there (on WSL directly, elsewhere through Wine) |
 | `tools/nist/run.sh MODULE` | one module of the NIST CCVS85 suite: `NC`, `SM`, `SQ`, `RL`, `IX`, `ST`, `IC`, `IF`, `SG`, `DB`, `RW` |
 

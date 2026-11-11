@@ -15,10 +15,11 @@ $ make                  # bin/cobalt, for Linux
 $ make windows          # bin/cobalt.exe, for Windows (needs MinGW-w64)
 ```
 
-Then copy `bin/cobalt` (or `bin/cobalt.exe`) to a directory on your PATH:
+Then install it (or copy `bin/cobalt.exe` to a directory on your PATH on
+Windows):
 
 ```
-$ sudo cp bin/cobalt /usr/local/bin/
+$ sudo make install            # /usr/local/bin/cobalt; PREFIX=... for elsewhere
 $ cobalt --version
 cobalt 0.1.0-alpha
 ```
@@ -153,6 +154,23 @@ modifications, and stop with the source line when one is out of range:
 $ cobalt -fcheck ledger.cbl
 $ ./ledger
 ledger.cbl:42: run-time error in program LEDGER: the subscript of 'ENTRY' is 11, out of range 1 to 10
+```
+
+## Examples
+
+`examples/` has complete programs to start from, each with its data:
+
+| Example | Shows |
+|---|---|
+| `hello` | the smallest program |
+| `payroll` | a copybook, SORT with input and output procedures, CALL of a program in another source, edited numbers, text files in and out |
+| `inventory` | an indexed file: loading it, READ and REWRITE by key, START and READ NEXT |
+| `sales-report` | the Report Writer: page headings, control breaks, sums |
+
+```
+$ cd examples/payroll
+$ cobalt payroll.cbl taxcalc.cbl
+$ ./payroll
 ```
 
 ## Building for the other system

@@ -1,0 +1,18 @@
+Sales by region                        Page   1
+Region    Representative           Amount
+
+EAST      Ada                  1,250.00
+          Grace                  980.50
+          Alan                 2,100.00
+          Region total         4,330.50
+
+NORTH     Edsger                 450.75
+          Barbara              3,200.00
+          Region total         3,650.75
+
+WEST      Donald               1,999.99
+          Ken                    120.00
+          Dennis                 875.25
+          Region total         2,995.24
+
+          Grand total         10,976.49

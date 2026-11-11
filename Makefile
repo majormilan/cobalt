@@ -181,6 +181,8 @@ test: $(EXEC) check-runtime
 	@bash tools/diag_test.sh
 	@echo "Running run-time error tests..."
 	@bash tools/runerr_test.sh
+	@echo "Running the examples..."
+	@bash examples/run.sh
 
 # The test programs built for Windows and run there (on WSL through its
 # interop, elsewhere with Wine registered for .exe files)
@@ -199,4 +201,25 @@ test-windows: $(EXEC)
 	echo ""; echo "Results: $$passed passed, $$failed failed"; \
 	[ $$failed -eq 0 ]
 
-.PHONY: all clean test test-windows runtime check-runtime windows
+# Installing: the compiler, its documentation (PREFIX, DESTDIR as usual)
+PREFIX ?= /usr/local
+DESTDIR ?=
+DOCDIR = $(DESTDIR)$(PREFIX)/share/doc/cobalt
+
+install: $(EXEC)
+	install -d $(DESTDIR)$(PREFIX)/bin $(DOCDIR)/guide
+	install -m 755 $(EXEC) $(DESTDIR)$(PREFIX)/bin/cobalt
+	install -m 644 README.md LICENSE $(DOCDIR)
+	install -m 644 docs/guide/*.md $(DOCDIR)/guide
+
+uninstall:
+	rm -f $(DESTDIR)$(PREFIX)/bin/cobalt
+	rm -f $(DOCDIR)/README.md $(DOCDIR)/LICENSE $(addprefix $(DOCDIR)/guide/,$(notdir $(wildcard docs/guide/*.md)))
+	-rmdir $(DOCDIR)/guide $(DOCDIR)
+
+# The example programs (examples/), built and run like the tests
+examples: $(EXEC)
+	@echo "Building the examples..."
+	@bash examples/run.sh
+
+.PHONY: all clean test test-windows runtime check-runtime windows install uninstall examples

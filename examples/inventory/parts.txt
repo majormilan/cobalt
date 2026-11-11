@@ -1,0 +1,5 @@
+B-1001Hex bolt M8         0050000100
+N-2002Hex nut M8          0030000400
+W-3003Washer M8           0100000200
+S-4004Wood screw 4x40     0001000050
+P-5005Wall plug 6mm       0000000025

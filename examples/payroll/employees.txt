@@ -1,0 +1,6 @@
+10001Ada Lovelace        ENG 04002500
+10002Grace Hopper        ENG 03803200
+10003Alan Turing         RES 04004000
+10004Edsger Dijkstra     RES 02001800
+10005Barbara Liskov      ENG 01503000
+10006Donald Knuth        ADM 04001250

@@ -1,0 +1,13 @@
+Department ADM
+10006 Donald Knuth          5,000.00  1,500.00  3,500.00
+      Total ADM                                   3,500.00
+Department ENG
+10001 Ada Lovelace         10,000.00  3,500.00  6,500.00
+10005 Barbara Liskov        4,500.00  1,300.00  3,200.00
+10002 Grace Hopper         12,160.00  4,364.00  7,796.00
+      Total ENG                                  17,496.00
+Department RES
+10003 Alan Turing          16,000.00  5,900.00 10,100.00
+10004 Edsger Dijkstra       3,600.00    940.00  2,660.00
+      Total RES                                  12,760.00
+      All departments                            33,756.00

@@ -29,6 +29,7 @@ Hello, world!
 - [Using cobalt](#using-cobalt)
 - [Testing](#testing)
 - [Roadmap](#roadmap)
+- [Examples](#examples)
 - [Known limitations](#known-limitations)
 - [Documentation](#documentation)
 - [License](#license)
@@ -140,7 +141,9 @@ under `obj/nist/` (it is fetched again when needed).
 
 ## Installing
 
-There is no `make install` yet. cobalt is one
+`make install` copies cobalt to `$(PREFIX)/bin` (`/usr/local` by default;
+`DESTDIR` for packaging) and the documentation to
+`$(PREFIX)/share/doc/cobalt`; `make uninstall` removes them. cobalt is one
 executable with nothing else to install, so copy it to a directory on your
 PATH:
 
@@ -196,9 +199,7 @@ The language and both platforms are done; what is left:
 
 - release notes with the known limitations;
 - continuous integration on Linux and Windows;
-- a fuzzing pass over the compiler (no crash on any input);
-- mapping ASSIGN names through environment variables;
-- `make install`, release builds for both systems, a version tag.
+- release builds for both systems, a version tag.
 
 ### After the alpha
 
@@ -214,6 +215,12 @@ The language and both platforms are done; what is left:
 - More architectures (AArch64 first) and operating systems, using the split
   of the runtime into architecture and OS layers.
 - Newer COBOL standards (2002, 2014): `-S` accepts only COBOL-85 today.
+
+## Examples
+
+[examples/](examples) has complete programs with their data: a payroll run
+(copybook, SORT, CALL, edited output), an indexed inventory file and a
+Report Writer report. `make examples` builds and checks them.
 
 ## Known limitations
 

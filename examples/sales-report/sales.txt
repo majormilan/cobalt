@@ -1,0 +1,8 @@
+EAST    Ada         0125000
+EAST    Grace       0098050
+EAST    Alan        0210000
+NORTH   Edsger      0045075
+NORTH   Barbara     0320000
+WEST    Donald      0199999
+WEST    Ken         0012000
+WEST    Dennis      0087525
