@@ -1082,8 +1082,19 @@ runtime_num_mul:
     mul rcx                             ; rdx:rax = |a| * |b|
     test r9, r9
     jz .m_noshift
-    cmp r9, 18
+    cmp r9, 36
     ja .m_err
+    cmp r9, 18
+    jbe .m_one
+    ; shift above 18: by 10^18, then by the rest
+    lea rcx, [rel pow10]
+    mov rcx, [rcx + 18*8]
+    cmp rdx, rcx
+    jae .m_err
+    div rcx
+    xor edx, edx
+    sub r9, 18
+.m_one:
     lea rcx, [rel pow10]
     mov rcx, [rcx + r9*8]
     cmp rdx, rcx
@@ -1107,17 +1118,20 @@ runtime_num_mul:
     mov edx, 1
     ret
 
-; ARG0 = a, ARG1 = b, ARG2 = shift (0..18)
+; ARG0 = a, ARG1 = b, ARG2 = shift (0..36)
 ; Returns RET0 = (a * 10^shift) / b truncated toward zero, using a 128-bit
-; dividend; RET1 = 1 on division by zero or overflow.
+; dividend (192 bits for a shift above 18); RET1 = 1 on division by zero or
+; overflow.
 runtime_num_div:
     mov r10, ARG0
     mov r11, ARG1
     mov r9, ARG2
     test r11, r11
     jz .v_err
-    cmp r9, 18
+    cmp r9, 36
     ja .v_err
+    cmp r9, 18
+    ja .v_wide
     mov r8, r10
     xor r8, r11                         ; bit 63 = sign of the result
     mov rax, r10
@@ -1146,6 +1160,54 @@ runtime_num_div:
 .v_err:
     xor eax, eax
     mov edx, 1
+    ret
+    ; |a| * 10^18 * 10^(shift - 18): three 64-bit limbs, divided by |b|
+.v_wide:
+    push rbx
+    mov r8, r10
+    xor r8, r11                         ; bit 63 = sign of the result
+    mov rax, r10
+    test rax, rax
+    jns .w_a
+    neg rax
+.w_a:
+    mov rcx, r11
+    test rcx, rcx
+    jns .w_b
+    neg rcx
+.w_b:
+    lea rbx, [rel pow10]
+    mul qword [rbx + 18*8]              ; rdx:rax = |a| * 10^18
+    mov r10, rdx                        ; hi
+    sub r9, 18
+    mov r9, [rbx + r9*8]                ; m = 10^(shift - 18)
+    mul r9                              ; lo * m
+    mov r11, rax                        ; n0
+    mov rbx, rdx                        ; carry into n1
+    mov rax, r10
+    mul r9                              ; hi * m: rdx:rax
+    add rax, rbx
+    adc rdx, 0                          ; n2:n1 = rdx:rax
+    cmp rdx, rcx
+    jae .w_err                          ; quotient of 128 bits or more
+    div rcx                             ; q1 (must be 0), remainder in rdx
+    test rax, rax
+    jnz .w_err
+    mov rax, r11
+    div rcx                             ; q0
+    test rax, rax
+    js .w_err
+    test r8, r8
+    jns .w_ok
+    neg rax
+.w_ok:
+    xor edx, edx
+    pop rbx
+    ret
+.w_err:
+    xor eax, eax
+    mov edx, 1
+    pop rbx
     ret
 
 ; Exponentiation with an exponent known only at run time.

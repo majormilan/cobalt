@@ -136,7 +136,10 @@ static void skip_ws(Lexer *l) {
         }
         if (isspace((unsigned char)*l->src)) advance(l);
         else if ((*l->src == ',' || *l->src == ';') &&
-                 (l->src[1] == '\0' || isspace((unsigned char)l->src[1]))) advance(l);
+                 (l->src[1] == '\0' || isspace((unsigned char)l->src[1]))) {
+            l->comma_seen = true;
+            advance(l);
+        }
         else break;
     }
 }
@@ -153,6 +156,8 @@ int is_ident_char(char c) {
 // For now, let's keep it here and make it accessible.
 Token make_token_public(Lexer *l, TokenKind kind, const char *start, size_t length) {
     Token t;
+    t.after_comma = l->comma_seen;
+    l->comma_seen = false;
     t.kind = kind;
     t.lexeme = start;
     t.length = length;
@@ -174,6 +179,7 @@ void lexer_init(Lexer *l, const char *source, const CompilerMode *mode, const ch
     l->prev = NULL;
     l->pic_next = false;
     l->decimal_comma = false;
+    l->comma_seen = false;
 
     // Set standard-specific keyword checker
     switch (l->mode->std) {

@@ -549,7 +549,57 @@ static AstNode *parse_factor(void);
 // identifier := name {OF|IN name}... [(subscript...)] [(start:[length])]
 // AST_IDENTIFIER: children = subscripts, extra = qualifiers (innermost
 // first), loop = AST_REFMOD with children start and optional length.
+// FUNCTION name [(argument...)] [(start : [length])]: an AST_IDENTIFIER
+// named "!" and the function's name; on_error: the arguments; loop: the
+// reference modification
+static AstNode *parse_function(void) {
+    SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
+    next();                                     // FUNCTION
+    if (tok.kind == TOK_STRING || tok.kind == TOK_NUMBER || tok.kind == TOK_PERIOD || tok.kind == TOK_EOF ||
+        tok.kind == TOK_LPAREN) {
+        arith_error("Expected a function name after FUNCTION");
+        return ast_new(AST_IDENTIFIER, "!", loc);
+    }
+    char fname[64];
+    size_t n = tok.length < sizeof(fname) - 2 ? tok.length : sizeof(fname) - 2;
+    fname[0] = '!';
+    for (size_t k = 0; k < n; k++) fname[k + 1] = (char)toupper((unsigned char)tok.lexeme[k]);
+    fname[n + 1] = '\0';
+    next();
+    AstNode *f = ast_new(AST_IDENTIFIER, fname, loc);
+    // The functions without arguments take "(" as a reference modification
+    bool no_args = strcmp(fname, "!CURRENT-DATE") == 0 || strcmp(fname, "!WHEN-COMPILED") == 0;
+    AstNode *tail = NULL;
+    if (tok.kind == TOK_LPAREN && !no_args) {
+        next();
+        while (tok.kind != TOK_RPAREN && tok.kind != TOK_EOF && !parser_panic_mode) {
+            AstNode *arg;
+            if (tok.kind == TOK_STRING || is_figurative(tok.kind) || tok.kind == TOK_ALL) arg = parse_rel_operand();
+            else arg = parse_expr();
+            if (!arg) { arith_error("Expected a function argument"); return f; }
+            list_append(&f->on_error, &tail, arg);
+        }
+        if (tok.kind != TOK_RPAREN) { arith_error("Expected ')'"); return f; }
+        next();
+    }
+    if (tok.kind == TOK_LPAREN) {
+        SourceLocation ploc = {current_lexer->filename, tok.line, tok.column};
+        next();
+        AstNode *start = parse_expr();
+        if (!start || tok.kind != TOK_COLON) { arith_error("Expected a reference modification"); return f; }
+        next();
+        AstNode *refmod = ast_new(AST_REFMOD, NULL, ploc);
+        refmod->children = start;
+        if (tok.kind != TOK_RPAREN) start->next = parse_expr();
+        f->loop = refmod;
+        if (tok.kind != TOK_RPAREN) { arith_error("Expected ')'"); return f; }
+        next();
+    }
+    return f;
+}
+
 static AstNode *parse_identifier(void) {
+    if (tok_is_word("FUNCTION")) return parse_function();
     SourceLocation loc = {current_lexer->filename, tok.line, tok.column};
     char *name = tok_to_str();
     AstNode *id = ast_new(AST_IDENTIFIER, name, loc);
@@ -578,10 +628,20 @@ static AstNode *parse_identifier(void) {
         next();
     }
 
-    for (int part = 0; part < 2 && tok.kind == TOK_LPAREN && !id->loop && !parser_panic_mode; part++) {
+    // ("B, (C)": after a separator comma the parenthesis starts another
+    // operand, not a subscript)
+    for (int part = 0; part < 2 && tok.kind == TOK_LPAREN && !tok.after_comma && !id->loop &&
+                       !parser_panic_mode; part++) {
         SourceLocation ploc = {current_lexer->filename, tok.line, tok.column};
         next();
-        AstNode *first = parse_expr();
+        AstNode *first;
+        if (tok.kind == TOK_ALL) {
+            // ALL: every occurrence (a function argument)
+            first = ast_new(AST_SPECIAL, "ALL", (SourceLocation){current_lexer->filename, tok.line, tok.column});
+            next();
+        } else {
+            first = parse_expr();
+        }
         if (!first) { arith_error("Expected subscript or reference modifier"); return id; }
         if (tok.kind == TOK_COLON) {
             next();
@@ -594,7 +654,13 @@ static AstNode *parse_identifier(void) {
             AstNode *tail = first;
             id->children = first;
             while (tok.kind != TOK_RPAREN && tok.kind != TOK_EOF && !parser_panic_mode) {
-                AstNode *sub = parse_expr();
+                AstNode *sub;
+                if (tok.kind == TOK_ALL) {
+                    sub = ast_new(AST_SPECIAL, "ALL", (SourceLocation){current_lexer->filename, tok.line, tok.column});
+                    next();
+                } else {
+                    sub = parse_expr();
+                }
                 if (!sub) break;
                 tail->next = sub;
                 tail = sub;

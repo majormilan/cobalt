@@ -159,6 +159,11 @@ typedef enum {
                             //   for the programs nested in this one; then its IR_PERFORM
     IR_USE_RETURN,          //   and the return to the program whose I-O raised it
     IR_CALL_USE,            // call the USE GLOBAL entry var_name ("@symbol")
+    IR_FUNC_ARG,            // argument imm of the next IR_FUNC_CALL: flags 0: the binary
+                            //   value at var_name of scale digits; 1: the alphanumeric
+                            //   field var_name of size bytes
+    IR_FUNC_CALL,           // intrinsic function imm with size arguments into var_name
+                            //   (lit_len bytes; numeric: binary of scale digits)
     IR_EXTERNAL,            // A_<imm> = the EXTERNAL storage named lit_name (lit_len bytes)
                             //   of size bytes; content: a template it starts as (or NULL)
     IR_SIZE_ERR_CLEAR,      // start of a statement that stores numeric results

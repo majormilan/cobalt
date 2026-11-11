@@ -10,6 +10,7 @@ global runtime_compare_fill
 global runtime_class_test
 global runtime_compare_pattern
 global runtime_set_collation
+global cobrt_collation
 
 ; Alphanumeric comparison in the native (ASCII) collating sequence; the
 ; shorter operand is padded with spaces.

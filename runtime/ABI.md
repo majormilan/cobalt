@@ -653,3 +653,30 @@ that name, allocated (zeroed, or a copy of the template: a file's control
 block) by the first program that asks; programs reach it through an
 address slot set at initialization. A program stores the address of its
 FILE STATUS item into a shared file control block before each operation.
+
+## 13. Intrinsic functions [implemented]
+
+A function reference is a temporary data item that holds its value; the
+compiler evaluates it where the reference is used (so a function in a loop
+condition is evaluated on every test). Numeric results are binary items of a
+fixed scale: 12 decimals for ACOS, ASIN, ATAN, COS, SIN, TAN, LOG, LOG10,
+ANNUITY and RANDOM; 9 for SQRT, MEAN, VARIANCE, STANDARD-DEVIATION,
+PRESENT-VALUE, NUMVAL and NUMVAL-C; the arguments' largest scale for MAX,
+MIN, RANGE, SUM and REM (one more for MEDIAN and MIDRANGE); 0 for the integer
+functions. LENGTH and WHEN-COMPILED are known when compiling. ALL subscripts
+stand for every occurrence of a table (of a fixed size).
+
+`runtime_function(args, count, function, scale, result, length)`: each
+argument is 3 qwords, a numeric one its scale, its value (the number times
+10^scale) and 0, an alphanumeric one -1, its address and its length. The
+result is stored at `result`: an integer at `scale`, or `length` characters
+padded with spaces. Bit 8 of `function` is DECIMAL-POINT IS COMMA (NUMVAL).
+Transcendental functions use the x87 FPU (a 64-bit mantissa), the others
+integers. CURRENT-DATE gives 00000 for the offset from UTC.
+
+**Intermediate results.** Arithmetic expressions keep the scales of their
+operands while 18 digits hold the value; where the PICTUREs say a product,
+quotient or sum could need more, the intermediate scale is lowered, but not
+below the receiver's scale plus 2. Multiplication and division take shifts up
+to 36 (a 192-bit dividend), so a quotient of items with 17 decimals keeps
+its precision.

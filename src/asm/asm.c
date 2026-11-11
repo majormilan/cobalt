@@ -132,6 +132,8 @@ static bool word_is(const char *p, size_t len, const char *w) {
 typedef struct { const char *name; int num, size; bool needs_rex, high8; } RegInfo;
 
 static const RegInfo registers[] = {
+    {"st0",0,10,false,false}, {"st1",1,10,false,false}, {"st2",2,10,false,false}, {"st3",3,10,false,false},
+    {"st4",4,10,false,false}, {"st5",5,10,false,false}, {"st6",6,10,false,false}, {"st7",7,10,false,false},
     {"rax",0,8,false,false}, {"rcx",1,8,false,false}, {"rdx",2,8,false,false}, {"rbx",3,8,false,false}, {"rsp",4,8,false,false}, {"rbp",5,8,false,false}, {"rsi",6,8,false,false}, {"rdi",7,8,false,false},
     {"r8",8,8,false,false}, {"r9",9,8,false,false}, {"r10",10,8,false,false}, {"r11",11,8,false,false}, {"r12",12,8,false,false}, {"r13",13,8,false,false}, {"r14",14,8,false,false}, {"r15",15,8,false,false},
     {"eax",0,4,false,false}, {"ecx",1,4,false,false}, {"edx",2,4,false,false}, {"ebx",3,4,false,false}, {"esp",4,4,false,false}, {"ebp",5,4,false,false}, {"esi",6,4,false,false}, {"edi",7,4,false,false},

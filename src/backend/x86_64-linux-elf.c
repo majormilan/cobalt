@@ -1271,6 +1271,7 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
         fprintf(f, "L_prog_state: resq 1\n");     // 0: initialize on the next CALL
     }
     fprintf(f, "L_callargs: resq 64\n");          // CALL arguments
+    fprintf(f, "L_fargs: resq 3072\n");           // intrinsic function arguments
     // Address and length slots of field references computed at run time
     int num_slots = 0;
     for (i = ir->head; i; i = i->next)
@@ -1599,6 +1600,31 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
             case IR_CALL_USE:
                 fprintf(f, "    call %s\n", i->var_name + 1);
                 tgt_zero = val_zero = false;
+                break;
+            case IR_FUNC_ARG: {
+                long long at = 24 * i->imm;
+                if (i->flags) {
+                    emit_addr(f, "rax", i->var_name);
+                    fprintf(f, "    mov [rel L_fargs + %lld], rax\n", at + 8);
+                    fprintf(f, "    mov qword [rel L_fargs + %lld], -1\n", at);
+                    emit_size(f, "rax", i->size);
+                    fprintf(f, "    mov [rel L_fargs + %lld], rax\n", at + 16);
+                } else {
+                    emit_addr(f, "rax", i->var_name);
+                    fprintf(f, "    mov rax, [rax]\n");
+                    fprintf(f, "    mov [rel L_fargs + %lld], rax\n", at + 8);
+                    fprintf(f, "    mov qword [rel L_fargs + %lld], %d\n", at, i->digits);
+                }
+                break;
+            }
+            case IR_FUNC_CALL:
+                fprintf(f, "    lea rdi, [rel L_fargs]\n");
+                fprintf(f, "    mov rsi, %d\n", i->size);
+                fprintf(f, "    mov rdx, %lld\n", i->imm);
+                fprintf(f, "    mov rcx, %d\n", i->digits);
+                emit_addr(f, "r8", i->var_name);
+                fprintf(f, "    mov r9, %d\n", i->lit_len);
+                fprintf(f, "    call runtime_function\n");
                 break;
             case IR_EXTERNAL: {
                 char *lit = sanitize_label_name(i->lit_name);

@@ -1,6 +1,7 @@
 #ifndef COBALT_LEXER_H
 #define COBALT_LEXER_H
 #include <stddef.h>
+#include <stdbool.h>
 #include "config.h" // Include config.h for CompilerMode
 
 // Forward declaration
@@ -266,10 +267,12 @@ typedef struct {
     const char *filename; // File where the token/symbol is located
     int line;
     int column;
+    bool after_comma;           // a separator comma or semicolon came before it
 } Token;
 
 typedef struct Lexer {
     const char *src;
+    bool comma_seen;            // skip_ws passed a separator comma or semicolon
     int current_line;
     int current_col;
     const char *original_source; // The original source string, used for error reporting

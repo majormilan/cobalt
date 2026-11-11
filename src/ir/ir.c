@@ -6,6 +6,7 @@
 #include <string.h>
 #include <strings.h>
 #include <ctype.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <limits.h>
@@ -1160,10 +1161,140 @@ static AstNode *item_ref(int idx, SourceLocation loc) {
     return ast_new(AST_IDENTIFIER, name, loc);
 }
 
+// ── Intrinsic functions ──────────────────────────────────────────────────────
+// A function reference (an identifier "!NAME", arguments in on_error) is a
+// temporary data item holding its value; resolve_ref evaluates it there
+// (runtime/ABI.md section 13).
+
+typedef struct {
+    const char *name;
+    int id;                 // runtime function number (function.asm)
+    char result;            // 'n' numeric, 'a' alphanumeric
+    int scale;              // numeric result scale; -1: the arguments' largest, -2: that + 1
+    int min_args, max_args;
+    char args;              // 'n' numeric, 'a' alphanumeric, 'x' either (all alike), '?' any
+} FuncInfo;
+
+static const FuncInfo functions[] = {
+    {"ACOS", 0, 'n', 12, 1, 1, 'n'}, {"ANNUITY", 1, 'n', 12, 2, 2, 'n'},
+    {"ASIN", 2, 'n', 12, 1, 1, 'n'}, {"ATAN", 3, 'n', 12, 1, 1, 'n'},
+    {"CHAR", 4, 'a', 0, 1, 1, 'n'}, {"COS", 5, 'n', 12, 1, 1, 'n'},
+    {"CURRENT-DATE", 6, 'a', 0, 0, 0, 'n'}, {"DATE-OF-INTEGER", 7, 'n', 0, 1, 1, 'n'},
+    {"DAY-OF-INTEGER", 8, 'n', 0, 1, 1, 'n'}, {"FACTORIAL", 9, 'n', 0, 1, 1, 'n'},
+    {"INTEGER", 10, 'n', 0, 1, 1, 'n'}, {"INTEGER-OF-DATE", 11, 'n', 0, 1, 1, 'n'},
+    {"INTEGER-OF-DAY", 12, 'n', 0, 1, 1, 'n'}, {"INTEGER-PART", 13, 'n', 0, 1, 1, 'n'},
+    {"LENGTH", 14, 'n', 0, 1, 1, '?'}, {"LOG", 15, 'n', 12, 1, 1, 'n'},
+    {"LOG10", 16, 'n', 12, 1, 1, 'n'}, {"LOWER-CASE", 17, 'a', 0, 1, 1, 'a'},
+    {"MAX", 18, 'n', -1, 1, 999, 'x'}, {"MEAN", 19, 'n', 9, 1, 999, 'n'},
+    {"MEDIAN", 20, 'n', -2, 1, 999, 'n'}, {"MIDRANGE", 21, 'n', -2, 1, 999, 'n'},
+    {"MIN", 22, 'n', -1, 1, 999, 'x'}, {"MOD", 23, 'n', 0, 2, 2, 'n'},
+    {"NUMVAL", 24, 'n', 9, 1, 1, 'a'}, {"NUMVAL-C", 25, 'n', 9, 1, 2, 'a'},
+    {"ORD", 26, 'n', 0, 1, 1, 'a'}, {"ORD-MAX", 27, 'n', 0, 1, 999, 'x'},
+    {"ORD-MIN", 28, 'n', 0, 1, 999, 'x'}, {"PRESENT-VALUE", 29, 'n', 9, 2, 999, 'n'},
+    {"RANDOM", 30, 'n', 12, 0, 1, 'n'}, {"RANGE", 31, 'n', -1, 1, 999, 'n'},
+    {"REM", 32, 'n', -1, 2, 2, 'n'}, {"REVERSE", 33, 'a', 0, 1, 1, 'a'},
+    {"SIN", 34, 'n', 12, 1, 1, 'n'}, {"SQRT", 35, 'n', 9, 1, 1, 'n'},
+    {"STANDARD-DEVIATION", 36, 'n', 9, 1, 999, 'n'}, {"SUM", 37, 'n', -1, 1, 999, 'n'},
+    {"TAN", 38, 'n', 12, 1, 1, 'n'}, {"UPPER-CASE", 39, 'a', 0, 1, 1, 'a'},
+    {"VARIANCE", 40, 'n', 9, 1, 999, 'n'}, {"WHEN-COMPILED", 41, 'a', 0, 0, 0, 'n'},
+};
+
+static const FuncInfo *function_info(const char *name) {
+    for (size_t k = 0; k < sizeof(functions) / sizeof(functions[0]); k++)
+        if (strcasecmp(functions[k].name, name) == 0) return &functions[k];
+    return NULL;
+}
+
+static struct { const AstNode *node; int var; } fn_temps[2048];
+static int num_fn_temps = 0;
+static bool record_pending[MAX_VARS];       // temporary records still to emit (IR_DATA_VAR)
+
+static VarInfo *find_item(const AstNode *ref, bool report);
+static bool arg_is_alnum(const AstNode *a);
+static int arg_scale(AstNode *a);
+static int arg_length(const AstNode *a);
+static void expand_all_args(const AstNode *f, AstNode **out, int *n, int max);
+
+// A temporary binary item of scale s (record of its own)
+static int temp_numeric(int s, const AstNode *decl) {
+    VarInfo *v = new_var("$tmp");
+    if (!v) return 0;
+    v->is_filler = true;
+    v->record = num_records++;
+    record_pending[v->record] = true;
+    record_size[v->record] = 8;
+    v->size = 8;
+    v->usage_type = USAGE_COMP5;
+    v->is_numeric = true;
+    v->is_signed = true;
+    v->digits = 18;
+    v->decimal_places = s;
+    v->decl = (AstNode *)decl;
+    return (int)(v - vars);
+}
+
+static int temp_alnum(int size, const AstNode *decl) {
+    VarInfo *v = new_var("$tmp");
+    if (!v) return 0;
+    v->is_filler = true;
+    v->record = num_records++;
+    record_pending[v->record] = true;
+    record_size[v->record] = size > 0 ? size : 1;
+    v->size = size > 0 ? size : 1;
+    v->usage_type = USAGE_DISPLAY;
+    v->decl = (AstNode *)decl;
+    return (int)(v - vars);
+}
+
+// The temporary item of function reference f (created on first use)
+static int function_temp(const AstNode *f) {
+    for (int k = 0; k < num_fn_temps; k++)
+        if (fn_temps[k].node == f) return fn_temps[k].var;
+    const FuncInfo *fi = function_info(f->name + 1);
+    int idx;
+    if (!fi) {
+        cobalt_error_loc(NULL, f->loc.line, f->loc.column, "Unknown function '%s'", f->name + 1);
+        idx = temp_numeric(0, f);
+    } else {
+        AstNode *args[1024];
+        int nargs = 0;
+        expand_all_args(f, args, &nargs, 1024);
+        bool alnum_args = nargs > 0 && arg_is_alnum(args[0]);
+        if (fi->result == 'a' || (fi->args == 'x' && alnum_args && fi->id != 27 && fi->id != 28)) {
+            int size = 1;
+            if (fi->id == 6 || fi->id == 41) size = 21;          // CURRENT-DATE, WHEN-COMPILED
+            else if (fi->id != 4)
+                for (int k = 0; k < nargs; k++) {
+                    int n = arg_length(args[k]);
+                    if (n > size) size = n;
+                }
+            idx = temp_alnum(size, f);
+        } else {
+            int s = fi->scale;
+            if (s < 0) {
+                int m = 0;
+                for (int k = 0; k < nargs; k++) {
+                    int a = arg_is_alnum(args[k]) ? 0 : arg_scale(args[k]);
+                    if (a > m) m = a;
+                }
+                s = m + (fi->scale == -2 ? 1 : 0);
+                if (s > 17) s = 17;
+            }
+            idx = temp_numeric(s, f);
+        }
+    }
+    if (num_fn_temps < 2048) {
+        fn_temps[num_fn_temps].node = f;
+        fn_temps[num_fn_temps++].var = idx;
+    }
+    return idx;
+}
+
 // Find the data item an identifier refers to, applying OF/IN qualification.
 // Reports unknown and ambiguous names when report is set.
 static VarInfo *find_item(const AstNode *ref, bool report) {
     if (ref->name[0] == '#') return &vars[atoi(ref->name + 1)];
+    if (ref->name[0] == '!') return &vars[function_temp(ref)];
     VarInfo *found = NULL;
     int count = 0;
     for (int i = 0; i < num_vars; i++) {
@@ -1273,8 +1404,11 @@ static int odo_length(IrProgram *ir, const VarInfo *v, const VarInfo *t) {
     return -(slot + 1);
 }
 
+static bool eval_function(IrProgram *ir, AstNode *f);
+
 static bool resolve_ref(IrProgram *ir, AstNode *ref, FieldRef *out) {
     memset(out, 0, sizeof(*out));
+    if (ref->name[0] == '!' && !eval_function(ir, ref)) return false;
     VarInfo *v = find_item(ref, true);
     if (!v) return false;
     if (v->is_cond) {
@@ -1564,6 +1698,78 @@ static void emit_store(IrProgram *ir, const FieldRef *f, bool keep) {
 // code that pushes its value. W is the working scale: products are cut back
 // to W digits after the point and quotients are computed to W digits.
 // The single function keeps the computed scale and the emitted code in step.
+// The integer digits a value of the expression may have (from the PICTUREs
+// and literals): the scales of intermediate results are kept within 18
+// digits in all (see num_expr)
+static int int_digits(AstNode *e) {
+    if (!e) return 1;
+    int d;
+    switch (e->kind) {
+        case AST_IDENTIFIER: {
+            VarInfo *v = find_item(e, false);
+            d = v ? v->digits - v->decimal_places : 18;
+            break;
+        }
+        case AST_LITERAL_NUMBER: {
+            const char *p = e->name;
+            if (*p == '-' || *p == '+') p++;
+            while (*p == '0' && p[1] && p[1] != '.') p++;
+            d = 0;
+            while (isdigit((unsigned char)p[d])) d++;
+            break;
+        }
+        case AST_EXPR_NEG:
+        case AST_EXPR_RESCALE:
+            d = int_digits(e->children);
+            break;
+        case AST_EXPR_ADD:
+        case AST_EXPR_SUB: {
+            int l = int_digits(e->children), r = int_digits(e->children->next);
+            d = (l > r ? l : r) + 1;
+            break;
+        }
+        case AST_EXPR_MUL:
+            d = int_digits(e->children) + int_digits(e->children->next);
+            break;
+        case AST_EXPR_DIV: {
+            // a literal divisor below 1 makes the quotient larger
+            d = int_digits(e->children);
+            AstNode *b = e->children->next;
+            if (b->kind == AST_LITERAL_NUMBER) {
+                const char *p = strchr(b->name, '.');
+                long long value;
+                int scale;
+                if (p && parse_num_literal(b->name, &value, &scale) && value != 0) {
+                    long long m = value < 0 ? -value : value, lim = 1;
+                    for (int k = 0; k < scale; k++) lim *= 10;
+                    while (m < lim) { d++; m *= 10; }
+                }
+            }
+            break;
+        }
+        default:
+            d = 18;
+    }
+    if (d < 1) d = 1;
+    return d > 18 ? 18 : d;
+}
+
+// The least scale intermediate results keep when 18 digits would not hold
+// the scale the operands have (the receiver's scale and 2 more); W itself
+// outside lower_assign
+static int expr_floor = 18;
+
+// The scale for a value of int_digits d: at most W, and within 18 digits
+// unless that is below the floor
+static int fit_scale(int want, int W, int d) {
+    int lim = 18 - d;
+    if (lim < expr_floor) lim = expr_floor;
+    if (lim < 0) lim = 0;
+    if (want > W) want = W;         // (never raised: a scale may be negative, PICTURE P)
+    if (want > lim) want = lim;
+    return want;
+}
+
 static int num_expr(IrProgram *ir, AstNode *e, int W) {
     switch (e->kind) {
         case AST_IDENTIFIER: {
@@ -1600,6 +1806,7 @@ static int num_expr(IrProgram *ir, AstNode *e, int W) {
             AstNode *l = e->children, *r = l->next;
             int sl = num_expr(NULL, l, W), sr = num_expr(NULL, r, W);
             int s = sl > sr ? sl : sr;
+            if (s > 18 - int_digits(e)) s = fit_scale(s, s, int_digits(e));
             if (ir) {
                 num_expr(ir, l, W);
                 emit_rescale(ir, s - sl, false);
@@ -1612,21 +1819,22 @@ static int num_expr(IrProgram *ir, AstNode *e, int W) {
         case AST_EXPR_MUL: {
             AstNode *l = e->children, *r = l->next;
             int sl = num_expr(ir, l, W), sr = num_expr(ir, r, W);
-            int p = sl + sr, shift = p > W ? p - W : 0;
+            int p = sl + sr, shift = p - fit_scale(p, W, int_digits(e));
             if (ir) emit_num(ir, IR_NUM_MUL, shift, 0);
             return p - shift;
         }
         case AST_EXPR_DIV: {
             AstNode *l = e->children, *r = l->next;
             int sl = num_expr(NULL, l, W), sr = num_expr(NULL, r, W);
-            int shift = W - sl + sr;
+            int q = fit_scale(W, W, int_digits(e));
+            int shift = q - sl + sr;
             if (ir) {
                 num_expr(ir, l, W);
                 if (shift < 0) emit_rescale(ir, shift, false);
                 num_expr(ir, r, W);
                 emit_num(ir, IR_NUM_DIV, shift < 0 ? 0 : shift, 0);
             }
-            return W;
+            return q;
         }
         case AST_EXPR_POW: {
             AstNode *base = e->children;
@@ -1687,7 +1895,10 @@ static VarInfo *receiving_item(AstNode *n) {
 static void lower_assign(IrProgram *ir, AstNode *tree, AstNode *receiver, bool keep) {
     VarInfo *t = receiving_item(receiver);
     if (!t || !num_expr_valid(tree)) return;
+    int saved_floor = expr_floor;
+    expr_floor = t->decimal_places + 2;
     int s = num_expr(ir, tree, working_scale(tree, t));
+    expr_floor = saved_floor;
     emit_rescale(ir, t->decimal_places - s, receiver->rounded);
     FieldRef f;
     if (!resolve_ref(ir, receiver, &f)) return;
@@ -1795,7 +2006,14 @@ static void store_copy(IrProgram *ir, AstNode *recv, int s, bool keep) {
 // Compute tree once and store it into every receiver (GIVING, COMPUTE)
 static void lower_giving(IrProgram *ir, AstNode *tree, AstNode **recv, int n, bool keep) {
     if (!num_expr_valid(tree)) return;
+    int saved_floor = expr_floor, most = 0;
+    for (int i = 0; i < n; i++) {
+        VarInfo *v = find_item(recv[i], false);
+        if (v && v->decimal_places > most) most = v->decimal_places;
+    }
+    expr_floor = most + 2;
     int s = num_expr(ir, tree, working_scale_all(tree, recv, n));
+    expr_floor = saved_floor;
     emit(ir, IR_ERR_SAVE);
     for (int i = 0; i < n; i++) store_copy(ir, recv[i], s, keep);
     emit(ir, IR_NUM_DROP);
@@ -3530,6 +3748,227 @@ static void lower_file_statement(IrProgram *ir, AstNode *node) {
     }
 }
 
+// ── Intrinsic function evaluation ───────────────────────────────────────────
+
+static bool arg_is_alnum(const AstNode *a) {
+    if (a->kind == AST_STRING_LITERAL) return true;
+    if (a->kind == AST_FIGURATIVE_CONSTANT) return figurative_char(a) != '0';
+    if (a->kind != AST_IDENTIFIER) return false;
+    VarInfo *v = find_item(a, false);
+    return v && (!v->is_numeric || v->is_group || (a->loop != NULL));
+}
+
+static bool contains_div(const AstNode *e) {
+    if (!e) return false;
+    if (e->kind == AST_EXPR_DIV || e->kind == AST_EXPR_POW) return true;
+    if (e->kind == AST_IDENTIFIER || e->kind == AST_LITERAL_NUMBER) return false;
+    for (const AstNode *c = e->children; c; c = c->next)
+        if (contains_div(c)) return true;
+    return false;
+}
+
+// The scale a numeric argument is evaluated at
+static int arg_scale(AstNode *a) {
+    int s = max_leaf_scale(a);
+    if (a->kind != AST_IDENTIFIER && a->kind != AST_LITERAL_NUMBER && s > 9) s = 9;
+    if (contains_div(a) && s < 9) s = 9;
+    return s > 17 ? 17 : s;
+}
+
+static int arg_length(const AstNode *a) {
+    if (a->kind == AST_STRING_LITERAL) return (int)strlen(a->name);
+    if (a->kind == AST_FIGURATIVE_CONSTANT) return 1;
+    VarInfo *v = find_item(a, false);
+    if (!v) return 1;
+    if (a->loop) {
+        AstNode *start = a->loop->children, *len = start ? start->next : NULL;
+        long long sv, lv;
+        if (len && is_int_literal(len, &lv)) return (int)lv;
+        if (start && is_int_literal(start, &sv)) return v->size - (int)sv + 1;
+    }
+    return v->size;
+}
+
+// The arguments of function reference f, an identifier with ALL subscripts
+// standing for each of its occurrences: the argument nodes themselves (a
+// function's temporary belongs to its node), and copies for ALL, which
+// free_args frees
+static AstNode *expanded_copies[4096];
+static int num_expanded_copies = 0;
+
+static void free_args(void) {
+    for (int k = 0; k < num_expanded_copies; k++) ast_free(expanded_copies[k]);
+    num_expanded_copies = 0;
+}
+
+static void expand_all_args(const AstNode *f, AstNode **out, int *n, int max) {
+    for (AstNode *a = f->on_error; a && *n < max; a = a->next) {
+        bool all = false;
+        if (a->kind == AST_IDENTIFIER)
+            for (const AstNode *s = a->children; s; s = s->next)
+                if (s->kind == AST_SPECIAL) all = true;
+        if (!all) {
+            out[(*n)++] = a;
+            continue;
+        }
+        VarInfo *v = find_item(a, true);
+        if (!v) continue;
+        int counts[16], strides[16], subs[16];
+        int nd = item_dims(v, counts, strides);
+        int k = 0;
+        bool is_all[16] = {false};
+        long long fixed[16] = {0};
+        for (const AstNode *s = a->children; s && k < nd; s = s->next, k++) {
+            if (s->kind == AST_SPECIAL) is_all[k] = true;
+            else if (!is_int_literal(s, &fixed[k])) {
+                cobalt_error_loc(NULL, s->loc.line, s->loc.column,
+                                 "Only literal subscripts go with ALL subscripts");
+                return;
+            }
+        }
+        for (int d = 0; d < nd; d++) subs[d] = is_all[d] ? 1 : (int)fixed[d];
+        for (;;) {
+            if (*n >= max) return;
+            AstNode *c = ast_clone(a);
+            c->next = NULL;
+            ast_free(c->children);
+            c->children = NULL;
+            AstNode *tail = NULL;
+            for (int d = 0; d < nd; d++) {
+                char num[16];
+                snprintf(num, sizeof(num), "%d", subs[d]);
+                AstNode *lit = ast_new(AST_LITERAL_NUMBER, num, a->loc);
+                if (!c->children) c->children = lit;
+                else tail->next = lit;
+                tail = lit;
+            }
+            out[(*n)++] = c;
+            if (num_expanded_copies < 4096) expanded_copies[num_expanded_copies++] = c;
+            int d = nd - 1;
+            while (d >= 0 && (!is_all[d] || ++subs[d] > counts[d])) {
+                if (is_all[d]) subs[d] = 1;
+                d--;
+            }
+            if (d < 0) break;
+        }
+    }
+}
+
+// Evaluate function reference f into its temporary item
+static bool eval_function(IrProgram *ir, AstNode *f) {
+    const FuncInfo *fi = function_info(f->name + 1);
+    int t = function_temp(f);
+    if (!fi) return false;
+    AstNode *args[1024];
+    int nargs = 0;
+    expand_all_args(f, args, &nargs, 1024);
+    bool ok = true;
+    if (nargs < fi->min_args || nargs > fi->max_args) {
+        cobalt_error_loc(NULL, f->loc.line, f->loc.column, "FUNCTION %s takes %d to %d arguments, %d given",
+                         fi->name, fi->min_args, fi->max_args, nargs);
+        ok = false;
+    }
+    AstNode *tref = item_ref(t, f->loc);
+    FieldRef tf;
+    if (ok) {
+        tf.var = &vars[t];
+        record_label(tf.label, sizeof(tf.label), vars[t].record, 0);
+        tf.size = vars[t].size;
+        tf.refmod = false;
+    }
+    if (ok && fi->id == 14) {
+        // LENGTH: known when compiling
+        FieldRef af;
+        int len = args[0]->kind == AST_IDENTIFIER && args[0]->name[0] != '!' ? 0 : arg_length(args[0]);
+        if (args[0]->kind == AST_IDENTIFIER && resolve_ref(ir, args[0], &af)) len = af.size;
+        if (len < 0) {
+            cobalt_error_loc(NULL, f->loc.line, f->loc.column, "FUNCTION LENGTH of an item of variable length is not supported yet");
+            ok = false;
+        } else {
+            move_int_to_item(ir, len, t, f->loc);
+        }
+    } else if (ok && fi->id == 41) {
+        // WHEN-COMPILED: the time of this compilation
+        time_t now = time(NULL);
+        struct tm *tm = localtime(&now);
+        char text[64], lit[32];
+        snprintf(text, sizeof(text), "%04d%02d%02d%02d%02d%02d0000000",
+                 tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec);
+        emit_data_lit(ir, "lit", text, lit, sizeof(lit));
+        emit_move_alpha(ir, &tf, lit, 21);
+    } else if (ok) {
+        // The arguments into temporaries (functions among them evaluated
+        // first), then the argument table, then the call
+        char labels[1024][64];
+        int sizes[1024], scales[1024];
+        for (int k = 0; k < nargs && ok; k++) {
+            bool alnum = arg_is_alnum(args[k]);
+            if ((fi->args == 'n' && alnum) || (fi->args == 'a' && !alnum && fi->id != 26)) {
+                // (ORD of a numeric DISPLAY item: its character)
+                if (!(fi->args == 'a' && args[k]->kind == AST_IDENTIFIER)) {
+                    cobalt_error_loc(NULL, args[k]->loc.line, args[k]->loc.column,
+                                     "Argument %d of FUNCTION %s must be %s", k + 1, fi->name,
+                                     fi->args == 'n' ? "numeric" : "alphanumeric");
+                    ok = false;
+                    break;
+                }
+                alnum = true;
+            }
+            if (fi->args == 'a' || fi->id == 26) alnum = true;
+            if (alnum) {
+                FieldRef af;
+                if (args[k]->kind == AST_STRING_LITERAL || args[k]->kind == AST_FIGURATIVE_CONSTANT) {
+                    char lit[32];
+                    const char *text = args[k]->kind == AST_STRING_LITERAL ? args[k]->name : " ";
+                    if (args[k]->kind == AST_FIGURATIVE_CONSTANT) {
+                        static char one[2];
+                        one[0] = (char)figurative_char(args[k]);
+                        one[1] = '\0';
+                        text = one;
+                    }
+                    emit_data_lit(ir, "lit", text, lit, sizeof(lit));
+                    snprintf(labels[k], sizeof(labels[k]), "%s", lit);
+                    sizes[k] = (int)strlen(text);
+                } else if (resolve_ref(ir, args[k], &af)) {
+                    snprintf(labels[k], sizeof(labels[k]), "%s", af.label);
+                    sizes[k] = af.size;
+                } else {
+                    ok = false;
+                }
+                scales[k] = -1;
+            } else {
+                if (!num_expr_valid(args[k])) { ok = false; break; }
+                int s = arg_scale(args[k]);
+                int at = temp_numeric(s, f);
+                AstNode *aref = item_ref(at, f->loc);
+                lower_assign(ir, args[k], aref, false);
+                ast_free(aref);
+                record_label(labels[k], sizeof(labels[k]), vars[at].record, 0);
+                sizes[k] = 8;
+                scales[k] = s;
+            }
+        }
+        for (int k = 0; k < nargs && ok; k++) {
+            IrInstr *a = emit(ir, IR_FUNC_ARG);
+            a->imm = k;
+            a->var_name = strdup(labels[k]);
+            a->size = sizes[k];
+            a->digits = scales[k];
+            a->flags = scales[k] < 0 ? 1 : 0;
+        }
+        if (ok) {
+            IrInstr *c = emit(ir, IR_FUNC_CALL);
+            c->imm = fi->id | (decimal_comma && (fi->id == 24 || fi->id == 25) ? 0x100 : 0);
+            c->size = nargs;
+            c->digits = vars[t].is_numeric ? vars[t].decimal_places : 0;
+            c->var_name = strdup(tf.label);
+            c->lit_len = vars[t].size;
+        }
+    }
+    ast_free(tref);
+    return ok;
+}
+
 // ── CALL and CANCEL ─────────────────────────────────────────────────────────
 
 // The name operand of a CALL or CANCEL into an IR_CALL_PROGRAM-like instruction
@@ -4433,6 +4872,8 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
     }
     current_unit = unit;
     self_symbol = ir->entry_symbol;
+    num_fn_temps = 0;
+    memset(record_pending, 0, sizeof(record_pending));
     num_status_fixups = 0;
     lit_counter = 0;
     if_counter = 0;
@@ -4603,6 +5044,14 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
     }
     ir->addr_slots = addr_slots;
     current_proc = -1;
+    free_args();
+    // The temporary records of function values and arguments
+    for (int r = 0; r < num_records; r++) {
+        if (!record_pending[r]) continue;
+        char label[32];
+        snprintf(label, sizeof(label), "%%r%d", r);
+        append_instr(ir, new_instr(IR_DATA_VAR, label, NULL, NULL, 0, record_size[r], 0, 0, USAGE_DISPLAY));
+    }
 
     // An altered paragraph must consist of a GO TO statement
     for (int p = 0; p < num_procs && p < 1024; p++) {
