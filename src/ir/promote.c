@@ -499,7 +499,14 @@ static bool size_err_transparent(IrOpcode op) {
     }
 }
 
-bool ir_size_err_dead_after(IrFlow *fl, int start) {
+// tgt: for cobrt_tgt_err, which numeric stores and IR_ERR_SAVE / RESTORE
+// read; otherwise cobrt_stmt_err, which ON SIZE ERROR reads
+static bool err_dead_after(IrFlow *fl, int start, bool tgt);
+
+bool ir_size_err_dead_after(IrFlow *fl, int start) { return err_dead_after(fl, start, false); }
+bool ir_tgt_err_dead_after(IrFlow *fl, int start) { return err_dead_after(fl, start, true); }
+
+static bool err_dead_after(IrFlow *fl, int start, bool tgt) {
     if (start < 0 || start >= fl->n) return false;
     fl->gen++;
     int stack[64], sp = 0, budget = 256;
@@ -523,6 +530,7 @@ bool ir_size_err_dead_after(IrFlow *fl, int start) {
                 continue;
             }
             if (!size_err_transparent(i->op)) return false;
+            if (tgt && (i->op == IR_NUM_STORE || i->op == IR_ERR_SAVE || i->op == IR_ERR_RESTORE)) return false;
             k++;
         }
     }

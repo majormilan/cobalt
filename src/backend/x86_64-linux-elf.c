@@ -1297,6 +1297,11 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
     fprintf(f, "L_rslots:\n");
     for (int p = 0; p < num_procs; p++) fprintf(f, "R_%d: resq 1\n", p);
     fprintf(f, "L_rslots_end:\n");
+    // The procedures some PERFORM range ends at: only their ends test the
+    // return slot (no other slot is ever set)
+    bool *range_end = calloc((size_t)num_procs + 1, sizeof(bool));
+    for (IrInstr *p = ir->head; p; p = p->next)
+        if (p->op == IR_PERFORM && p->proc_end >= 0 && p->proc_end < num_procs) range_end[p->proc_end] = true;
     if (ir->subprogram) {
         fprintf(f, "L_entry_rsp: resq 1\n");      // the stack at the entry (EXIT PROGRAM)
         fprintf(f, "L_prog_state: resq 1\n");     // 0: initialize on the next CALL
@@ -1533,6 +1538,7 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 fprintf(f, "\n; %s\nP_%lld:\n", i->var_name, i->imm);
                 break;
             case IR_PROC_EXIT:
+                if (i->imm >= 0 && i->imm < num_procs && !range_end[i->imm]) break;   // never waited for
                 // Return to the PERFORM waiting for the end of this procedure
                 fprintf(f, "    mov rax, [rel R_%lld]\n", i->imm);
                 fprintf(f, "    test rax, rax\n");
@@ -1541,16 +1547,15 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 fprintf(f, "L_proc_end_%lld:\n", i->imm);
                 break;
             case IR_PERFORM:
-                fprintf(f, "    mov rax, [rel R_%d]\n", i->proc_end);
-                fprintf(f, "    sub rsp, 16\n");
-                fprintf(f, "    mov [rsp], rax\n");
-                fprintf(f, "    lea rax, [rel L_perform_%d]\n", perform_counter);
-                fprintf(f, "    mov [rel R_%d], rax\n", i->proc_end);
+                // the slot saved in a 16-byte stack slot (at [rsp]), the
+                // return address stored as an immediate (below 2 GiB)
+                fprintf(f, "    sub rsp, 8\n");
+                fprintf(f, "    push qword [rel R_%d]\n", i->proc_end);
+                fprintf(f, "    mov qword [rel R_%d], L_perform_%d\n", i->proc_end, perform_counter);
                 fprintf(f, "    jmp P_%lld\n", i->imm);
                 fprintf(f, "L_perform_%d:\n", perform_counter);
-                fprintf(f, "    mov rax, [rsp]\n");
-                fprintf(f, "    add rsp, 16\n");
-                fprintf(f, "    mov [rel R_%d], rax\n\n", i->proc_end);
+                fprintf(f, "    pop qword [rel R_%d]\n", i->proc_end);
+                fprintf(f, "    add rsp, 8\n\n");
                 perform_counter++;
                 break;
             case IR_GOTO:
@@ -2585,8 +2590,11 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 fprintf(f, "    call runtime_set_collation\n");
                 break;
             case IR_SIZE_ERR_CLEAR:
-                if (!tgt_zero) fprintf(f, "    mov byte [rel cobrt_tgt_err], 0\n");
-                tgt_zero = true;
+                // (not when no store reads it before it is cleared again)
+                if (!tgt_zero && !ir_tgt_err_dead_after(flow, pos)) {
+                    fprintf(f, "    mov byte [rel cobrt_tgt_err], 0\n");
+                    tgt_zero = true;
+                }
                 // no ON SIZE ERROR reads it: no need to clear it
                 if (!ir_size_err_dead_after(flow, pos))
                     fprintf(f, "    mov byte [rel cobrt_stmt_err], 0\n");
@@ -2615,6 +2623,7 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
 
     promote_free(&plan);
     ir_flow_free(flow);
+    free(range_end);
     // Out-of-line paths; control never falls into them
     fprintf(f, "\n    call runtime_exit\n\n; out-of-line paths\n");
     mem_stream_close(cold);

@@ -78,5 +78,8 @@ void ir_flow_free(IrFlow *flow);
 // IR_SIZE_ERR_CLEAR (or the end of the run) first. Conservative: any
 // instruction the analysis does not know counts as a reader.
 bool ir_size_err_dead_after(IrFlow *flow, int pos);
+// No numeric store or IR_ERR_SAVE / RESTORE reads cobrt_tgt_err after pos before
+// the next IR_SIZE_ERR_CLEAR (or the end of the run), on any path
+bool ir_tgt_err_dead_after(IrFlow *flow, int pos);
 
 #endif

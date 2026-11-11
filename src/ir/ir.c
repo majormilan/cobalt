@@ -6155,7 +6155,14 @@ static void lower_node_kind(IrProgram *ir, AstNode *node) {
             char lit_name[32] = {0};
             if (src->kind == AST_STRING_LITERAL || src->kind == AST_LITERAL_NUMBER)
                 emit_data_lit(ir, "lit", src->name ? src->name : "", lit_name, sizeof(lit_name));
-            emit(ir, IR_SIZE_ERR_CLEAR);
+            // The error bytes only matter when a number is moved: from a
+            // numeric source or into a numeric (or numeric edited) receiver
+            bool numeric_move = src->kind == AST_LITERAL_NUMBER || is_numeric_operand(src) || src->loop;
+            for (AstNode *dest = src->next; dest && dest->kind == AST_IDENTIFIER && !numeric_move; dest = dest->next) {
+                VarInfo *dv = find_item(dest, false);
+                if (!dv || dv->is_numeric || is_num_edited(dv) || dv->is_group || dest->loop) numeric_move = true;
+            }
+            if (numeric_move) emit(ir, IR_SIZE_ERR_CLEAR);
             for (AstNode *dest = src->next; dest && dest->kind == AST_IDENTIFIER; dest = dest->next)
                 lower_move(ir, src, dest, lit_name);
             break;
