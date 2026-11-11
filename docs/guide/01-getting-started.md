@@ -2,7 +2,7 @@
 
 ## Installing
 
-cobalt is a single executable with everything it needs inside: the
+Cobalt is a single executable with everything it needs inside: the
 compiler, an assembler, a linker and the runtime of every system it builds
 for. There is nothing else to install.
 
@@ -54,7 +54,7 @@ $ cobalt hello.cbl -o bin/hello
 
 ## When something is wrong
 
-cobalt shows the source line, underlines what is wrong and explains it:
+Cobalt shows the source line, underlines what is wrong and explains it:
 
 ```
 $ cobalt payroll.cbl
@@ -94,7 +94,7 @@ $ cobalt payroll.cbl taxes.o -o payroll
 
 ## Copybooks
 
-COPY brings in a library text. cobalt looks for it next to the source that
+COPY brings in a library text. Cobalt looks for it next to the source that
 holds the COPY statement, then in each `-I` directory, then in the
 directories of the `COBCPY` environment variable, trying the name as given,
 in upper case and in lower case, with no extension and with `.cpy`, `.CPY`,
@@ -134,7 +134,7 @@ describes the organizations, the status codes and the formats on disk.
 
 ## A stricter or looser compiler
 
-By default cobalt accepts the common extensions to COBOL-85 with a warning.
+By default Cobalt accepts the common extensions to COBOL-85 with a warning.
 `-X pedantic` rejects them; `-X relaxed` accepts them silently. `-Wextra`
 turns on every warning:
 
@@ -175,7 +175,7 @@ $ ./payroll
 
 ## Building for the other system
 
-Every cobalt builds for Linux and for Windows; `-t` picks the target:
+Every installation of Cobalt builds for Linux and for Windows; `-t` picks the target:
 
 ```
 $ cobalt -t x86_64-pc-windows-msvc hello.cbl -o hello.exe

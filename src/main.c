@@ -168,9 +168,9 @@ static char *read_file(const char *path) {
 static Standard parse_standard(const char *s) {
     if (!strcasecmp(s, "COBOL-85") || !strcasecmp(s, "COBOL85") || !strcmp(s, "85")) return STD_COBOL85;
     if (!strcasecmp(s, "COBOL-2002") || !strcasecmp(s, "COBOL-2014"))
-        cobalt_error("%s is not supported in this release: cobalt compiles COBOL-85", s);
+        cobalt_error("%s is not supported in this release (%s supports COBOL-85)", s, COBALT_VERSION);
     else
-        cobalt_error("Unknown COBOL standard '%s' (this release compiles COBOL-85)", s);
+        cobalt_error("Unknown COBOL standard '%s' (this release supports COBOL-85)", s);
     exit(1);
 }
 
@@ -190,11 +190,12 @@ static void print_version(void) {
 #else
     printf("Target: x86_64-linux-elf (default), x86_64-pc-windows-msvc; built %s\n", __DATE__);
 #endif
-    printf("COBOL-85 compiler with a built-in assembler and linker. MIT license.\n");
+    printf("Cobalt, a COBOL cross-compiler with a built-in assembler and linker.\n");
+    printf("Supported in this release: COBOL-85. MIT License.\n");
 }
 
 static void print_help(const char *progname) {
-    printf("cobalt %s: a COBOL-85 compiler\n\n", COBALT_VERSION);
+    printf("Cobalt %s: a COBOL cross-compiler (this release supports COBOL-85)\n\n", COBALT_VERSION);
     printf("Usage: %s [options] source.cbl... [object.o...]\n\n", progname);
     printf("The sources (and objects) make one run unit: by default an executable named\n");
     printf("after the first source, assembled and linked by cobalt itself.\n\n");

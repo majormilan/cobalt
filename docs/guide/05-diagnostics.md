@@ -2,7 +2,7 @@
 
 ## The messages
 
-cobalt reports errors, warnings and the notes that explain them in one
+Cobalt reports errors, warnings and the notes that explain them in one
 format:
 
 ```
@@ -40,9 +40,9 @@ ledger.cbl:11:12: note: did you mean 'TOTAL-AMOUNT'?
 - A misspelled statement gets the closest verb (`did you mean 'DISPLAY'?`),
   also when the statement before has no period and the word reads as one of
   its operands.
-- Elements of later standards and vendor dialects that cobalt does not
+- Elements of later standards and vendor dialects that Cobalt does not
   support are named as such: `FUNCTION TRIM is COBOL 2002, not COBOL-85;
-  cobalt does not support it`.
+  Cobalt does not support it`.
 - The last line counts the errors and warnings (`2 errors and 1 warning
   generated.`).
 
@@ -128,10 +128,10 @@ Errors are not named and cannot be turned off. They are reported for:
   modification out of the item by its literals, a file statement that does
   not fit the file's organization or access;
 - the elements outside COBOL-85, under `-X pedantic` and `-X ibm-strict`;
-- what cobalt does not support (chapter 3), each with a message saying
+- what Cobalt does not support (chapter 3), each with a message saying
   so rather than a syntax error.
 
-Errors in what cobalt was given on the command line (an unknown option, a
+Errors in what Cobalt was given on the command line (an unknown option, a
 file it cannot read) are reported as `cobalt: error: ...`.
 
 The errors and warnings of the program when it runs are in chapter 7.

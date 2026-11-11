@@ -39,7 +39,7 @@ after the `-I` ones: separated by `:` on Linux and by `;` on Windows.
 | `-E` | Writes the source as the compiler reads it, after COPY and REPLACE, to the `-o` file or standard output. |
 | `-MD` | Also writes `OUTPUT.d` (the output's name without its extension, plus `.d`): a make rule whose prerequisites are the sources and every copybook read. |
 | `-MP` | With `-MD`: an empty rule for each copybook, so make does not fail when one is removed. |
-| `-t TRIPLE`, `--target TRIPLE` | The system to build for: `x86_64-linux-elf` or `x86_64-pc-windows-msvc`. The default is the system cobalt runs on. |
+| `-t TRIPLE`, `--target TRIPLE` | The system to build for: `x86_64-linux-elf` or `x86_64-pc-windows-msvc`. The default is the system Cobalt runs on. |
 
 Without `-o`, the output is named after the first source, without its
 directory and its extension, in the current directory: `src/ledger.cbl`
@@ -48,7 +48,7 @@ gives `ledger` (`ledger.exe` for Windows), `ledger.o` with `-c` and
 
 Each program is compiled into an object of its own. With `-c`, a source
 holding one program gives an object file; with several programs, the object
-file is an archive (`ar` format) of their objects, which cobalt links as one.
+file is an archive (`ar` format) of their objects, which Cobalt links as one.
 With `-A`, the assembly of the first program goes to the output file and that
 of each other program to `<output>.<PROGRAM-ID>`.
 
@@ -88,7 +88,7 @@ of each other program to `<output>.<PROGRAM-ID>`.
 |---|---|
 | `--version` | The version and the targets. |
 | `--help` | A summary of the options and the warnings. |
-| `-a` | Prints the syntax tree (for working on cobalt). |
+| `-a` | Prints the syntax tree (for working on Cobalt). |
 | `-g` | Accepted for compatibility, with a warning: this release writes no debugging information. |
 
 ## Exit status
@@ -97,9 +97,9 @@ of each other program to `<output>.<PROGRAM-ID>`.
 command line). Warnings do not change the exit status, unless `-Werror` makes
 them errors.
 
-The programs cobalt builds have exit statuses of their own (chapter 7).
+The programs Cobalt builds have exit statuses of their own (chapter 7).
 
-## cobalt as
+## `cobalt as`
 
 `cobalt as` is the built-in x86-64 assembler, for NASM-syntax sources:
 
@@ -117,8 +117,8 @@ cobalt as [-f elf64] [-D NAME[=value]] [-I dir/] [-MD file] [-MP] [-o out.o] sou
 
 [docs/assembler.md](../assembler.md) describes the syntax it accepts.
 
-## cobalt embed
+## `cobalt embed`
 
 `cobalt embed SYMBOL object...` writes C source of a table of the objects to
-standard output. The build of cobalt uses it to put the runtimes inside
-cobalt; it is of no use for COBOL programs.
+standard output. The build of Cobalt uses it to put the runtimes inside
+Cobalt; it is of no use for COBOL programs.

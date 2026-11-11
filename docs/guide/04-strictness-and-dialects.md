@@ -1,6 +1,6 @@
 # 4. Strictness, dialects and FIPS flagging
 
-Three independent settings shape what cobalt accepts and how programs
+Three independent settings shape what Cobalt accepts and how programs
 behave:
 
 | Setting | Decides | Options |
@@ -18,7 +18,7 @@ behave:
 | `pedantic` | rejected: an error each | the obsolete elements are flagged (`-Wobsolete`) |
 | `ibm-strict` | rejected, except IBM Enterprise COBOL's | as `pedantic` |
 
-The extensions cobalt knows:
+The extensions Cobalt knows:
 
 | Element | IBM has it |
 |---|---|

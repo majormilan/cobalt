@@ -59,8 +59,8 @@ compilers:
 
 - Programs in other languages cannot be called, and COBOL programs cannot
   be called from them.
-- Objects made with `-c` are cobalt's own (in ELF format, for both targets):
-  cobalt links them for either system, but other linkers cannot use them
+- Objects made with `-c` are Cobalt's own (in ELF format, for both targets):
+  Cobalt links them for either system, but other linkers cannot use them
   on Windows, and nothing links them with code in other languages.
 - No source-level debugging information.
 

@@ -2,9 +2,12 @@
 
 ## 0.1.0-alpha (2026-11-11)
 
-The first release: a COBOL-85 compiler for Linux and Windows on x86-64,
-feature complete for the standard except the Communication module. It is an
-alpha: options, messages and file formats may still change.
+The first public release of Cobalt, a general-purpose COBOL cross-compiler.
+This release supports the COBOL-85 standard, complete except for the
+Communication module, on two targets: Linux and Windows on x86-64. Support
+for further COBOL standards, architectures and operating systems is planned.
+As an alpha release, command-line options, messages and file formats may
+change before version 1.0.
 
 ### Language
 
@@ -18,7 +21,7 @@ alpha: options, messages and file formats may still change.
   COMP-5, LINE SEQUENTIAL files, apostrophe literals, RETURN-CODE, ACCEPT
   FROM DATE YYYYMMDD and DAY YYYYDDD, free format, and from COBOL 2002 GOBACK,
   EXIT PERFORM [CYCLE], EXIT PARAGRAPH, EXIT SECTION and `*>` comments.
-- The elements of later standards and vendor dialects that cobalt does not
+- The elements of later standards and vendor dialects that Cobalt does not
   support are named as such (`FUNCTION TRIM is COBOL 2002, not COBOL-85`),
   instead of syntax errors.
 
@@ -62,7 +65,7 @@ alpha: options, messages and file formats may still change.
 - One executable: the compiler, an x86-64 assembler, a linker for ELF and
   PE, and the runtime (hand-written assembly) of both systems.
 - Static Linux executables using only system calls; Windows executables
-  using only kernel32.dll. Every cobalt builds for both (`-t`).
+  using only kernel32.dll. Every installation of Cobalt builds for both (`-t`).
 - `-c` objects (archives for several programs), `-A` assembly,
   `-fsyntax-only`, `-E`, `-MD`.
 

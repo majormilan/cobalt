@@ -1,302 +1,266 @@
 <div align="center">
 
-# cobalt
+# Cobalt
 
-**A COBOL-85 compiler with its own assembler, linker and runtime.**
+**A self-contained cross-compiler for COBOL**
 
 [![CI](https://github.com/majormilan/cobalt/actions/workflows/ci.yml/badge.svg)](https://github.com/majormilan/cobalt/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/badge/release-0.1.0--alpha-orange)](https://github.com/majormilan/cobalt/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![COBOL-85](https://img.shields.io/badge/COBOL-85-005f87)](docs/guide/03-language.md)
-[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20Windows-lightgrey)](docs/guide/08-platforms.md)
-[![Architecture](https://img.shields.io/badge/arch-x86--64-lightgrey)](docs/guide/08-platforms.md)
+[![Language](https://img.shields.io/badge/language-COBOL-005f87)](docs/guide/03-language.md)
+[![Targets](https://img.shields.io/badge/targets-Linux%20%7C%20Windows-lightgrey)](docs/guide/08-platforms.md)
 
-[Getting started](docs/guide/01-getting-started.md) ·
-[User guide](docs/guide/README.md) ·
+[Getting Started](docs/guide/01-getting-started.md) ·
+[User Guide](docs/guide/README.md) ·
 [Examples](examples) ·
 [Downloads](https://github.com/majormilan/cobalt/releases) ·
-[Changelog](CHANGELOG.md)
+[Release Notes](CHANGELOG.md)
 
 </div>
 
-cobalt compiles COBOL source into native executables in one step, using only
-itself: the x86-64 assembler and the linker are built in, and the runtime is
-hand-written assembly embedded in the compiler. The programs it makes are
-small self-contained executables: static ELF on Linux, PE using only
-`KERNEL32.dll` on Windows.
+## Overview
+
+Cobalt is a general-purpose COBOL compiler designed for cross-compilation.
+A single executable contains the compiler, an assembler, a linker and a
+runtime library for each supported target. Any installation of Cobalt can
+therefore build native programs for every supported operating system and
+architecture, with no external toolchain, system libraries or target-side
+runtime installation.
+
+Generated programs are self-contained native executables. They include only
+the runtime components they use and do not depend on a COBOL runtime on the
+target system.
 
 ```
-$ cobalt hello.cbl
-$ ./hello
-Hello, world!
+$ cobalt payroll.cbl                                   # native executable for this system
+$ cobalt -t x86_64-pc-windows-msvc payroll.cbl         # Windows executable, built on any host
 ```
 
-<table>
-<tr>
-<td width="33%" valign="top">
+## Current Release
 
-**The whole of COBOL-85**<br>
-Every module of the standard but Communication, at its highest level,
-checked with the NIST CCVS85 suite; strictness levels, vendor dialects and
-FIPS flagging.
+Version **0.1.0-alpha** is the first public release. Its scope is the COBOL-85
+standard on two targets. Support for additional COBOL standards, vendor
+dialects, architectures and operating systems is planned for subsequent
+releases (see [Roadmap](#roadmap)).
 
-</td>
-<td width="33%" valign="top">
-
-**Diagnostics like a modern compiler**<br>
-The source line, the place underlined, notes and "did you mean"; named
-warnings; one run reports the errors of the whole program.
-
-</td>
-<td width="33%" valign="top">
-
-**One file, no dependencies**<br>
-No assembler, linker or C library needed to compile; the executables need
-nothing installed to run, and hold only the runtime they use.
-
-</td>
-</tr>
-</table>
-
-> **Status: 0.1.0-alpha.** The first release: a feature complete alpha for
-> COBOL-85 on Linux and Windows. Options, messages and file formats may still
-> change before 1.0; it is not yet meant for production use.
+> **Alpha software.** Command-line options, diagnostic messages and file
+> formats may change before version 1.0. This release is not intended for
+> production use.
 
 ## Contents
 
+- [Support Matrix](#support-matrix)
 - [Downloads](#downloads)
-- [What works today](#what-works-today)
-- [Targets and platforms](#targets-and-platforms)
-- [Building from source](#building-from-source)
-- [Installing](#installing)
-- [Using cobalt](#using-cobalt)
-- [Testing](#testing)
-- [Roadmap](#roadmap)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Language Support](#language-support)
+- [Diagnostics](#diagnostics)
+- [Runtime](#runtime)
+- [Building from Source](#building-from-source)
+- [Quality Assurance](#quality-assurance)
 - [Examples](#examples)
-- [Known limitations](#known-limitations)
+- [Known Limitations](#known-limitations)
+- [Roadmap](#roadmap)
 - [Documentation](#documentation)
 - [License](#license)
 
+## Support Matrix
+
+### Language standards
+
+| Standard | Status in 0.1.0-alpha |
+|---|---|
+| COBOL-85 (ANSI X3.23-1985, ISO 1989:1985) with the 1989 Intrinsic Function amendment | Supported |
+| COBOL 2002 (ISO/IEC 1989:2002) | Planned; selected elements available as extensions |
+| COBOL 2014 (ISO/IEC 1989:2014) | Planned |
+
+### Targets
+
+| Target triple | Architecture | Operating system | Output | Status |
+|---|---|---|---|---|
+| `x86_64-linux-elf` | x86-64 | Linux | Static ELF executable | Supported |
+| `x86_64-pc-windows-msvc` | x86-64 | Windows | PE32+ console executable, `KERNEL32.dll` only | Supported |
+| Additional architectures, beginning with AArch64 | | | | Planned |
+
+### Hosts
+
+| Host | Distribution | Status |
+|---|---|---|
+| Linux, x86-64 | `cobalt` | Supported |
+| Windows, x86-64 | `cobalt.exe` | Supported |
+
+Every host can build for every target.
+
 ## Downloads
 
-Each [release](https://github.com/majormilan/cobalt/releases) has a package
-for each system, with the README, the license, the release notes, the user
-guide and the examples:
+Release packages are available on the
+[Releases](https://github.com/majormilan/cobalt/releases) page.
 
-| System | Package |
+| Host | Package |
 |---|---|
-| Linux, x86-64 | `cobalt-<version>-linux-x86_64.tar.gz`: a static `cobalt`, runs on any distribution |
-| Windows, x86-64 | `cobalt-<version>-windows-x86_64.zip`: `cobalt.exe` |
+| Linux, x86-64 | `cobalt-<version>-linux-x86_64.tar.gz` (statically linked; runs on any distribution) |
+| Windows, x86-64 | `cobalt-<version>-windows-x86_64.zip` |
 
-`SHA256SUMS` lists their checksums. Or build cobalt from source (below).
+Each package contains the compiler, the user guide, the release notes, the
+license and the example programs. Checksums are published in `SHA256SUMS`.
 
-## What works today
+## Installation
 
-### The language: COBOL-85
+**Linux**
 
-cobalt compiles COBOL-85 (ANSI X3.23-1985, with the 1989 amendment of
-intrinsic functions), checked with the NIST CCVS85 validation suite. Every
-module of the standard is implemented except Communication: Nucleus,
-Sequential, Relative and Indexed I-O, Sort-Merge, Inter-Program
-Communication, Source Text Manipulation (COPY, REPLACE), Intrinsic
-Functions, Segmentation, Debug and Report Writer.
+```
+tar xzf cobalt-0.1.0-alpha-linux-x86_64.tar.gz
+sudo cp cobalt-0.1.0-alpha-linux-x86_64/cobalt /usr/local/bin/
+```
 
-- **Diagnostics** in the style of gcc and clang: the source line with the
-  error underlined, notes that explain it (where an item is declared, the
-  candidates of an ambiguous name, "did you mean"), errors inside copybooks
-  shown in the copybook with the COPY chain, named warnings (`-Wall`,
-  `-Wextra`, `-Werror`), and every stage reporting what it finds in one run.
-- **Run-time errors** that name the source line and the program, and
-  run-time checks of subscripts and reference modification (`-fcheck`).
-- **Fast builds**, in a time that grows linearly with the size of the
-  program, and small executables that hold only the runtime code they use.
+**Windows (PowerShell)**
 
-### The toolchain
+```
+Expand-Archive cobalt-0.1.0-alpha-windows-x86_64.zip
+Copy-Item cobalt-0.1.0-alpha-windows-x86_64\cobalt.exe "$env:LOCALAPPDATA\Programs\cobalt\"
+```
 
-- A built-in x86-64 assembler (NASM syntax, with `%define`, `%include` and
-  `%macro`): `cobalt as`.
-- A built-in linker for ELF and PE executables.
-- The runtime, hand-written in x86-64 assembly: decimal arithmetic, editing,
-  files of the three organizations, SORT and MERGE, CALL, the intrinsic
-  functions, the Report Writer. The same code serves every system, with a
-  thin OS layer for each.
+Add the destination directory to the `PATH`. To install from a source build,
+see [Building from Source](#building-from-source).
 
-No assembler, linker or C library is needed to compile COBOL programs.
+## Quick Start
 
-## Targets and platforms
+```
+cobalt hello.cbl                        # compile and link ./hello (hello.exe on Windows)
+cobalt main.cbl sub.cbl -o payroll      # link several programs into one executable
+cobalt -I copylib ledger.cbl            # search copylib/ for copybooks
+cobalt -X pedantic -Wextra ledger.cbl   # strict standard conformance, all warnings
+cobalt -fcheck ledger.cbl               # enable run-time checks
+cobalt -t x86_64-pc-windows-msvc ledger.cbl -o ledger.exe   # cross-compile for Windows
+cobalt -fsyntax-only ledger.cbl         # check without producing output
+cobalt --help                           # list all options
+```
 
-cobalt runs on a **host** and builds executables for a **target**. Every
-cobalt can build for every target: the runtimes of all targets are built in.
+The [Getting Started](docs/guide/01-getting-started.md) chapter of the user
+guide provides a complete introduction.
 
-| Target (`-t`) | Architecture | Operating system | Executable | Status |
-|---|---|---|---|---|
-| `x86_64-linux-elf` | x86-64 | Linux | static ELF, no dependencies | supported (the default on Linux) |
-| `x86_64-pc-windows-msvc` | x86-64 | Windows (6.0 and later) | PE32+ console program, `KERNEL32.dll` only | supported (the default on Windows) |
+## Language Support
 
-| Host | cobalt | Status |
+Cobalt 0.1.0-alpha implements COBOL-85 at its highest level in the following
+modules: Nucleus, Sequential I-O, Relative I-O, Indexed I-O, Sort-Merge,
+Inter-Program Communication, Source Text Manipulation, Intrinsic Functions,
+Segmentation, Debug and Report Writer. The Communication module is not
+supported.
+
+| Capability | Option | Description |
 |---|---|---|
-| Linux x86-64 | `bin/cobalt` | supported, built and tested |
-| Windows x86-64 | `bin/cobalt.exe` | supported, cross-built with MinGW-w64 and tested; a native build on Windows is not tested yet |
+| Strictness levels | `-X relaxed \| normal \| pedantic \| ibm-strict` | Accept language extensions silently, with a warning, or reject them |
+| Implementation profiles | `-D standard \| ibm \| gnucobol \| microfocus` | Select implementation-defined behavior, such as numeric display format and sign encoding |
+| FIPS flagging | `--flag-obsolete`, `--subset=minimum \| intermediate` | Report obsolete elements and elements outside a FIPS subset |
+| Reference formats | `--fixed`, `-F` | Fixed (default) and free source format |
 
-The test programs and the NIST suite give the same results on both targets.
+Frequently used elements of later standards and vendor dialects are
+identified by name in diagnostics. GOBACK, EXIT PERFORM, EXIT PARAGRAPH, EXIT
+SECTION and floating comment indicators are accepted as extensions.
 
-The runtime is split into an architecture layer and an OS layer
-(`runtime/<arch>/common`, `runtime/<arch>/<os>`), so another operating system
-on x86-64 needs only an OS layer. Other architectures are a future goal
-(see the [roadmap](#roadmap)).
+## Diagnostics
 
-## Building from source
+- Messages identify the file, line and column, display the source line and
+  mark the relevant position.
+- Explanatory notes refer to related declarations; misspelled names and
+  statements receive suggested corrections.
+- Errors in copybooks are reported with the chain of COPY statements that
+  included them.
+- Warnings are named and individually configurable (`-W`, `-Wall`,
+  `-Wextra`, `-Werror`).
+- Compilation continues after syntax errors, so that a single run reports the
+  errors of the entire program.
 
-### Requirements
+## Runtime
 
-| To | You need |
+- Run-time errors identify the program and the source line.
+- Optional run-time checks (`-fcheck`) cover subscripts, OCCURS DEPENDING ON
+  values, reference modification and the validity of numeric data.
+- File assignments can be redirected through environment variables
+  (`DD_name`, `dd_name`, `name`, `COB_FILE_PATH`).
+- The process exit status reflects the RETURN-CODE special register.
+
+## Building from Source
+
+| Purpose | Requirement |
 |---|---|
-| build cobalt | `make` and a C compiler (gcc or clang) |
-| build `cobalt.exe` for Windows | MinGW-w64 (`x86_64-w64-mingw32-gcc`) |
-| run the NIST suite, the benchmark | Python 3 |
-| cross-check with nasm (optional) | `nasm` and `ld` |
-
-No assembler is needed: the build assembles the runtime with cobalt's own
-assembler.
-
-### Linux
+| Compiler | `make` and a C compiler (GCC or Clang) |
+| Windows compiler (`cobalt.exe`) | MinGW-w64 |
+| NIST validation suite | Python 3 |
 
 ```
 git clone https://github.com/majormilan/cobalt.git
 cd cobalt
-make            # bin/cobalt
-make test       # the test programs, the diagnostics and run-time error tests
+make                    # build bin/cobalt
+make test               # run the test suite
+make windows            # cross-build bin/cobalt.exe
+sudo make install       # install to /usr/local (PREFIX and DESTDIR are supported)
+make dist               # build release packages in obj/dist
 ```
 
-The build has two stages: a first cobalt without runtimes assembles the
-runtime sources, `cobalt embed` turns the objects into C tables, and the
-final `bin/cobalt` is linked with them inside.
+No external assembler or linker is required. The build process is described
+in the [Platforms](docs/guide/08-platforms.md) chapter of the user guide.
 
-The default build is unoptimized (`-g`). For a faster compiler:
+## Quality Assurance
 
-```
-make CFLAGS="-O2 -Iinclude -Iruntime -include compat.h"
-```
-
-### Windows
-
-Cross-build `cobalt.exe` on Linux (or WSL) with MinGW-w64:
-
-```
-make windows    # bin/cobalt.exe (and the first stage and runtimes it needs)
-```
-
-`bin/cobalt.exe` is a single file; copy it to Windows. Building cobalt
-natively on Windows (MSYS2, with `make` and MinGW gcc) should work the same
-way but is not tested yet.
-
-### Cleaning
-
-`make clean` removes `obj/` and `bin/`, including the NIST suite downloaded
-under `obj/nist/` (it is fetched again when needed).
-
-## Installing
-
-`make install` copies cobalt to `$(PREFIX)/bin` (`/usr/local` by default;
-`DESTDIR` for packaging) and the documentation to
-`$(PREFIX)/share/doc/cobalt`; `make uninstall` removes them. cobalt is one
-executable with nothing else to install, so copy it to a directory on your
-PATH:
-
-```
-# Linux
-sudo cp bin/cobalt /usr/local/bin/
-
-# Windows (PowerShell): any directory on the PATH
-Copy-Item bin\cobalt.exe "$env:LOCALAPPDATA\Programs\cobalt\"
-```
-
-Copybooks are found next to the source, in `-I` directories, and in the
-directories of the `COBCPY` environment variable (separated by `:` on Linux
-and `;` on Windows).
-
-## Using cobalt
-
-```
-cobalt hello.cbl                        # executable ./hello (hello.exe on Windows)
-cobalt main.cbl sub.cbl -o payroll      # several programs, one executable (CALL)
-cobalt -I copylib ledger.cbl            # copybooks from copylib/
-cobalt -X pedantic -Wextra ledger.cbl   # strict COBOL-85, all warnings
-cobalt -fcheck ledger.cbl               # subscripts checked at run time
-cobalt -t x86_64-pc-windows-msvc ledger.cbl -o ledger.exe   # for Windows
-cobalt -c ledger.cbl                    # object ledger.o
-cobalt -A ledger.cbl                    # assembly ledger.asm
-cobalt --help                           # every option
-```
-
-Sources are in fixed reference format (columns 8 to 72) unless `-F` (free
-format, an extension) is given. The exit status is 0 on success and 1 after
-errors.
-
-Programs read their environment at run time: `COB_SWITCH_1` to
-`COB_SWITCH_9` (`ON`) set the switches of SPECIAL-NAMES, and `COB_SET_DEBUG`
-(`Y`, `1` or `ON`) turns on the Debug module of a program compiled WITH
-DEBUGGING MODE.
-
-## Testing
-
-| Command | Runs |
+| Suite | Scope |
 |---|---|
-| `make test` | the test programs (`tests/*.cbl`, output compared with `.expected`), the diagnostics tests (`tests/diag`), the run-time error tests (`tests/runerr`) |
-| `make test-windows` | the test programs built for Windows (on WSL through its interop, elsewhere with Wine) |
-| `tools/nist/run.sh MODULE` | a module of the NIST CCVS85 suite (NC, SQ, RL, IX, ST, IC, SM, IF, SG, DB, RW); `COBALT_FLAGS="-t x86_64-pc-windows-msvc"` for Windows |
-| `python3 -I tools/bench/compile.py DIR` | writes the compile-time benchmark program into DIR |
+| Test programs | Execution results of language features on each target |
+| Diagnostics tests | Exact compiler messages for errors and warnings |
+| Run-time error tests | Messages and exit status of run-time failures |
+| Example programs | Complete applications with expected output |
+| NIST CCVS85 | The COBOL-85 validation suite, all supported modules |
+| Fuzz testing | Mutated sources compiled under AddressSanitizer and UBSan |
 
-## Roadmap
-
-### After the alpha
-
-- Debug information (DWARF line numbers) for stepping through COBOL source
-  in gdb, and a compiler listing (source, cross-reference, data map).
-- Calling C code and being called from C on both systems; dynamic CALL of
-  separately compiled modules; COFF objects for other Windows linkers.
-- Sorting and indexed files larger than memory.
-- COMP-1 and COMP-2 (floating point).
-
-### Longer term
-
-- More architectures (AArch64 first) and operating systems, using the split
-  of the runtime into architecture and OS layers.
-- Newer COBOL standards (2002, 2014): `-S` accepts only COBOL-85 today.
+Continuous integration builds the compiler, runs the test suites and the NIST
+validation suite on Linux, and verifies the Windows compiler on Windows for
+every change.
 
 ## Examples
 
-[examples/](examples) has complete programs with their data: a payroll run
-(copybook, SORT, CALL, edited output), an indexed inventory file and a
-Report Writer report. `make examples` builds and checks them.
+| Example | Demonstrates |
+|---|---|
+| [hello](examples/hello) | Minimal program |
+| [payroll](examples/payroll) | Copybooks, SORT with input and output procedures, CALL, edited output |
+| [inventory](examples/inventory) | Indexed files: loading, random access, REWRITE, START and sequential reading |
+| [sales-report](examples/sales-report) | Report Writer: page headings, control breaks and totals |
 
-## Known limitations
+## Known Limitations
 
-- The Communication module is not supported (it is rejected with a clear
-  error).
-- SORT and MERGE work in memory, and indexed files build their indexes in
+- The Communication module is not supported.
+- SORT and MERGE operate in memory; indexed files build their indexes in
   memory when opened.
-- A program must fit in 2 GiB (the generated code uses absolute 32-bit
-  addresses).
-- Objects from `-c` are in cobalt's own ELF format: cobalt links them for
-  either system, but other linkers cannot use them on Windows.
-- In the Report Writer, the data-name of a SUM entry names its printed
-  field, not the sum counter.
-- An exponent with decimals (`2 ** 0.5`) is a size error.
+- A program, including its data, is limited to 2 GiB.
+- Object files produced with `-c` are linked by Cobalt only.
+- In the Report Writer, the data-name of a SUM entry refers to the printed
+  field rather than the sum counter.
+- Exponentiation with a non-integer exponent raises a size error.
 
-[docs/guide/09-limits.md](docs/guide/09-limits.md) has the complete list.
+See [Limits](docs/guide/09-limits.md) for the complete list.
+
+## Roadmap
+
+| Area | Planned work |
+|---|---|
+| Language standards | COBOL 2002 and COBOL 2014 |
+| Targets | Additional architectures, beginning with AArch64, and additional operating systems |
+| Interoperability | Calling and being called from C; dynamic CALL of separately compiled modules; COFF object files |
+| Data and files | COMP-1 and COMP-2 floating point; sorting and indexed files larger than memory |
+| Tooling | Debugging information (DWARF line numbers); compiler listings with cross-reference and data map |
 
 ## Documentation
 
-| Document | About |
+| Document | Contents |
 |---|---|
-| [CHANGELOG.md](CHANGELOG.md) | the release notes |
-| [docs/guide](docs/guide/README.md) | the user guide: getting started, the command line, the language, strictness and dialects, diagnostics, files, running programs, platforms, limits |
-| [runtime/ABI.md](runtime/ABI.md) | the runtime: data formats, files, CALL, run-time errors, the Report Writer, the OS layers |
-| [docs/assembler.md](docs/assembler.md) | the built-in assembler |
-| [docs/linker.md](docs/linker.md) | the built-in linker (ELF and PE) |
-| [docs/optimization.md](docs/optimization.md) | code generation |
+| [User Guide](docs/guide/README.md) | Installation, command line, language reference, strictness and profiles, diagnostics, files, execution, platforms and limits |
+| [Release Notes](CHANGELOG.md) | Changes in each release |
+| [Runtime ABI](runtime/ABI.md) | Data representation, files, inter-program calls and operating system interface |
+| [Assembler](docs/assembler.md) | The integrated assembler |
+| [Linker](docs/linker.md) | The integrated linker |
+| [Code Generation](docs/optimization.md) | Code generation and optimization |
 
 ## License
 
-MIT; see [LICENSE](LICENSE). Copyright (c) 2026 Milán Major.
+Cobalt is licensed under the [MIT License](LICENSE).
+
+Copyright © 2026 Milán Major.

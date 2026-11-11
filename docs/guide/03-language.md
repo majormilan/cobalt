@@ -1,11 +1,11 @@
 # 3. The language
 
-cobalt compiles **COBOL-85**: ANSI X3.23-1985 (ISO 1989:1985) with its 1989
-amendment, the intrinsic functions. Its modules are implemented at their
+In release 0.1.0-alpha, Cobalt compiles **COBOL-85**: ANSI X3.23-1985
+(ISO 1989:1985) with its 1989 amendment, the intrinsic functions. Its modules are implemented at their
 highest level (level 2), except the Communication module, which is not
 supported. It is checked with the NIST CCVS85 validation suite.
 
-This chapter describes the language as cobalt implements it, with what it
+This chapter describes the language as Cobalt implements it, with what it
 adds and what it leaves out. Chapter 4 explains how the extensions are
 treated; chapter 7 how programs behave when they run.
 
@@ -180,7 +180,7 @@ extension, chapter 7).
 
 ## Extensions
 
-cobalt accepts these elements beyond COBOL-85; `-X` decides whether they
+Cobalt accepts these elements beyond COBOL-85; `-X` decides whether they
 are accepted silently, with a warning or rejected (chapter 4):
 
 - USAGE COMP-3, COMP-4, COMP-5 (and COMPUTATIONAL-3, -4, -5);
@@ -206,7 +206,7 @@ are accepted silently, with a warning or rejected (chapter 4):
 - ASSIGN to a data item (`ASSIGN TO identifier` names the file by the word
   itself, chapter 6).
 - USAGE COMP-1 and COMP-2 (floating point), EBCDIC data.
-- The other elements of later standards and vendor dialects. cobalt
+- The other elements of later standards and vendor dialects. Cobalt
   recognizes the common ones and says what they are, instead of a syntax
   error: LOCAL-STORAGE and SCREEN SECTION, level 78, USAGE POINTER,
   NATIONAL, BINARY-LONG and the other COBOL 2002 usages, the intrinsic

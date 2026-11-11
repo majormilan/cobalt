@@ -2,7 +2,8 @@
 # Linux, make the packages (make dist: a static cobalt for Linux, cobalt.exe
 # for Windows, checked with the examples) and publish them as a GitHub
 # release whose notes are the version's section of CHANGELOG.md. Versions
-# with a pre-release part (-alpha, -beta) are marked as pre-releases.
+# with a pre-release part (-alpha, -beta) are marked as pre-releases. A tag
+# moved to a new commit updates its release: notes and packages replaced.
 name: Release
 
 on:
@@ -41,6 +42,7 @@ jobs:
           name: cobalt ${{ env.VERSION }}
           body_path: notes.md
           prerelease: ${{ contains(env.VERSION, '-') }}
+          overwrite_files: true
           files: |
             obj/dist/cobalt-${{ env.VERSION }}-linux-x86_64.tar.gz
             obj/dist/cobalt-${{ env.VERSION }}-windows-x86_64.zip

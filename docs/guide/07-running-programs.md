@@ -1,6 +1,6 @@
 # 7. Running programs
 
-An executable built by cobalt needs nothing else: no runtime library, no
+An executable built by Cobalt needs nothing else: no runtime library, no
 environment variables, no configuration. It runs the main program from the
 start of its PROCEDURE DIVISION until STOP RUN or the end of the PROCEDURE
 DIVISION.
@@ -73,7 +73,7 @@ holds valid data.
 ## Programs and CALL
 
 The programs of a run unit are those of the sources and objects given to
-cobalt (chapter 2). CALL finds a program by its PROGRAM-ID, written as a
+Cobalt (chapter 2). CALL finds a program by its PROGRAM-ID, written as a
 literal or held in an alphanumeric item; case and trailing spaces do not
 matter.
 
@@ -139,7 +139,7 @@ failed. The errors:
 
 COBOL-85 leaves undefined what happens when a subscript, a reference
 modification or an OCCURS DEPENDING ON value is out of range. By default
-cobalt does not check them, which is the fastest. Compiled with `-fcheck`,
+Cobalt does not check them, which is the fastest. Compiled with `-fcheck`,
 the program checks:
 
 - each subscript (and index) against the OCCURS of its table, or against

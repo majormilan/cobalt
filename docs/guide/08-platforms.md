@@ -2,8 +2,8 @@
 
 ## Targets and hosts
 
-cobalt runs on a **host** and builds executables for a **target**. Every
-cobalt carries the runtimes of all its targets, so any cobalt builds for any
+Cobalt runs on a **host** and builds executables for a **target**. Every
+Cobalt carries the runtimes of all its targets, so any installation of Cobalt builds for any
 target:
 
 | Target (`-t`) | Executables | Runtime |
@@ -11,7 +11,7 @@ target:
 | `x86_64-linux-elf` | static ELF executables for Linux on x86-64 | system calls only: no libc, no dynamic libraries |
 | `x86_64-pc-windows-msvc` | PE32+ console executables for 64-bit Windows | kernel32.dll only: no C runtime, no DLLs to ship |
 
-| Host | cobalt |
+| Host | Cobalt |
 |---|---|
 | Linux on x86-64 | `bin/cobalt`, built with `make` |
 | Windows on x86-64 | `bin/cobalt.exe`, cross-built on Linux with `make windows` |
@@ -34,7 +34,7 @@ The shell sees the exit status modulo 256 (chapter 7).
 - cobalt.exe and the executables it builds run in a console (cmd.exe,
   PowerShell, Windows Terminal) and from scripts.
 - Sources may have CR LF line ends, and so may the input of ACCEPT and LINE
-  SEQUENTIAL files. Files cobalt's programs write end their lines with LF
+  SEQUENTIAL files. Files Cobalt's programs write end their lines with LF
   alone, as on Linux.
 - Paths may use `\` or `/`. `COBCPY` separates its directories with `;`.
 - Without `-o`, the executable is `NAME.exe`.
@@ -51,25 +51,25 @@ On WSL the result runs directly (`./ledger.exe`); WSL passes only the
 environment variables listed in `WSLENV` to it, so use
 `WSLENV=COB_SWITCH_1 COB_SWITCH_1=ON ./ledger.exe`.
 
-## Building cobalt
+## Building Cobalt
 
 | To | You need |
 |---|---|
-| build cobalt | `make` and a C compiler (gcc or clang) |
+| build Cobalt | `make` and a C compiler (gcc or clang) |
 | build cobalt.exe | MinGW-w64 (`x86_64-w64-mingw32-gcc`) |
 | run the NIST suite | Python 3 |
 
-No assembler is needed: cobalt assembles its runtimes with its own.
+No assembler is needed: Cobalt assembles its runtimes with its own.
 
 ```
 $ make                  # bin/cobalt
 $ make windows          # bin/cobalt.exe
 ```
 
-The build has two stages: a first cobalt without runtimes assembles the
+The build has two stages: a first-stage compiler without runtimes assembles the
 runtime sources, `cobalt embed` turns their objects into C tables, and the
-final cobalt is linked with them inside. `make windows` builds the runtimes
-with the Linux cobalt, then cobalt.exe with MinGW-w64.
+final compiler is linked with them inside. `make windows` builds the runtimes
+with the Linux compiler, then cobalt.exe with MinGW-w64.
 
 The default build is unoptimized (`-g`), for working on cobalt. For a faster
 compiler:
@@ -79,7 +79,7 @@ $ make CFLAGS="-O2 -Iinclude -Iruntime -include compat.h"
 ```
 
 `make dist` builds the release packages in `obj/dist`: an optimized, static
-cobalt for Linux and cobalt.exe for Windows, each with the README, the
+Cobalt for Linux and cobalt.exe for Windows, each with the README, the
 license, the release notes, this guide and the examples, and their SHA-256
 sums; the examples are run with the Linux package's cobalt.
 
@@ -92,7 +92,7 @@ README, the license and this guide to `$(PREFIX)/share/doc/cobalt`;
 `make uninstall` removes them. On Windows, copy `bin/cobalt.exe` to a
 directory on the PATH.
 
-## Testing cobalt
+## Testing Cobalt
 
 | Command | Runs |
 |---|---|
