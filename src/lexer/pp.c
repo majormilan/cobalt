@@ -49,7 +49,8 @@ typedef struct {
 
 static bool is_sep_space(const char *t, size_t p) {
     char c = t[p];
-    if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == PP_MARK) return true;
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == PP_MARK ||
+        c == PP_DEBUG_BEGIN || c == PP_DEBUG_END) return true;
     if ((c == ',' || c == ';') && (t[p + 1] == '\0' || isspace((unsigned char)t[p + 1]) || t[p + 1] == PP_MARK))
         return true;
     return false;
@@ -446,7 +447,9 @@ static char *load_text(const char *path, const PpOptions *opt) {
     char *raw = read_whole(path);
     if (!raw) return NULL;
     if (opt->free_format) return raw;
+    lexer_mark_debugging_lines(true);
     char *conv = lexer_reference_format(raw);
+    lexer_mark_debugging_lines(false);
     free(raw);
     return conv;
 }
@@ -554,6 +557,14 @@ char *pp_process(const char *text, const char *filename, const PpOptions *opt) {
         char *r = replace_text(t, NULL, true, filename);
         free(t);
         t = r;
+    }
+    // Debugging lines of library text that remain: comments, unless the
+    // program is compiled WITH DEBUGGING MODE
+    bool in_debug = false;
+    for (char *c = t; *c; c++) {
+        if (*c == PP_DEBUG_BEGIN) { in_debug = true; *c = ' '; }
+        else if (*c == PP_DEBUG_END) { in_debug = false; *c = ' '; }
+        else if (in_debug && *c != '\n' && !lexer_debugging_lines()) *c = ' ';
     }
     return t;
 }

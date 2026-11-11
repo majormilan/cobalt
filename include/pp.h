@@ -21,5 +21,7 @@ typedef struct {
 char *pp_process(const char *text, const char *filename, const PpOptions *opt);
 
 #define PP_MARK '\x01'
+#define PP_DEBUG_BEGIN '\x02'     // a debugging line of library text (pp.c)
+#define PP_DEBUG_END '\x03'
 
 #endif

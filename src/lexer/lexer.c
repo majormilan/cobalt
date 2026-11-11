@@ -68,6 +68,12 @@ bool lexer_debugging_mode(const char *src) {
 }
 
 void lexer_set_debugging_lines(bool on) { debugging_lines = on; }
+bool lexer_debugging_lines(void) { return debugging_lines; }
+
+// Library text keeps its debugging lines, between PP_DEBUG_BEGIN and
+// PP_DEBUG_END, for COPY REPLACING to match (pp.c removes what is left)
+static bool mark_debugging_lines = false;
+void lexer_mark_debugging_lines(bool on) { mark_debugging_lines = on; }
 
 char *lexer_reference_format(const char *src) {
     // Collect the converted lines first: a continuation line changes the
@@ -90,7 +96,14 @@ char *lexer_reference_format(const char *src) {
         size_t text_len = text_end > 7 ? text_end - 7 : 0;
         sb_append(&out[n], "", 0);
 
-        if (len <= 6 || indicator == '*' || indicator == '/' ||
+        if ((indicator == 'D' || indicator == 'd') && !debugging_lines && mark_debugging_lines && len > 7) {
+            char b = PP_DEBUG_BEGIN, e = PP_DEBUG_END;
+            sb_append(&out[n], "      ", 6);
+            sb_append(&out[n], &b, 1);
+            sb_append(&out[n], text, text_len);
+            sb_append(&out[n], &e, 1);
+            last = (int)n;
+        } else if (len <= 6 || indicator == '*' || indicator == '/' ||
             ((indicator == 'D' || indicator == 'd') && !debugging_lines)) {
             // sequence area only, comment line or debugging line
         } else if (indicator == '-' && last >= 0) {
