@@ -3471,10 +3471,23 @@ static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const ch
 
     int fig = figurative_char(src);
     if (fig != -1) {
-        if (dest_numeric && fig != '0') {
+        if (dest_numeric && fig == ' ') {
             diag_error(src->loc, "%s cannot be moved to the numeric item '%s'", src->name, dv->name);
             note_item(dv);
-            diag_note_plain("only ZERO is a numeric figurative constant");
+            diag_note_plain("SPACE is the one figurative constant a numeric item cannot receive");
+        } else if (dest_numeric && fig != '0') {
+            // HIGH-VALUE, LOW-VALUE, QUOTE, ALL literal: alphanumeric, moved
+            // as a literal of the receiver's digits (ALL "5" into 9(4): 5555)
+            int n = dv->digits > 0 && dv->digits <= 64 ? dv->digits : 1;
+            const char *pat = fig == FIG_PATTERN ? src->text : NULL;
+            char text[65];
+            for (int k = 0; k < n; k++) text[k] = pat ? pat[k % strlen(pat)] : (char)fig;
+            text[n] = '\0';
+            AstNode *lit = ast_new(AST_STRING_LITERAL, text, src->loc);
+            char lit_name[32];
+            emit_data_lit(ir, "figlit", text, lit_name, sizeof(lit_name));
+            lower_move(ir, lit, dest_node, lit_name);
+            ast_free(lit);
         } else if (dest_takes_value && fig == '0') {
             emit_num(ir, IR_NUM_CONST, 0, 0);
             if (resolve_receiver(ir, dest_node, &dest)) emit_store(ir, &dest, false);

@@ -325,11 +325,19 @@ static void sema_analyze_var_decl(AstNode *var_decl, SemaContext *ctx) {
     // Semantic validation for VALUE clause
     if (value_literal_node) {
         if (value_literal_node->kind == AST_FIGURATIVE_CONSTANT) {
-            if (strcasecmp(value_literal_node->name, "SPACES") == 0 || strcasecmp(value_literal_node->name, "SPACE") == 0) {
-                if (var_decl->is_numeric) {
-                    diag_error(value_literal_node->loc, "VALUE SPACES is not valid for the numeric item '%s'", var_decl->name);
-                    diag_note(pic_node->loc, "'%s' is numeric (PICTURE %s)", var_decl->name, pic_str);
-                }
+            // a numeric item takes ZERO only: the others are nonnumeric
+            const char *fig = value_literal_node->name;
+            if (var_decl->is_numeric && strncasecmp(fig, "ZERO", 4) != 0) {
+                bool all = strcasecmp(fig, "ALL") == 0 && value_literal_node->text;
+                if (all)
+                    diag_error(value_literal_node->loc, "VALUE ALL \"%s\" is not valid for the numeric item '%s'",
+                               value_literal_node->text, var_decl->name);
+                else
+                    diag_error(value_literal_node->loc, "VALUE %s is not valid for the numeric item '%s'",
+                               strcmp(fig, "SYMBOLIC") == 0 && value_literal_node->text ? value_literal_node->text : fig,
+                               var_decl->name);
+                diag_note(pic_node->loc, "'%s' is numeric (PICTURE %s); ZERO is the numeric figurative constant",
+                          var_decl->name, pic_str);
             }
         } else if (value_literal_node->kind == AST_STRING_LITERAL) {
             if (var_decl->is_numeric) {

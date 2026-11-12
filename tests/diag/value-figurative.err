@@ -1,0 +1,19 @@
+tests/diag/value-figurative.cbl:7:36: error: VALUE ALL "1" is not valid for the numeric item 'N-ALL'
+     7 |        01  N-ALL    PIC 9(3) VALUE ALL "1".
+       |                                    ^~~
+tests/diag/value-figurative.cbl:7:25: note: 'N-ALL' is numeric (PICTURE 9(3)); ZERO is the numeric figurative constant
+     7 |        01  N-ALL    PIC 9(3) VALUE ALL "1".
+       |                         ^
+tests/diag/value-figurative.cbl:8:36: error: VALUE HIGH-VALUES is not valid for the numeric item 'N-HIGH'
+     8 |        01  N-HIGH   PIC 9(3) VALUE HIGH-VALUES.
+       |                                    ^~~~~~~~~~~
+tests/diag/value-figurative.cbl:8:25: note: 'N-HIGH' is numeric (PICTURE 9(3)); ZERO is the numeric figurative constant
+     8 |        01  N-HIGH   PIC 9(3) VALUE HIGH-VALUES.
+       |                         ^
+tests/diag/value-figurative.cbl:9:36: error: VALUE QUOTE is not valid for the numeric item 'N-QUOTE'
+     9 |        01  N-QUOTE  PIC 9(3) VALUE QUOTE.
+       |                                    ^~~~~
+tests/diag/value-figurative.cbl:9:25: note: 'N-QUOTE' is numeric (PICTURE 9(3)); ZERO is the numeric figurative constant
+     9 |        01  N-QUOTE  PIC 9(3) VALUE QUOTE.
+       |                         ^
+3 errors generated.

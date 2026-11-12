@@ -44,7 +44,7 @@ tests/diag/values.cbl:14:41: error: USAGE PACKED-DECIMAL requires a numeric PICT
 tests/diag/values.cbl:15:47: error: VALUE SPACES is not valid for the numeric item 'NUM-SPACES'
     15 |        01  NUM-SPACES     PIC 9(4)      VALUE SPACES.
        |                                               ^~~~~~
-tests/diag/values.cbl:15:31: note: 'NUM-SPACES' is numeric (PICTURE 9(4))
+tests/diag/values.cbl:15:31: note: 'NUM-SPACES' is numeric (PICTURE 9(4)); ZERO is the numeric figurative constant
     15 |        01  NUM-SPACES     PIC 9(4)      VALUE SPACES.
        |                               ^
 10 errors generated.

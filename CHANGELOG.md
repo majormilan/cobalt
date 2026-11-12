@@ -23,6 +23,12 @@
 
 ### Fixed
 
+- MOVE of HIGH-VALUE, LOW-VALUE, QUOTE or an ALL literal to a numeric item
+  is accepted, as the standard allows (only SPACE is not), and moves the
+  characters as alphanumeric data (`MOVE ALL "5" TO N` with `N PIC 9(4)`
+  gives 5555).
+- VALUE of a figurative constant other than ZERO on a numeric item is an
+  error instead of silently becoming zero.
 - A PERFORM, or an inline PERFORM ... TIMES loop, left with GO TO no
   longer leaves data on the stack: each statement saves its return slot or
   outer loop counter in a static cell, as IBM's implementation does.
