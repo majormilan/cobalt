@@ -23,6 +23,9 @@
 
 ### Fixed
 
+- A name declared both as a condition-name and as a data item is told
+  apart by its qualification (`IF ACTIVE OF REC-A`, `EVALUATE ACTIVE OF
+  REC-B`), whatever order the declarations come in.
 - An EVALUATE subject may be any conditional expression (`A = 3 AND B = 5`,
   `NOT A = 3`, `(A = 3)`, abbreviated combined relations).
 - A reference modifier without a length on a group with an OCCURS

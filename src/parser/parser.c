@@ -1182,10 +1182,16 @@ static AstNode *parse_rel_operand(void) {
     return parse_expr();
 }
 
+static int referenced_condition(const AstNode *n, const Symbol *sym);
+
+// A reference names a condition-name: the entry its qualifiers select, or
+// (when no single entry is selected) the last entry of that spelling
 static bool is_condition_name(const AstNode *n) {
     if (!n || n->kind != AST_IDENTIFIER) return false;
     Symbol *sym = symtab_resolve_symbol(current_symtab, n->name);
-    return sym && sym->level == 88;
+    if (!sym) return false;
+    int r = referenced_condition(n, sym);
+    return r >= 0 ? r == 1 : sym->level == 88;
 }
 
 // Relation, class or sign condition after its subject; NULL (consuming
@@ -1404,18 +1410,10 @@ static void free_subjects(AstNode **subjects, int n) {
 }
 
 // An EVALUATE subject (up to its ALSO or WHEN) is a condition: it has a
-// relational operator, a class or sign test, AND, OR, NOT or IS, or is a
-// condition-name
-static bool word_is_condition_name(const Token *t) {
-    if (t->kind != TOK_IDENT) return false;
-    char name[64];
-    size_t n = t->length < sizeof(name) - 1 ? t->length : sizeof(name) - 1;
-    memcpy(name, t->lexeme, n);
-    name[n] = '\0';
-    Symbol *sym = symtab_resolve_symbol(current_symtab, name);
-    return sym && sym->level == 88;
-}
+// relational operator, a class or sign test, AND, OR, NOT or IS
 
+// (a condition-name alone is an operand here: is_condition_name decides it
+// with its qualifiers)
 static bool subject_is_condition(void) {
     Lexer copy = *current_lexer;
     copy.quiet = true;
@@ -1428,7 +1426,7 @@ static bool subject_is_condition(void) {
         if (t.kind == TOK_LPAREN) depth++;
         else if (t.kind == TOK_RPAREN) depth--;
         else if (is_relop_start(t.kind) || is_class_or_sign(t.kind) || t.kind == TOK_IS ||
-                 t.kind == TOK_NOT || t.kind == TOK_AND || t.kind == TOK_OR || word_is_condition_name(&t))
+                 t.kind == TOK_NOT || t.kind == TOK_AND || t.kind == TOK_OR)
             return true;
         t = lexer_next(&copy);
     }
@@ -3528,6 +3526,31 @@ static void record_declaration(Symbol *sym, int level) {
         declared = realloc(declared, (size_t)cap_declared * sizeof(DeclaredItem));
     }
     declared[num_declared++] = (DeclaredItem){ sym, level };
+}
+
+// Whether the entry a qualified reference selects is a condition-name: 1
+// yes, 0 no, -1 no single answer (no entry, or entries that disagree). The
+// qualifiers (innermost first) must name ancestors of the entry, in order.
+static int referenced_condition(const AstNode *n, const Symbol *sym) {
+    int answer = -1;
+    for (int k = 0; k < num_declared; k++) {
+        if (declared[k].sym != sym) continue;
+        const AstNode *q = n->extra;
+        int level = declared[k].level;
+        int limit = level == 88 ? 100 : level;  // the next ancestor is below this level
+        for (int j = k - 1; j >= 0 && q && level != 1 && level != 77; j--) {
+            int lj = declared[j].level;
+            if (lj == 88 || lj == 66 || lj >= limit) continue;
+            limit = lj;
+            if (declared[j].sym && strcasecmp(declared[j].sym->name, q->name) == 0) q = q->next;
+            if (lj == 1 || lj == 77) break;
+        }
+        if (q) continue;                        // a qualifier is not an ancestor
+        int is_cond = level == 88;
+        if (answer >= 0 && answer != is_cond) return -1;
+        answer = is_cond;
+    }
+    return answer;
 }
 
 // Mark the items whose group is used
