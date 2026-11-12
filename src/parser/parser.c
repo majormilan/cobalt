@@ -747,7 +747,25 @@ static AstNode *parse_function(void) {
 int parser_name_errors;
 int parser_statement_errors;
 
+// The undefined names reported in this program: each once, at its first
+// use (a misspelled section header would otherwise give one error per use
+// of every data item)
+static char **undefined_reported;
+static int num_undefined_reported, cap_undefined_reported;
+
+static bool undefined_seen(const char *name) {
+    for (int k = 0; k < num_undefined_reported; k++)
+        if (strcasecmp(undefined_reported[k], name) == 0) return true;
+    if (num_undefined_reported == cap_undefined_reported) {
+        cap_undefined_reported = cap_undefined_reported ? cap_undefined_reported * 2 : 32;
+        undefined_reported = realloc(undefined_reported, (size_t)cap_undefined_reported * sizeof(char *));
+    }
+    undefined_reported[num_undefined_reported++] = strdup(name);
+    return false;
+}
+
 static void undefined_name(SourceLocation loc, const char *name) {
+    if (undefined_seen(name)) return;
     int before = error_count;
     diag_error(loc, "'%s' is not defined", name);
     parser_name_errors += error_count - before;
@@ -3631,6 +3649,8 @@ static void mark_used_through_groups(void) {
         }
     }
     num_declared = 0;
+    for (int k = 0; k < num_undefined_reported; k++) free(undefined_reported[k]);
+    num_undefined_reported = 0;
 }
 
 static AstNode *rw_decl(const char *name, const char *level, const char *pic, AstNode *value, SourceLocation loc) {
@@ -4129,6 +4149,23 @@ static void parse_report_section(AstNode *div, AstNode **sec_tail) {
     *sec_tail = sec;
 }
 
+// A misspelled PROCEDURE DIVISION header ("PROCEDUR DIVISION"): reported
+// once, then read as the header, so its statements are not taken for data
+// description entries one by one
+static bool misspelled_procedure_division(void) {
+    if (tok.kind != TOK_IDENT || peek_token().kind != TOK_DIVISION) return false;
+    static const char *const divisions[] = { "IDENTIFICATION", "ENVIRONMENT", "DATA", "PROCEDURE", NULL };
+    const char *word = tok_value_tmp();
+    const char *near = diag_closest(word, divisions, -1);
+    if (!near || strcmp(near, "PROCEDURE") != 0) return false;
+    diag_error(TOK_LOC, "'%s DIVISION' is not a division header", word);
+    diag_note_plain("did you mean PROCEDURE DIVISION?");
+    tok.kind = TOK_PROCEDURE;
+    tok.lexeme = "PROCEDURE";
+    tok.length = 9;
+    return true;
+}
+
 // DATA DIVISION section body: data description entries
 static AstNode *parse_section(void) {
     SourceLocation loc = {tok.filename, tok.line, tok.column};
@@ -4149,6 +4186,8 @@ static AstNode *parse_section(void) {
             if (decl) list_append(&sec->children, &last, decl);
         } else if (tok.kind == TOK_PERIOD) {
             next();
+        } else if (misspelled_procedure_division()) {
+            break;
         } else {
             if (!(peek_token().kind == TOK_SECTION && diag_later_element(TOK_LOC, LATER_SECTION, tok.lexeme, tok.length)))
                 diag_error(TOK_LOC, "Expected a data description entry, found %s", tok_desc());

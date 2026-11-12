@@ -1,0 +1,5 @@
+tests/diag/misspelled-division.cbl:7:8: error: 'PROCEDUR DIVISION' is not a division header
+     7 |        PROCEDUR DIVISION.
+       |        ^~~~~~~~
+note: did you mean PROCEDURE DIVISION?
+1 error generated.

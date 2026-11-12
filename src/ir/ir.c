@@ -1503,6 +1503,17 @@ static void note_item(const VarInfo *v) {
         diag_note(v->decl->loc, "'%s' is declared here", qualified_name(v));
 }
 
+// The names reported as not defined in this program: each once
+static char *undefined_names[256];
+static int num_undefined_names;
+
+static bool undefined_reported(const char *name) {
+    for (int k = 0; k < num_undefined_names; k++)
+        if (strcasecmp(undefined_names[k], name) == 0) return true;
+    if (num_undefined_names < 256) undefined_names[num_undefined_names++] = strdup(name);
+    return false;
+}
+
 static void undefined_item(const AstNode *ref) {
     // The name exists, but not with these qualifiers
     int same = -1, nsame = 0;
@@ -1528,6 +1539,7 @@ static void undefined_item(const AstNode *ref) {
             }
         return;
     }
+    if (undefined_reported(ref->name)) return;
     diag_error(ref->loc, "'%s' is not defined", ref->name);
     const char *names[MAX_VARS > 4096 ? 4096 : MAX_VARS];
     int n = 0;
@@ -7199,6 +7211,8 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
     lit_counter = 0;
     if_counter = 0;
     addr_slots = 0;
+    for (int k = 0; k < num_undefined_names; k++) free(undefined_names[k]);
+    num_undefined_names = 0;
     inspect_counter = 0;
 
     build_special_names(program);

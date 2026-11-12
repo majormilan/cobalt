@@ -16,6 +16,9 @@
 
 ### Changed
 
+- An undefined name is reported at its first use only (per program), and
+  a misspelled PROCEDURE DIVISION header gives one error with a
+  suggestion instead of one error per line.
 - Messages about elements outside COBOL-85 name where the element comes
   from (a later standard or a vendor) and the extension set that accepts
   it; elements Cobalt does not implement yet say so.

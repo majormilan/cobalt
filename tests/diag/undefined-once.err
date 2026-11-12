@@ -1,0 +1,7 @@
+tests/diag/undefined-once.cbl:8:20: error: 'COUNTR' is not defined
+     8 |            DISPLAY COUNTR.
+       |                    ^~~~~~
+tests/diag/undefined-once.cbl:6:12: note: did you mean 'COUNTER'?
+     6 |        01  COUNTER PIC 9 VALUE 1.
+       |            ^~~~~~~
+1 error generated.
