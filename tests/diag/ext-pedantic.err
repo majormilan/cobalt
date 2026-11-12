@@ -1,28 +1,28 @@
 tests/diag/extensions.cbl:7:42: error: USAGE COMP-3 is not COBOL-85
      7 |        01  PACKED-AMOUNT    PIC S9(7)V99 COMP-3.
        |                                          ^~~~~~
-note: -X relaxed, normal and ibm-strict accept it as an extension
+note: it is an IBM, GnuCOBOL and Micro Focus extension; -fext=ibm accepts it
 note: the standard name of this usage is PACKED-DECIMAL
 tests/diag/extensions.cbl:8:42: error: USAGE COMP-5 is not COBOL-85
      8 |        01  NATIVE-COUNT     PIC 9(9)     COMP-5.
        |                                          ^~~~~~
-note: -X relaxed, normal and ibm-strict accept it as an extension
+note: it is an IBM, GnuCOBOL and Micro Focus extension; -fext=ibm accepts it
 note: COMP-5 is native binary; BINARY is the standard usage
 tests/diag/extensions.cbl:11:12: error: The underscore in 'CUSTOMER_NAME' is not COBOL-85
     11 |        01  CUSTOMER_NAME    PIC X(10)    VALUE 'SMITH'.
        |            ^~~~~~~~~~~~~
-note: -X relaxed and normal accept it as an extension
+note: it is COBOL 2002; -fext=cobol2002 accepts it
 tests/diag/extensions.cbl:11:48: error: A nonnumeric literal in apostrophes is not COBOL-85
     11 |        01  CUSTOMER_NAME    PIC X(10)    VALUE 'SMITH'.
        |                                                ^~~~~~~
-note: -X relaxed, normal and ibm-strict accept it as an extension
+note: it is COBOL 2002; -fext=cobol2002 accepts it
 tests/diag/extensions.cbl:12:12: error: The 36-character word 'A-VERY-LONG-DATA-NAME-OF-THIRTY-FIVE' is not COBOL-85
     12 |        01  A-VERY-LONG-DATA-NAME-OF-THIRTY-FIVE PIC X.
        |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-note: -X relaxed and normal accept it as an extension
+note: it is a GnuCOBOL and Micro Focus extension; -fext=gnucobol accepts it
 note: COBOL-85 words have at most 30 characters
 tests/diag/extensions.cbl:15:35: error: ACCEPT FROM DATE YYYYMMDD is not COBOL-85
     15 |            ACCEPT TODAY FROM DATE YYYYMMDD.
        |                                   ^~~~~~~~
-note: -X relaxed, normal and ibm-strict accept it as an extension
+note: it is COBOL 2002; -fext=cobol2002 accepts it
 6 errors generated.

@@ -1,0 +1,23 @@
+tests/diag/ext-none.cbl:4:20: error: The underscore in 'EXT_SETS' is not COBOL-85
+     4 |        PROGRAM-ID. EXT_SETS.
+       |                    ^~~~~~~~
+note: it is COBOL 2002; -fext=cobol2002 accepts it
+tests/diag/ext-none.cbl:7:36: error: USAGE COMP-3 is not COBOL-85
+     7 |        01  PACKED-AMOUNT PIC S9(5) COMP-3 VALUE 0.
+       |                                    ^~~~~~
+note: it is an IBM, GnuCOBOL and Micro Focus extension; -fext=ibm accepts it
+note: the standard name of this usage is PACKED-DECIMAL
+tests/diag/ext-none.cbl:8:12: error: The 48-character word 'THIS-IS-A-VERY-LONG-DATA-NAME-OF-MANY-CHARACTERS' is not COBOL-85
+     8 |        01  THIS-IS-A-VERY-LONG-DATA-NAME-OF-MANY-CHARACTERS PIC X.
+       |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+note: it is a GnuCOBOL and Micro Focus extension; -fext=gnucobol accepts it
+note: COBOL-85 words have at most 30 characters
+tests/diag/ext-none.cbl:10:17: error: A nonnumeric literal in apostrophes is not COBOL-85
+    10 |            MOVE 'x' TO THIS-IS-A-VERY-LONG-DATA-NAME-OF-MANY-CHARACTERS.
+       |                 ^~~
+note: it is COBOL 2002; -fext=cobol2002 accepts it
+tests/diag/ext-none.cbl:11:12: error: GOBACK (COBOL 2002) is not COBOL-85
+    11 |            GOBACK.
+       |            ^~~~~~
+note: it is COBOL 2002; -fext=cobol2002 accepts it
+5 errors generated.

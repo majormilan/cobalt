@@ -149,7 +149,8 @@ supported.
 
 | Capability | Option | Description |
 |---|---|---|
-| Strictness levels | `-X relaxed \| normal \| pedantic \| ibm-strict` | Accept language extensions silently, with a warning, or reject them |
+| Extension sets | `-fext=common \| ibm \| gnucobol \| cobol2002 \| none` | Select which elements beyond the standard are accepted: the common extensions (default), those of IBM Enterprise COBOL or GnuCOBOL, or COBOL 2002 elements |
+| Strictness levels | `-X relaxed \| normal \| pedantic \| ibm-strict` | Report accepted extensions silently or with a warning; `pedantic` accepts only the explicitly enabled sets |
 | Implementation profiles | `-D standard \| ibm \| gnucobol \| microfocus` | Select implementation-defined behavior, such as numeric display format and sign encoding |
 | FIPS flagging | `--flag-obsolete`, `--subset=minimum \| intermediate` | Report obsolete elements and elements outside a FIPS subset |
 | Reference formats | `--fixed`, `-F` | Fixed (default) and free source format |

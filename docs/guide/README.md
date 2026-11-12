@@ -11,7 +11,7 @@ x86-64.
 | [1. Getting started](01-getting-started.md) | installing, a first program, several programs, copybooks, files |
 | [2. The command line](02-command-line.md) | every option, output files, exit status |
 | [3. The language](03-language.md) | COBOL-85 as Cobalt implements it, module by module; what is not supported |
-| [4. Strictness, dialects and FIPS flagging](04-strictness-and-dialects.md) | `-X`, `-D`, `-f`, `--flag-obsolete`, `--subset`, the extensions Cobalt knows |
+| [4. Standards, extensions, strictness and dialects](04-strictness-and-dialects.md) | `-std`, `-fext`, `-X`, `-D`, `-f`, `--flag-obsolete`, `--subset`, the extensions Cobalt knows |
 | [5. Diagnostics](05-diagnostics.md) | the messages, every warning, colors and limits |
 | [6. Files](06-files.md) | file names, organizations, FILE STATUS codes, formats on disk, LINAGE, SORT and MERGE |
 | [7. Running programs](07-running-programs.md) | the console, numbers, the environment, run-time errors and checks, exit status, CALL |

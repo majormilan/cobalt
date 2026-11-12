@@ -202,7 +202,7 @@ void lexer_strip_floating_comments(char *text, const char *file) {
         if (*p == '"' || *p == '\'') { quote = *p; continue; }
         if (p[0] == '*' && p[1] == '>') {
             if (!reported)
-                diag_extension(EXT_IBM, (SourceLocation){ file, line, col }, "The floating comment indicator *> (COBOL 2002)");
+                diag_feature(F_FLOATING_COMMENT, (SourceLocation){ file, line, col }, NULL);
             reported = true;
             while (*p && *p != '\n') *p++ = ' ';
             if (!*p) break;
@@ -266,16 +266,16 @@ static void check_word(const Lexer *l, const Token *t) {
     if (l->quiet) return;
     SourceLocation loc = { t->filename, t->line, t->column };
     if (t->kind == TOK_YYYYMMDD) {
-        diag_extension(EXT_IBM, loc, "ACCEPT FROM DATE YYYYMMDD");
+        diag_feature(F_ACCEPT_DATE_YYYYMMDD, loc, NULL);
         return;
     }
     if (t->kind != TOK_IDENT) return;
     bool underscore = memchr(t->lexeme, '_', t->length) != NULL;
     if ((underscore || t->length > 30) && word_reported(t)) return;
     if (underscore)
-        diag_extension(EXT_ANY, loc, "the underscore in '%.*s'", (int)t->length, t->lexeme);
+        diag_feature(F_UNDERSCORE, loc, "the underscore in '%.*s'", (int)t->length, t->lexeme);
     else if (t->length > 30) {
-        diag_extension(EXT_ANY, loc, "the %d-character word '%.*s'", (int)t->length, (int)t->length, t->lexeme);
+        diag_feature(F_LONG_WORD, loc, "the %d-character word '%.*s'", (int)t->length, (int)t->length, t->lexeme);
         diag_note_plain("COBOL-85 words have at most 30 characters");
     }
 }
@@ -441,9 +441,9 @@ Token lexer_next(Lexer *l) {
         t.column = col;                 // at the opening quote
         SourceLocation loc = { l->filename, line, col };
         if (l->quiet) return t;
-        if (q == '\'') diag_extension(EXT_IBM, loc, "a nonnumeric literal in apostrophes");
+        if (q == '\'') diag_feature(F_APOSTROPHE, loc, "a nonnumeric literal in apostrophes");
         if (len > 160) {
-            diag_extension(EXT_ANY, loc, "a nonnumeric literal of %d characters", (int)len);
+            diag_feature(F_LONG_LITERAL, loc, "a nonnumeric literal of %d characters", (int)len);
             diag_note_plain("COBOL-85 nonnumeric literals have at most 160 characters");
         }
         return t;

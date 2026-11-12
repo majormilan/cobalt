@@ -231,6 +231,8 @@ static void print_help(const char *progname) {
     printf("Language:\n");
     printf("  -S, --std, -std=STANDARD  COBOL-85 (the only one in this release)\n");
     printf("  -X, --strictness LEVEL What is done with elements outside COBOL-85 (default: normal)\n");
+    printf("  -fext=SET[,SET...]     Extension sets: common (default), ibm, gnucobol, cobol2002; none\n");
+    printf("                         drops the default set\n");
     printf("        relaxed        accepted; reference format (areas, column 72) not checked\n");
     printf("        normal         accepted, each with a warning (-Wextension)\n");
     printf("        pedantic       errors; obsolete elements are flagged too (-Wobsolete)\n");
@@ -343,6 +345,8 @@ int main(int argc, char **argv) {
     // Options in gcc's spellings that getopt would split: -std=NAME (as
     // --std), -MD and -MP (dependency files); taken out before getopt
     bool deps = false, deps_phony = false;
+    unsigned ext_named = 0;             // -fext sets
+    bool ext_no_default = false;        // -fext=none
     {
         int n = 1;
         for (int k = 1; k < argc; k++) {
@@ -386,6 +390,21 @@ int main(int argc, char **argv) {
                 break;
             case 'f':
                 if (strcmp(optarg, "check") == 0) { ir_runtime_checks = true; break; }
+                if (strncmp(optarg, "ext=", 4) == 0) {
+                    // -fext=SET[,SET...]: extension sets; none drops the default set
+                    char list[256];
+                    snprintf(list, sizeof(list), "%s", optarg + 4);
+                    for (char *t = strtok(list, ","); t; t = strtok(NULL, ",")) {
+                        if (!strcmp(t, "none")) { ext_no_default = true; continue; }
+                        unsigned set = diag_extension_set(t);
+                        if (!set) {
+                            cobalt_error("Unknown extension set '%s' (common, ibm, gnucobol, cobol2002 or none)", t);
+                            return 1;
+                        }
+                        ext_named |= set;
+                    }
+                    break;
+                }
                 if (strcmp(optarg, "syntax-only") == 0) { emit = EMIT_NOTHING; break; }
                 if (strcmp(optarg, "no-check") == 0) { ir_runtime_checks = false; break; }
                 if (strncmp(optarg, "max-errors", 10) == 0 || strncmp(optarg, "diagnostics-color", 17) == 0 ||
@@ -459,8 +478,9 @@ int main(int argc, char **argv) {
     }
 
     diag_set_strictness(mode.strictness);
+    diag_set_extensions(ext_named, ext_no_default);
     if (mode.flag_obsolete) diag_option("-Wobsolete");
-    if (mode.free_format && !diag_extension(EXT_ANY, (SourceLocation){0}, "Free-form reference format (-F)")) return 1;
+    if (mode.free_format && !diag_feature(F_FREE_FORMAT, (SourceLocation){0}, NULL)) return 1;
 
     if (!backend_supports(target)) {
         cobalt_error("Target %s is not supported yet", target->name);

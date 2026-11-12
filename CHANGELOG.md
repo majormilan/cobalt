@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Extension sets (`-fext=common | ibm | gnucobol | cobol2002 | none`) select
+  which elements beyond the standard are accepted. The `common` set is the
+  default; `-X pedantic` accepts only the sets named explicitly, and
+  `-X ibm-strict` is `-X pedantic -fext=ibm`.
+
+### Changed
+
+- Messages about elements outside COBOL-85 name where the element comes
+  from (a later standard or a vendor) and the extension set that accepts
+  it; elements Cobalt does not implement yet say so.
+- `make install` installs the existing build and no longer compiles; it
+  stops with a message if the build is missing or out of date.
+
+### Fixed
+
+- `sudo make install` could rebuild the compiler as root, leaving the build
+  directories owned by root.
+
 ## 0.1.0-alpha (2026-11-11)
 
 The first public release of Cobalt, a general-purpose COBOL cross-compiler.

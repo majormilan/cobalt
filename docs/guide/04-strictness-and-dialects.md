@@ -1,44 +1,69 @@
-# 4. Strictness, dialects and FIPS flagging
+# 4. Standards, extensions, strictness and dialects
 
-Three independent settings shape what Cobalt accepts and how programs
-behave:
+Four settings shape what Cobalt accepts and how programs behave:
 
 | Setting | Decides | Options |
 |---|---|---|
-| Strictness | what is done with elements outside COBOL-85 | `-X relaxed \| normal \| pedantic \| ibm-strict` |
-| Dialect | how what the standard leaves to the implementor behaves | `-D standard \| ibm \| gnucobol \| microfocus`, `-f KEY=VALUE` |
+| Standard | the language the program is written in | `-std=cobol85` (the only one in this release) |
+| Extension sets | which elements beyond the standard are accepted | `-fext=common \| ibm \| gnucobol \| cobol2002 \| none` |
+| Strictness | how accepted extensions are reported, and which sets apply | `-X relaxed \| normal \| pedantic \| ibm-strict` |
+| Implementation profile | how what the standard leaves to the implementor behaves | `-D standard \| ibm \| gnucobol \| microfocus`, `-f KEY=VALUE` |
 | FIPS flagging | which standard elements are reported | `--flag-obsolete`, `--subset=minimum \| intermediate` |
+
+A compilation uses exactly one standard. Elements of other standards and of
+vendor dialects are never mixed in silently: they are accepted only through
+an extension set.
+
+## Extension sets (`-fext`)
+
+An extension set groups the elements that a vendor compiler or a later
+standard adds to COBOL-85. `-fext=SET[,SET...]` enables sets; the option may
+be repeated.
+
+| Set | Contents |
+|---|---|
+| `common` | the extensions in wide use, listed below; enabled by default |
+| `ibm` | the extensions of IBM Enterprise COBOL |
+| `gnucobol` | the extensions of GnuCOBOL |
+| `cobol2002` | the elements of COBOL 2002 that Cobalt accepts in a COBOL-85 program |
+| `none` | not a set: drops the default `common` set |
+
+The extensions Cobalt implements, and the sets that contain them:
+
+| Element | common | ibm | gnucobol | cobol2002 |
+|---|---|---|---|---|
+| USAGE COMP-3, COMP-4, COMP-5 (and COMPUTATIONAL-n) | yes | yes | yes | |
+| Nonnumeric literals in apostrophes (`'text'`) | yes | yes | yes | yes |
+| `ACCEPT ... FROM DATE YYYYMMDD`, `FROM DAY YYYYDDD` | yes | yes | yes | yes |
+| ORGANIZATION LINE SEQUENTIAL | yes | yes | yes | |
+| The RETURN-CODE special register | yes | yes | yes | |
+| `_` in a user-defined word | yes | | yes | yes |
+| Words longer than 30 characters | yes | | yes | |
+| PICTURE character-strings longer than 30 characters | yes | | yes | |
+| Nonnumeric literals longer than 160 characters | yes | | yes | |
+| Free-form reference format (`-F`) | yes | | yes | yes |
+| Floating comments (`*>`) | yes | yes | yes | yes |
+| GOBACK | yes | yes | yes | yes |
+| EXIT PERFORM, EXIT PERFORM CYCLE | yes | yes | yes | yes |
+| EXIT PARAGRAPH, EXIT SECTION | yes | yes | yes | yes |
+
+Elements of later standards and vendor dialects that Cobalt does not
+implement yet (LOCAL-STORAGE, level 78, USAGE POINTER, the COBOL 2002
+intrinsic functions and others) are errors in every case; the message names
+where the element comes from and says that Cobalt does not support it yet.
 
 ## Strictness (`-X`)
 
-| Level | Elements outside COBOL-85 | Also |
-|---|---|---|
-| `relaxed` | accepted silently | the reference format is not checked (no `-Warea`, `-Wcolumn-overflow`) |
-| `normal` (default) | accepted, each with a warning (`-Wextension`) | |
-| `pedantic` | rejected: an error each | the obsolete elements are flagged (`-Wobsolete`) |
-| `ibm-strict` | rejected, except IBM Enterprise COBOL's | as `pedantic` |
+| Level | Sets in effect | Accepted extensions | Also |
+|---|---|---|---|
+| `relaxed` | `common` and the `-fext` sets | silently | the reference format is not checked (no `-Warea`, `-Wcolumn-overflow`) |
+| `normal` (default) | `common` and the `-fext` sets | each with a warning (`-Wextension`) | |
+| `pedantic` | only the `-fext` sets | silently | the obsolete elements are flagged (`-Wobsolete`) |
+| `ibm-strict` | `ibm` and the `-fext` sets | silently | as `pedantic`; the same as `-X pedantic -fext=ibm` |
 
-The extensions Cobalt knows:
-
-| Element | IBM has it |
-|---|---|
-| USAGE COMP-3, COMP-4, COMP-5 (and COMPUTATIONAL-n) | yes |
-| Nonnumeric literals in apostrophes (`'text'`) | yes |
-| `ACCEPT ... FROM DATE YYYYMMDD`, `FROM DAY YYYYDDD` | yes |
-| ORGANIZATION LINE SEQUENTIAL | yes |
-| The RETURN-CODE special register | yes |
-| `_` in a user-defined word | no |
-| Words longer than 30 characters | no |
-| PICTURE character-strings longer than 30 characters | no |
-| Nonnumeric literals longer than 160 characters | no |
-| Free-form reference format (`-F`) | no |
-| Floating comments (`*>`) | yes |
-| GOBACK | yes |
-| EXIT PERFORM, EXIT PERFORM CYCLE | yes |
-| EXIT PARAGRAPH, EXIT SECTION | yes |
-
-Under `normal` an extension gives one warning where it first appears (a
-long word: once, not at every use):
+An element outside the sets in effect is an error. Under `normal` an
+extension gives one warning where it first appears (a long word: once, not
+at every use):
 
 ```
 ledger.cbl:7:42: warning: USAGE COMP-3 is an extension to COBOL-85 [-Wextension]
@@ -47,14 +72,22 @@ ledger.cbl:7:42: warning: USAGE COMP-3 is an extension to COBOL-85 [-Wextension]
 note: the standard name of this usage is PACKED-DECIMAL
 ```
 
-Under `pedantic` the same is an error (`USAGE COMP-3 is not COBOL-85`), with
-a note saying which levels accept it. `-Wno-extension` silences the
-warnings of `normal`.
+Under `pedantic` the same is an error, with a note naming a set that
+accepts it:
 
-## Dialects (`-D`)
+```
+ledger.cbl:7:42: error: USAGE COMP-3 is not COBOL-85
+note: it is an IBM, GnuCOBOL and Micro Focus extension; -fext=ibm accepts it
+```
 
-The standard leaves some behavior to the implementor. A dialect chooses it
-the way another compiler does; it never changes what is accepted.
+`-Wno-extension` silences the warnings of `normal`. Strict COBOL-85 with the
+GnuCOBOL extensions is `-X pedantic -fext=gnucobol`.
+
+## Implementation profiles (`-D`)
+
+The standard leaves some behavior to the implementor. An implementation
+profile chooses it the way another compiler does; it never changes what is
+accepted, which is the extension sets' role.
 
 | Setting (`-f`) | Values | Meaning |
 |---|---|---|

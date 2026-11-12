@@ -38,7 +38,6 @@ typedef enum {
 
 // Who allows an extension without complaint: everybody's extension, or IBM's
 // (accepted by ibm-strict as well)
-typedef enum { EXT_ANY, EXT_IBM } ExtensionOwner;
 
 // Global diagnostic counters
 extern int error_count;
@@ -79,14 +78,44 @@ bool diag_warning(Warning w, SourceLocation loc, const char *fmt, ...) __attribu
 void diag_note(SourceLocation loc, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 void diag_note_plain(const char *fmt, ...) __attribute__((format(printf, 1, 2)));   // a note without a location
 // An element outside the standard: false when it is rejected (an error)
-bool diag_extension(ExtensionOwner owner, SourceLocation loc, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 bool diag_warning_enabled(Warning w);
 void diag_quiet_flow_warnings(void);
 
 // Elements of later standards and vendor dialects that cobalt does not
 // support (src/diag/later.c): an error naming what the word is, if it is one
-typedef enum { LATER_STATEMENT, LATER_USAGE, LATER_SECTION, LATER_FUNCTION, LATER_PHRASE } LaterContext;
+typedef enum { LATER_NONE, LATER_STATEMENT, LATER_USAGE, LATER_SECTION, LATER_FUNCTION, LATER_PHRASE } LaterContext;
 bool diag_later_element(SourceLocation loc, LaterContext where, const char *word, size_t len);
+
+// Standards and extension sets (include/features.def, src/diag/features.c)
+#define STD_85    1u
+#define STD_2002  2u
+#define STD_2014  4u
+#define EXT_COMMON    1u        // the default set (-X normal and relaxed)
+#define EXT_IBM       2u
+#define EXT_GNUCOBOL  4u
+#define EXT_MF        8u
+#define EXT_COBOL2002 16u       // elements of COBOL 2002 in a COBOL-85 compile
+
+typedef enum {
+#define FEATURE(id, context, word, text, standards, sets, implemented, origin) id,
+#include "features.def"
+#undef FEATURE
+    F_COUNT
+} Feature;
+
+// The extension sets of this compile: those named with -fext (a mask of
+// EXT_*), and whether -fext=none dropped the default set. Call after
+// diag_set_strictness.
+void diag_set_extensions(unsigned named, bool no_default);
+// A set's name for -fext ("ibm"), or 0 for an unknown name
+unsigned diag_extension_set(const char *name);
+int diag_strictness(void);
+// A use of a language element of the registry: nothing when the compile's
+// standard or an enabled extension set has it (an extension warning under
+// -X normal), else an error naming where it comes from; Cobalt's elements
+// not yet implemented are errors. fmt (or NULL: the registry's text) names
+// the use. Returns whether the element is accepted.
+bool diag_feature(Feature f, SourceLocation loc, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 bool diag_later_directive(SourceLocation loc, const char *text, size_t len);
 // Errors and warnings so far, printed at the end ("2 errors and 1 warning generated.")
 void diag_summary(void);

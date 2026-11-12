@@ -1,7 +1,7 @@
-tests/diag/later-semantic.cbl:7:12: error: Level 78 (a constant) is a Micro Focus and GnuCOBOL extension, not COBOL-85; cobalt does not support it
+tests/diag/later-semantic.cbl:7:12: error: Level 78 (a constant) is a GnuCOBOL and Micro Focus extension, not COBOL-85; Cobalt does not support it yet
      7 |        78  K VALUE 5.
        |            ^
-tests/diag/later-semantic.cbl:10:20: error: FUNCTION TRIM is COBOL 2002, not COBOL-85; cobalt does not support it
+tests/diag/later-semantic.cbl:10:20: error: FUNCTION TRIM is COBOL 2002, not COBOL-85; Cobalt does not support it yet
     10 |            DISPLAY FUNCTION TRIM(A).
        |                    ^~~~~~~~
 tests/diag/later-semantic.cbl:11:12: error: EXIT PERFORM is not inside an inline PERFORM

@@ -206,7 +206,11 @@ PREFIX ?= /usr/local
 DESTDIR ?=
 DOCDIR = $(DESTDIR)$(PREFIX)/share/doc/cobalt
 
-install: $(EXEC)
+# (installs what make built: it never compiles, so sudo make install leaves
+# the build directories as they are)
+install:
+	@test -x $(EXEC) || { echo "Nothing to install: run make first" >&2; exit 1; }
+	@$(MAKE) -q $(EXEC) 2>/dev/null || { echo "The build is out of date: run make first" >&2; exit 1; }
 	install -d $(DESTDIR)$(PREFIX)/bin $(DOCDIR)/guide
 	install -m 755 $(EXEC) $(DESTDIR)$(PREFIX)/bin/cobalt
 	install -m 644 README.md LICENSE CHANGELOG.md $(DOCDIR)

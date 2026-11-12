@@ -443,7 +443,7 @@ static AstNode *parse_var_decl(void) {
             char *pic = tok_to_str();
             if (tok.length > 30)
             {
-                diag_extension(EXT_ANY, TOK_LOC, "a PICTURE character-string of %d characters", (int)tok.length);
+                diag_feature(F_LONG_PICTURE, TOK_LOC, "a PICTURE character-string of %d characters", (int)tok.length);
                 diag_note_plain("COBOL-85 PICTURE character-strings have at most 30 characters");
             }
             append_child(var, &tail, ast_new(AST_PIC_CLAUSE, pic, TOK_LOC));
@@ -478,7 +478,7 @@ static AstNode *parse_var_decl(void) {
             }
             if (tok_spelled("COMP-3") || tok_spelled("COMPUTATIONAL-3") || tok.kind == TOK_COMP_5 ||
                 tok_spelled("COMP-4") || tok_spelled("COMPUTATIONAL-4")) {
-                diag_extension(EXT_IBM, TOK_LOC, "USAGE %.*s", (int)tok.length, tok.lexeme);
+                diag_feature(F_COMP_N, TOK_LOC, "USAGE %.*s", (int)tok.length, tok.lexeme);
                 if (tok.kind == TOK_COMP_3) diag_note_plain("the standard name of this usage is PACKED-DECIMAL");
                 else if (tok.kind == TOK_COMP) diag_note_plain("the standard name of this usage is BINARY");
                 else diag_note_plain("COMP-5 is native binary; BINARY is the standard usage");
@@ -733,7 +733,7 @@ static Symbol *use_return_code(SourceLocation loc) {
         if (sym) sym->level = LEVEL_RETURN_CODE;
     }
     if (!uses_return_code && reported_file != loc.filename) {
-        diag_extension(EXT_IBM, loc, "the RETURN-CODE special register");
+        diag_feature(F_RETURN_CODE, loc, "the RETURN-CODE special register");
         reported_file = loc.filename;
     }
     uses_return_code = true;
@@ -2260,7 +2260,7 @@ static AstNode *parse_statement(void) {
     }
     else if (at_goback()) {
         // GOBACK: EXIT PROGRAM in a called program, STOP RUN in the main one
-        diag_extension(EXT_IBM, loc, "GOBACK (COBOL 2002)");
+        diag_feature(F_GOBACK, loc, NULL);
         next();
         AstNode *exit_stmt = ast_new(AST_STATEMENT_EXIT, NULL, loc);
         exit_stmt->name = strdup("GOBACK");
@@ -2277,11 +2277,11 @@ static AstNode *parse_statement(void) {
             // PERFORM, or end its iteration
             next();
             if (tok.kind == TOK_IDENT && tok.length == 5 && strncasecmp(tok.lexeme, "CYCLE", 5) == 0) {
-                diag_extension(EXT_IBM, loc, "EXIT PERFORM CYCLE (COBOL 2002)");
+                diag_feature(F_EXIT_PERFORM_CYCLE, loc, NULL);
                 exit_stmt->name = strdup("CYCLE");
                 next();
             } else {
-                diag_extension(EXT_IBM, loc, "EXIT PERFORM (COBOL 2002)");
+                diag_feature(F_EXIT_PERFORM, loc, NULL);
                 exit_stmt->name = strdup("PERFORM");
             }
         } else if (tok.kind == TOK_SECTION ||
@@ -2289,7 +2289,7 @@ static AstNode *parse_statement(void) {
             // EXIT PARAGRAPH / EXIT SECTION (COBOL 2002, IBM): to the end of
             // the paragraph or section
             bool section = tok.kind == TOK_SECTION;
-            diag_extension(EXT_IBM, loc, "%s (COBOL 2002)", section ? "EXIT SECTION" : "EXIT PARAGRAPH");
+            diag_feature(section ? F_EXIT_SECTION : F_EXIT_PARAGRAPH, loc, NULL);
             exit_stmt->name = strdup(section ? "SECTION" : "PARAGRAPH");
             next();
         }
@@ -2947,7 +2947,7 @@ static AstNode *parse_statement(void) {
                     accept_stmt->name = strdup("DATE YYYYMMDD");
                     next();
                 } else if (accept_stmt->name && strcmp(accept_stmt->name, "DAY") == 0 && tok_spelled("YYYYDDD")) {
-                    diag_extension(EXT_IBM, TOK_LOC, "ACCEPT FROM DAY YYYYDDD");
+                    diag_feature(F_ACCEPT_DAY_YYYYDDD, TOK_LOC, NULL);
                     free(accept_stmt->name);
                     accept_stmt->name = strdup("DAY YYYYDDD");
                     next();
@@ -4190,7 +4190,7 @@ static AstNode *parse_select(void) {
             if (tok.kind == TOK_ORGANIZATION) next();
             if (tok.kind == TOK_IS) next();
             if (tok.kind == TOK_LINE) {
-                diag_extension(EXT_IBM, TOK_LOC, "ORGANIZATION LINE SEQUENTIAL");
+                diag_feature(F_LINE_SEQUENTIAL, TOK_LOC, NULL);
                 sel->org = FILE_ORG_LINE_SEQUENTIAL;
                 sel->decimal_places = 1;
                 next();

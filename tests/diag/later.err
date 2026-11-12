@@ -1,29 +1,29 @@
-tests/diag/later.cbl:4:7: error: A >> compiler directive (COBOL 2002) is not COBOL-85; cobalt does not support it
+tests/diag/later.cbl:4:7: error: A >> compiler directive (COBOL 2002) is not COBOL-85; Cobalt does not support it
      4 |       >>SOURCE FORMAT FIXED
        |       ^
-note: cobalt takes its options from the command line (cobalt --help)
-tests/diag/later.cbl:8:14: error: USAGE COMP-1 (single precision floating point) is an IBM extension, not COBOL-85; cobalt does not support it
+note: Cobalt takes its options from the command line (cobalt --help)
+tests/diag/later.cbl:8:14: error: USAGE COMP-1 (single precision floating point) is an IBM extension, not COBOL-85; Cobalt does not support it yet
      8 |        01  F COMP-1.
        |              ^~~~~~
-tests/diag/later.cbl:9:20: error: USAGE POINTER is COBOL 2002, not COBOL-85; cobalt does not support it
+tests/diag/later.cbl:9:20: error: USAGE POINTER is COBOL 2002, not COBOL-85; Cobalt does not support it yet
      9 |        01  P USAGE POINTER.
        |                    ^~~~~~~
-tests/diag/later.cbl:11:8: error: The LOCAL-STORAGE SECTION is COBOL 2002, not COBOL-85; cobalt does not support it
+tests/diag/later.cbl:11:8: error: The LOCAL-STORAGE SECTION is COBOL 2002, not COBOL-85; Cobalt does not support it yet
     11 |        LOCAL-STORAGE SECTION.
        |        ^~~~~~~~~~~~~
-tests/diag/later.cbl:15:21: error: CALL ... RETURNING is COBOL 2002, not COBOL-85; cobalt does not support it
+tests/diag/later.cbl:15:21: error: CALL ... RETURNING is COBOL 2002, not COBOL-85; Cobalt does not support it yet
     15 |            CALL "X" RETURNING A.
        |                     ^~~~~~~~~
-tests/diag/later.cbl:16:22: error: DISPLAY / ACCEPT ... AT (screen positions) is a vendor extension, not COBOL-85; cobalt does not support it
+tests/diag/later.cbl:16:22: error: DISPLAY / ACCEPT ... AT (screen positions) is a GnuCOBOL and Micro Focus extension, not COBOL-85; Cobalt does not support it yet
     16 |            DISPLAY A AT 0101.
        |                      ^~
-tests/diag/later.cbl:17:26: error: ACCEPT ... FROM COMMAND-LINE is a Micro Focus and GnuCOBOL extension, not COBOL-85; cobalt does not support it
+tests/diag/later.cbl:17:26: error: ACCEPT ... FROM COMMAND-LINE is a GnuCOBOL and Micro Focus extension, not COBOL-85; Cobalt does not support it yet
     17 |            ACCEPT A FROM COMMAND-LINE.
        |                          ^~~~~~~~~~~~
-tests/diag/later.cbl:18:12: error: EXEC ... END-EXEC (embedded SQL, CICS) is a precompiler's input, not COBOL-85; cobalt does not support it
+tests/diag/later.cbl:18:12: error: EXEC ... END-EXEC (embedded SQL, CICS) is a precompiler's input, not COBOL-85; Cobalt does not support it yet
     18 |            EXEC SQL
        |            ^~~~
-tests/diag/later.cbl:22:12: error: EXEC ... END-EXEC (embedded SQL, CICS) is a precompiler's input, not COBOL-85; cobalt does not support it
+tests/diag/later.cbl:22:12: error: EXEC ... END-EXEC (embedded SQL, CICS) is a precompiler's input, not COBOL-85; Cobalt does not support it yet
     22 |            EXEC SQL COMMIT END-EXEC
        |            ^~~~
 note: without a period before it, it is read as part of the statement before it

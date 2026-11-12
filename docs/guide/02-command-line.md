@@ -57,7 +57,8 @@ of each other program to `<output>.<PROGRAM-ID>`.
 | Option | Meaning |
 |---|---|
 | `-S STANDARD`, `--std STANDARD`, `-std=STANDARD` | The COBOL standard. `COBOL-85` (also `COBOL85`, `85`), the only one of this release. |
-| `-X LEVEL`, `--strictness LEVEL` | What is done with the elements outside COBOL-85: `relaxed`, `normal` (the default), `pedantic` or `ibm-strict`. Chapter 4. |
+| `-fext=SET[,SET...]` | Extension sets: the elements beyond the standard that are accepted. `common` (the default set), `ibm`, `gnucobol`, `cobol2002`; `none` drops the default set. Chapter 4. |
+| `-X LEVEL`, `--strictness LEVEL` | How accepted extensions are reported and which sets apply: `relaxed`, `normal` (the default), `pedantic` or `ibm-strict` (`-X pedantic -fext=ibm`). Chapter 4. |
 | `-D NAME`, `--dialect NAME` | How what the standard leaves to the implementor behaves: `standard` (the default), `ibm`, `gnucobol` or `microfocus`. Chapter 4. |
 | `-f KEY=VALUE` | One setting of the dialect, after `-D`: `display=stored\|pretty`, `sign=ascii\|ebcdic`, `binary-truncate=yes\|no`. Chapter 4. |
 

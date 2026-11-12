@@ -375,27 +375,7 @@ void diag_note_plain(const char *fmt, ...) {
     va_end(ap);
 }
 
-bool diag_extension(ExtensionOwner owner, SourceLocation loc, const char *fmt, ...) {
-    init();
-    if (strictness == STRICT_RELAXED || (strictness == STRICT_IBM && owner == EXT_IBM)) {
-        last_shown = false;
-        return true;
-    }
-    char text[512];
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(text, sizeof(text), fmt, ap);
-    va_end(ap);
-    text[0] = (char)toupper((unsigned char)text[0]);
-    if (strictness == STRICT_PEDANTIC || strictness == STRICT_IBM) {
-        diag_error(loc, "%s is not COBOL-85", text);
-        diag_note_plain("%s accept it as an extension",
-                        owner == EXT_IBM ? "-X relaxed, normal and ibm-strict" : "-X relaxed and normal");
-        return false;
-    }
-    diag_warning(W_EXTENSION, loc, "%s is an extension to COBOL-85", text);
-    return true;
-}
+int diag_strictness(void) { return strictness; }
 
 // ---------------------------------------------------------------- FIPS subsets
 

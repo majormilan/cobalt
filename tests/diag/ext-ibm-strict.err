@@ -1,10 +1,10 @@
 tests/diag/extensions.cbl:11:12: error: The underscore in 'CUSTOMER_NAME' is not COBOL-85
     11 |        01  CUSTOMER_NAME    PIC X(10)    VALUE 'SMITH'.
        |            ^~~~~~~~~~~~~
-note: -X relaxed and normal accept it as an extension
+note: it is COBOL 2002; -fext=cobol2002 accepts it
 tests/diag/extensions.cbl:12:12: error: The 36-character word 'A-VERY-LONG-DATA-NAME-OF-THIRTY-FIVE' is not COBOL-85
     12 |        01  A-VERY-LONG-DATA-NAME-OF-THIRTY-FIVE PIC X.
        |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-note: -X relaxed and normal accept it as an extension
+note: it is a GnuCOBOL and Micro Focus extension; -fext=gnucobol accepts it
 note: COBOL-85 words have at most 30 characters
 2 errors generated.
