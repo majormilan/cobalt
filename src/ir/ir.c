@@ -344,6 +344,12 @@ static const char *emit_data_lit(IrProgram *ir, const char *prefix, const char *
     return buf;
 }
 
+// A numeric literal's text without its sign: how it moves to (or compares
+// with) an alphanumeric item
+static const char *unsigned_text(const char *t) {
+    return t && (*t == '+' || *t == '-') ? t + 1 : (t ? t : "");
+}
+
 #define FIG_PATTERN (-2)   // ALL with a literal of several characters
 
 // Character of a figurative constant, FIG_PATTERN for ALL "multi-char", or
@@ -2833,9 +2839,12 @@ static bool alnum_operand(IrProgram *ir, AstNode *n, FieldRef *f, const char *bu
         return true;
     }
     if (n->kind == AST_LITERAL_NUMBER || n->kind == AST_STRING_LITERAL) {
+        // a numeric literal compares as if moved to an alphanumeric item:
+        // its unsigned digits
+        const char *text = n->kind == AST_LITERAL_NUMBER ? unsigned_text(n->name) : n->name;
         memset(f, 0, sizeof(*f));
-        emit_data_lit(ir, "cmplit", n->name, f->label, sizeof(f->label));
-        f->size = (int)strlen(n->name);
+        emit_data_lit(ir, "cmplit", text, f->label, sizeof(f->label));
+        f->size = (int)strlen(text);
         return true;
     }
     diag_error(n->loc, "An arithmetic expression cannot be compared with a nonnumeric operand");
@@ -3485,8 +3494,9 @@ static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const ch
             return;
         }
         if (!resolve_receiver(ir, dest_node, &dest)) return;
-        if (dest_alnum_edited) emit_edit_alnum(ir, &dest, src_lit, (int)strlen(src->name));
-        else emit_move_alpha(ir, &dest, src_lit, (int)strlen(src->name));
+        int len = (int)strlen(src->kind == AST_LITERAL_NUMBER ? unsigned_text(src->name) : src->name);
+        if (dest_alnum_edited) emit_edit_alnum(ir, &dest, src_lit, len);
+        else emit_move_alpha(ir, &dest, src_lit, len);
         return;
     }
 
@@ -6372,9 +6382,12 @@ static void lower_node_kind(IrProgram *ir, AstNode *node) {
                 break;
             }
             // A literal source is emitted once and shared by all receivers
+            // (a numeric literal moves to an alphanumeric item unsigned)
             char lit_name[32] = {0};
-            if (src->kind == AST_STRING_LITERAL || src->kind == AST_LITERAL_NUMBER)
+            if (src->kind == AST_STRING_LITERAL)
                 emit_data_lit(ir, "lit", src->name ? src->name : "", lit_name, sizeof(lit_name));
+            else if (src->kind == AST_LITERAL_NUMBER)
+                emit_data_lit(ir, "lit", unsigned_text(src->name), lit_name, sizeof(lit_name));
             // The error bytes only matter when a number is moved: from a
             // numeric source or into a numeric (or numeric edited) receiver
             bool numeric_move = src->kind == AST_LITERAL_NUMBER || is_numeric_operand(src) || src->loop;

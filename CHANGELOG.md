@@ -23,6 +23,8 @@
 
 ### Fixed
 
+- A signed numeric literal moved to, or compared with, an alphanumeric
+  item is treated as its unsigned digits (`MOVE -12 TO X` gives "12").
 - The constant-condition warning for a loop condition (`PERFORM ... UNTIL
   I > 9` with `I PIC 9`) says the relation is always false, as written,
   instead of describing its negation.
