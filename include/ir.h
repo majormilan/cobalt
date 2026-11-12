@@ -177,6 +177,7 @@ typedef enum {
                             //   of size bytes; content: a template it starts as (or NULL)
     IR_SIZE_ERR_CLEAR,      // start of a statement that stores numeric results
     IR_JUMP_IF_NO_SIZE_ERR, // jump to jump_target if no size error since the clear
+    IR_DISPLAY_UPON,        // DISPLAY writes to device imm: 1 standard output, 2 standard error
 } IrOpcode;
 
 struct IrInstr {

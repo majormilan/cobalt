@@ -1,0 +1,13 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. DISPLAY-UPON-SYSERR.
+      * DISPLAY UPON SYSERR, or its mnemonic-name, writes to standard error
+       ENVIRONMENT DIVISION.
+       CONFIGURATION SECTION.
+       SPECIAL-NAMES.
+           SYSERR IS ERR-OUT.
+       PROCEDURE DIVISION.
+           DISPLAY "TO STDOUT".
+           DISPLAY "TO STDERR" UPON ERR-OUT.
+           DISPLAY "ALSO STDERR" UPON SYSERR.
+           DISPLAY "BACK TO STDOUT".
+           STOP RUN.

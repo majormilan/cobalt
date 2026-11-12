@@ -5478,6 +5478,8 @@ static int display_digits(const VarInfo *v) {
 }
 
 static void lower_display(IrProgram *ir, AstNode *node) {
+    bool syserr = node->text && strcmp(node->text, "SYSERR") == 0;
+    if (syserr) emit(ir, IR_DISPLAY_UPON)->imm = 2;
     for (AstNode *arg = node->children; arg; arg = arg->next) {
         const char *content = arg->name ? arg->name : "";
         if (arg->kind == AST_STRING_LITERAL || arg->kind == AST_LITERAL_NUMBER) {
@@ -5547,6 +5549,7 @@ static void lower_display(IrProgram *ir, AstNode *node) {
     }
     if (!node->is_numeric)          // WITH NO ADVANCING keeps the line open
         append_instr(ir, new_instr(IR_EMIT_NEWLINE, NULL, NULL, NULL, 0, 0, 0, 0, USAGE_DISPLAY));
+    if (syserr) emit(ir, IR_DISPLAY_UPON)->imm = 1;
 }
 
 // Move n unsigned digits from the "$numtext" buffer into a receiver, as from

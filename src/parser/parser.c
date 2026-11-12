@@ -337,6 +337,7 @@ static AstNode *parse_imperative_block(void);
 static Token peek_token(void);
 static bool tok_is_word(const char *word);
 static bool tok_spelled(const char *word);
+static bool is_syserr_name(void);
 static void parse_report_section(AstNode *div, AstNode **sec_tail);
 static void check_area_a(SourceLocation loc, const char *what);
 static AstNode *parse_forward_identifier(void);
@@ -1822,10 +1823,13 @@ static AstNode *parse_display_statement(SourceLocation loc) {
     while (!parser_panic_mode && !(tok.kind == TOK_IDENT && tok_is_word("NO")) &&
            (arg = parse_value_operand()))
         list_append(&display->children, &last, arg);
-    if (tok.kind == TOK_UPON) {         // the console is the only device
+    if (tok.kind == TOK_UPON) {         // standard error, or the console
         diag_subset(MOD_NC, 2, TOK_LOC, "DISPLAY ... UPON");
         next();
-        if (tok.kind == TOK_IDENT) next();
+        if (tok.kind == TOK_IDENT) {
+            if (is_syserr_name()) display->text = strdup("SYSERR");
+            next();
+        }
     }
     if (tok.kind == TOK_WITH || tok_is_word("NO")) {
         if (tok.kind == TOK_WITH) next();
@@ -4176,6 +4180,19 @@ static bool special_names_clause_start(void) {
     return tok.kind == TOK_IDENT && tok.length > 7 && strncasecmp(tok.lexeme, "SWITCH-", 7) == 0;
 }
 
+// The mnemonic-names SPECIAL-NAMES gives SYSERR (DISPLAY ... UPON them
+// writes to standard error)
+static char *syserr_names[16];
+static int num_syserr_names;
+
+// The current word is SYSERR or a mnemonic-name of it
+static bool is_syserr_name(void) {
+    if (tok_spelled("SYSERR")) return true;
+    for (int k = 0; k < num_syserr_names; k++)
+        if (tok_spelled(syserr_names[k])) return true;
+    return false;
+}
+
 static void declare_special_name(const char *name, int level, SourceLocation loc) {
     Symbol *sym = symtab_resolve_symbol(current_symtab, name);
     if (!sym) sym = symtab_declare_symbol(current_symtab, name, SYM_VAR, loc);
@@ -4288,6 +4305,8 @@ static void parse_special_names(AstNode *div, AstNode **tail) {
                 if (tok.kind == TOK_IDENT) {
                     char *mnemonic = tok_to_str();
                     declare_special_name(mnemonic, -1, loc);
+                    if (strcasecmp(e->text, "SYSERR") == 0 && num_syserr_names < 16)
+                        syserr_names[num_syserr_names++] = strdup(mnemonic);
                     e->extra = ast_new(AST_IDENTIFIER, mnemonic, loc);
                     free(mnemonic);
                     next();

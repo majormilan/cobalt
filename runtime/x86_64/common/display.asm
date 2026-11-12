@@ -9,6 +9,7 @@ global runtime_display_string
 global runtime_display_var_string
 global runtime_display_fill
 global runtime_display_newline
+global runtime_display_upon
 
 extern runtime_num_load
 
@@ -29,7 +30,7 @@ runtime_display_string:
 .strlen_done:
     mov ARG2, rcx                       ; length
     mov ARG1, [rbp-8]                   ; string pointer
-    mov ARG0, COBRT_STDOUT
+    mov ARG0, [rel display_fd]
     call cobrt_os_write
 
     leave
@@ -45,7 +46,7 @@ runtime_display_var_string:
     mov rax, ARG0
     mov ARG2, ARG1                      ; length = size
     mov ARG1, rax                       ; buffer = variable
-    mov ARG0, COBRT_STDOUT
+    mov ARG0, [rel display_fd]
     call cobrt_os_write
 
     leave
@@ -78,10 +79,16 @@ runtime_display_fill:
 
     mov ARG2, [rbp-16]                  ; length is size
     mov ARG1, rsp                       ; pointer to buffer
-    mov ARG0, COBRT_STDOUT
+    mov ARG0, [rel display_fd]
     call cobrt_os_write
 
     leave                               ; also releases the temp buffer
+    ret
+
+; ARG0 = the device DISPLAY writes to: COBRT_STDOUT, or COBRT_STDERR
+; (UPON SYSERR) for one statement
+runtime_display_upon:
+    mov [rel display_fd], ARG0
     ret
 
 ; Ends the current DISPLAY line.
@@ -91,11 +98,14 @@ runtime_display_newline:
 
     mov ARG2, 1
     lea ARG1, [rel newline]
-    mov ARG0, COBRT_STDOUT
+    mov ARG0, [rel display_fd]
     call cobrt_os_write
 
     leave
     ret
+
+section .data
+display_fd: dq COBRT_STDOUT
 
 section .rodata
 newline db 10

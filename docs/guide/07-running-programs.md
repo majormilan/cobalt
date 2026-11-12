@@ -9,8 +9,10 @@ DIVISION.
 
 **DISPLAY** writes its operands one after the other on standard output, then
 a newline (none `WITH NO ADVANCING`). Numeric items are shown as the dialect
-says (chapter 4): by default their stored characters. DISPLAY UPON any
-mnemonic-name (CONSOLE, SYSOUT, SYSERR) writes to standard output as well.
+says (chapter 4): by default their stored characters. DISPLAY UPON SYSERR,
+or the mnemonic-name SPECIAL-NAMES gives it (`SYSERR IS ERR-OUT`), writes to
+standard error; UPON any other mnemonic-name (CONSOLE, SYSOUT) writes to
+standard output.
 
 **ACCEPT** reads one line from standard input:
 

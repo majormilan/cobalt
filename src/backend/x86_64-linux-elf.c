@@ -2294,6 +2294,10 @@ static void emit_instr(Emitter *em, FILE *f, IrInstr *i, const char *sanitized_v
         case IR_EMIT_NEWLINE:
             fprintf(f, "    call runtime_display_newline\n\n");
             break;
+        case IR_DISPLAY_UPON:
+            fprintf(f, "    mov edi, %lld\n", i->imm);
+            fprintf(f, "    call runtime_display_upon\n");
+            break;
         case IR_CALL_MOVE_ALPHA:
             if (emit_inline_literal_move(f, i, &em->literals)) break;
             if (i->lit_len >= 0 && i->lit_len < 65536 && i->size >= 0 && i->size < 32768 &&

@@ -43,7 +43,6 @@ compilers:
   field, not the sum counter (chapter 3).
 - Accepted with no effect: CODE-SET (data are ASCII), SYNCHRONIZED, RERUN,
   MEMORY SIZE, BLOCK CONTAINS, RESERVE.
-- DISPLAY UPON SYSERR writes to standard output, as all DISPLAY does.
 
 **Files**
 
