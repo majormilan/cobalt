@@ -631,6 +631,16 @@ runtime_num_load:
     jz .d_start
     xor r9d, r9d
 .d_start:
+    ; unsigned text of more than 18 characters (an alphanumeric field read as
+    ; a number, UNSTRING): its low-order 18 digits
+    cmp r13, 18
+    jbe .d_fits
+    cmp r9, -1
+    jne .d_fits
+    lea rdx, [r13 - 18]
+    add r12, rdx
+    mov r13d, 18
+.d_fits:
     ; 1 to 18 digits: 8 at a time, the sign digit on its own; any byte that
     ; is not a digit takes the digit loop
     lea rdx, [r13 - 1]

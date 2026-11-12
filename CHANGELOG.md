@@ -23,6 +23,8 @@
 
 ### Fixed
 
+- UNSTRING into a numeric receiver keeps the low-order digits of a
+  delimited field longer than 18 characters.
 - Intrinsic functions of large arguments: MAX, MIN, ORD-MAX, ORD-MIN,
   MEDIAN, MIDRANGE, RANGE, SUM, MEAN, STANDARD-DEVIATION, VARIANCE,
   PRESENT-VALUE and NUMVAL / NUMVAL-C of a literal give exact results up to
