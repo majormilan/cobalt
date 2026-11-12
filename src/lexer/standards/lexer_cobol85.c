@@ -81,9 +81,6 @@ Token lexer_cobol85_keyword_or_ident(Lexer *l, const char *start, size_t len) {
     KW("TIME",            TOK_TIME);
     KW("DAY",             TOK_DAY);
     KW("DAY-OF-WEEK",     TOK_DAY_OF_WEEK);
-    KW("YEAR",            TOK_YEAR);
-    KW("YYYYMMDD",        TOK_YYYYMMDD);
-    KW("YYDDD",           TOK_YYDDD);
     KW("ZEROS",           TOK_ZEROS);
     KW("ZERO",            TOK_ZEROS);
     KW("ZEROES",          TOK_ZEROS);

@@ -302,10 +302,6 @@ static bool word_reported(const Token *t) {
 static void check_word(const Lexer *l, const Token *t) {
     if (l->quiet) return;
     SourceLocation loc = { t->filename, t->line, t->column };
-    if (t->kind == TOK_YYYYMMDD) {
-        diag_feature(F_ACCEPT_DATE_YYYYMMDD, loc, NULL);
-        return;
-    }
     if (t->kind != TOK_IDENT) return;
     bool underscore = memchr(t->lexeme, '_', t->length) != NULL;
     if ((underscore || t->length > 30) && word_reported(t)) return;

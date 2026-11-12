@@ -23,6 +23,8 @@
 
 ### Fixed
 
+- YEAR, YYYYMMDD and YYDDD are no longer reserved words; they can name
+  data items (YYYYMMDD keeps its meaning after ACCEPT ... FROM DATE).
 - Debugging lines are compiled only with WITH DEBUGGING MODE in the
   SOURCE-COMPUTER paragraph; the words elsewhere (in a literal, a comment
   line or USE FOR DEBUGGING) no longer turn them on.

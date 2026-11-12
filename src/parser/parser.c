@@ -2996,8 +2996,9 @@ static AstNode *parse_accept_statement(SourceLocation loc) {
             else if (tok.kind != TOK_IDENT) { ast_free(accept_stmt); arith_error("Expected DATE, DAY, DAY-OF-WEEK, TIME or a device"); return NULL; }
             next();
             // DATE YYYYMMDD, DAY YYYYDDD: the year in four digits (an
-            // extension, flagged by the lexer)
-            if (accept_stmt->name && strcmp(accept_stmt->name, "DATE") == 0 && tok.kind == TOK_YYYYMMDD) {
+            // extension; YYYYMMDD and YYYYDDD are not reserved words)
+            if (accept_stmt->name && strcmp(accept_stmt->name, "DATE") == 0 && tok_spelled("YYYYMMDD")) {
+                diag_feature(F_ACCEPT_DATE_YYYYMMDD, TOK_LOC, NULL);
                 free(accept_stmt->name);
                 accept_stmt->name = strdup("DATE YYYYMMDD");
                 next();

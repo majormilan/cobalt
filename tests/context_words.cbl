@@ -1,0 +1,16 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. CONTEXT-WORDS.
+      * YEAR, YYYYMMDD and YYDDD are not reserved words in COBOL-85
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 WS-DATE.
+          05 YEAR     PIC 9(4) VALUE 1999.
+          05 YYDDD    PIC 9(5) VALUE 99365.
+       01 YYYYMMDD    PIC 9(8).
+       01 TODAY       PIC 9(8).
+       PROCEDURE DIVISION.
+           DISPLAY YEAR OF WS-DATE " " YYDDD.
+           ACCEPT TODAY FROM DATE YYYYMMDD.
+           MOVE TODAY TO YYYYMMDD.
+           IF YYYYMMDD > 19990101 DISPLAY "DATE OK".
+           STOP RUN.
