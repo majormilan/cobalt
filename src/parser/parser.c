@@ -4362,6 +4362,154 @@ static AstNode *parse_linage_operand(void) {
     return parse_value_operand();
 }
 
+// RECORD [CONTAINS] [n TO] n [CHARACTERS] | RECORD IS VARYING [IN] [SIZE]
+//     [[FROM] n] [TO n] [CHARACTERS] [DEPENDING ON data-name]: digits =
+// shortest record, decimal_places = longest (0: from the record
+// descriptions), is_signed = variable, extra = DEPENDING ON item
+static void parse_fd_record_clause(AstNode *fd) {
+    next();
+    if (tok_is_word("CONTAINS")) next();
+    if (tok.kind == TOK_IS) next();
+    if (tok.kind == TOK_VARYING) {
+        diag_subset(org_module(file_org_of(fd->name)), 2, TOK_LOC, "RECORD IS VARYING");
+        fd->is_signed = true;
+        next();
+        if (tok.kind == TOK_IN) next();
+        if (tok.kind == TOK_SIZE) next();
+        if (tok.kind == TOK_FROM) next();
+        if (tok.kind == TOK_NUMBER) { fd->digits = atoi(tok_value_tmp()); next(); }
+        if (tok.kind == TOK_TO) {
+            next();
+            if (tok.kind == TOK_NUMBER) { fd->decimal_places = atoi(tok_value_tmp()); next(); }
+        }
+        if (tok.kind == TOK_CHARACTERS) next();
+        if (tok.kind == TOK_DEPENDING) {
+            next();
+            if (tok.kind == TOK_ON) next();
+            if (tok.kind == TOK_IDENT) fd->extra = parse_forward_identifier();
+        }
+    } else if (tok.kind == TOK_NUMBER) {
+        int first = atoi(tok_value_tmp());
+        next();
+        if (tok.kind == TOK_TO) {
+            next();
+            fd->digits = first;
+            if (tok.kind == TOK_NUMBER) { fd->decimal_places = atoi(tok_value_tmp()); next(); }
+            fd->is_signed = fd->digits != fd->decimal_places;
+        } else {
+            fd->digits = fd->decimal_places = first;
+        }
+        if (tok.kind == TOK_CHARACTERS) next();
+    }
+}
+
+// VALUE OF implementor-name IS {literal | data-name}: a data-name is level 2
+static void parse_fd_value_of(void) {
+    next(); next();
+    while (tok.kind == TOK_IDENT && peek_token().kind != TOK_IS && peek_token().kind != TOK_PERIOD) next();
+    if (tok.kind == TOK_IDENT) next();
+    if (tok.kind == TOK_IS) next();
+    if (tok.kind == TOK_IDENT) diag_subset(MOD_SQ, 2, TOK_LOC, "VALUE OF with a data-name");
+}
+
+// REPORT IS / REPORTS ARE report-name...: the Report Writer
+static void parse_fd_report_clause(AstNode *fd) {
+    diag_subset(MOD_RW, 1, TOK_LOC, "The REPORT clause");
+    next();
+    if (tok.kind == TOK_IS) next();
+    while (tok.kind == TOK_IDENT && !tok_spelled("LABEL") && !tok_spelled("GLOBAL") &&
+           !tok_spelled("EXTERNAL") && !tok_spelled("BLOCK") && !tok_spelled("CODE-SET")) {
+        if (num_fd_reports < 64) {
+            fd_reports[num_fd_reports].fd = fd;
+            fd_reports[num_fd_reports++].report = tok_to_str();
+        }
+        next();
+    }
+}
+
+// LINAGE IS n [LINES] [WITH FOOTING AT n] [LINES AT TOP n] [LINES AT BOTTOM n]:
+// fd->loop = AST_SPECIAL "LINAGE" with on_error = lines, not_on_error =
+// FOOTING, extra = TOP, loop = BOTTOM
+static void parse_fd_linage_clause(AstNode *fd) {
+    SourceLocation lloc = {tok.filename, tok.line, tok.column};
+    diag_subset(MOD_SQ, 2, lloc, "LINAGE");
+    next();
+    if (tok.kind == TOK_IS) next();
+    AstNode *lin = ast_new(AST_SPECIAL, "LINAGE", lloc);
+    lin->on_error = parse_linage_operand();
+    if (tok.kind == TOK_LINES) next();
+    for (;;) {
+        if (tok.kind == TOK_WITH) next();
+        if (tok_is_word("FOOTING")) {
+            next();
+            if (tok.kind == TOK_AT) next();
+            lin->not_on_error = parse_linage_operand();
+        } else if (tok.kind == TOK_LINES || tok.kind == TOK_AT || tok_is_word("TOP") ||
+                   tok_is_word("BOTTOM")) {
+            if (tok.kind == TOK_LINES) next();
+            if (tok.kind == TOK_AT) next();
+            bool top = tok_is_word("TOP");
+            if (!top && !tok_is_word("BOTTOM")) break;
+            next();
+            if (top) lin->extra = parse_linage_operand();
+            else lin->loop = parse_linage_operand();
+        } else {
+            break;
+        }
+    }
+    fd->loop = lin;
+    declare_special_name("LINAGE-COUNTER", 1, lloc);
+}
+
+// The clauses of an FD / SD entry, up to its period. BLOCK, LABEL, VALUE
+// OF, DATA RECORDS, CODE-SET: no effect here
+static void parse_fd_clauses(AstNode *fd) {
+    while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF &&
+           !(is_division_start(tok.kind) && peek_token().kind == TOK_DIVISION)) {
+        if (tok.kind == TOK_RECORD) {
+            parse_fd_record_clause(fd);
+        } else if (tok_is_word("LABEL") || (tok.kind == TOK_VALUE && peek_token().kind == TOK_OF) ||
+                   (tok.kind == TOK_DATA && (peek_token().kind == TOK_RECORD || peek_token().kind == TOK_IDENT))) {
+            flag_obsolete(tok.line, tok.column, tok.kind == TOK_VALUE ? "VALUE OF" :
+                          tok.kind == TOK_DATA ? "DATA RECORDS" : "LABEL RECORDS");
+            if (tok.kind == TOK_VALUE) parse_fd_value_of();
+            else next();
+        } else if (tok_is_word("BLOCK")) {
+            next();
+            if (tok_is_word("CONTAINS")) next();
+            if (tok.kind == TOK_NUMBER) next();
+            if (tok.kind == TOK_TO) diag_subset(MOD_SQ, 2, TOK_LOC, "BLOCK CONTAINS ... TO");
+        } else if (tok_spelled("REPORT") || tok_spelled("REPORTS")) {
+            parse_fd_report_clause(fd);
+        } else if (tok_is_word("GLOBAL")) {
+            fd->is_global = true;
+            next();
+        } else if (tok_is_word("EXTERNAL")) {
+            fd->is_external = true;
+            next();
+        } else if (tok.kind == TOK_LINAGE) {
+            parse_fd_linage_clause(fd);
+        } else {
+            next();
+        }
+    }
+    if (tok.kind == TOK_PERIOD) next();
+}
+
+// The record descriptions of an FD / SD entry
+static void parse_fd_records(AstNode *fd) {
+    AstNode *tail = NULL;
+    while (tok.kind == TOK_NUMBER) {
+        const char *before = tok.lexeme;
+        parser_panic_mode = false;
+        AstNode *decl = parse_var_decl();
+        if (decl) list_append(&fd->children, &tail, decl);
+        if (decl && decl->name && decl->text && atoi(decl->text) == 1)
+            note_file_org(decl->name, file_org_of(fd->name));
+        if (tok.lexeme == before) next();
+    }
+}
+
 // FILE SECTION. {FD file-name [clauses]. record-description-entries}...
 static AstNode *parse_file_section(void) {
     SourceLocation loc = {tok.filename, tok.line, tok.column};
@@ -4385,140 +4533,8 @@ static AstNode *parse_file_section(void) {
         fd->is_numeric = sort_file;         // SD: a sort-merge file
         free(name);
         next();
-        // RECORD CONTAINS / VARYING: digits = shortest record, decimal_places =
-        // longest (0: from the record descriptions), is_signed = variable,
-        // extra = DEPENDING ON item; LINAGE: loop = AST_SPECIAL "LINAGE" with
-        // on_error = lines, not_on_error = FOOTING, extra = TOP, loop = BOTTOM.
-        // BLOCK, LABEL, VALUE OF, DATA RECORDS, CODE-SET: no effect here
-        while (tok.kind != TOK_PERIOD && tok.kind != TOK_EOF &&
-               !(is_division_start(tok.kind) && peek_token().kind == TOK_DIVISION)) {
-            if (tok.kind == TOK_RECORD) {
-                next();
-                if (tok_is_word("CONTAINS")) next();
-                if (tok.kind == TOK_IS) next();
-                if (tok.kind == TOK_VARYING) {
-                    diag_subset(org_module(file_org_of(fd->name)), 2, TOK_LOC, "RECORD IS VARYING");
-                    fd->is_signed = true;
-                    next();
-                    if (tok.kind == TOK_IN) next();
-                    if (tok.kind == TOK_SIZE) next();
-                    if (tok.kind == TOK_FROM) next();
-                    if (tok.kind == TOK_NUMBER) { fd->digits = atoi(tok_value_tmp()); next(); }
-                    if (tok.kind == TOK_TO) {
-                        next();
-                        if (tok.kind == TOK_NUMBER) { fd->decimal_places = atoi(tok_value_tmp()); next(); }
-                    }
-                    if (tok.kind == TOK_CHARACTERS) next();
-                    if (tok.kind == TOK_DEPENDING) {
-                        next();
-                        if (tok.kind == TOK_ON) next();
-                        if (tok.kind == TOK_IDENT) fd->extra = parse_forward_identifier();
-                    }
-                } else if (tok.kind == TOK_NUMBER) {
-                    int first = atoi(tok_value_tmp());
-                    next();
-                    if (tok.kind == TOK_TO) {
-                        next();
-                        fd->digits = first;
-                        if (tok.kind == TOK_NUMBER) { fd->decimal_places = atoi(tok_value_tmp()); next(); }
-                        fd->is_signed = fd->digits != fd->decimal_places;
-                    } else {
-                        fd->digits = fd->decimal_places = first;
-                    }
-                    if (tok.kind == TOK_CHARACTERS) next();
-                }
-                continue;
-            }
-            if (tok_is_word("LABEL") || (tok.kind == TOK_VALUE && peek_token().kind == TOK_OF) ||
-                (tok.kind == TOK_DATA && (peek_token().kind == TOK_RECORD || peek_token().kind == TOK_IDENT))) {
-                flag_obsolete(tok.line, tok.column, tok.kind == TOK_VALUE ? "VALUE OF" :
-                              tok.kind == TOK_DATA ? "DATA RECORDS" : "LABEL RECORDS");
-                if (tok.kind == TOK_VALUE) {
-                    // VALUE OF implementor-name IS {literal | data-name}: a
-                    // data-name is level 2
-                    next(); next();
-                    while (tok.kind == TOK_IDENT && peek_token().kind != TOK_IS && peek_token().kind != TOK_PERIOD) next();
-                    if (tok.kind == TOK_IDENT) next();
-                    if (tok.kind == TOK_IS) next();
-                    if (tok.kind == TOK_IDENT) diag_subset(MOD_SQ, 2, TOK_LOC, "VALUE OF with a data-name");
-                    continue;
-                }
-                next();
-                continue;
-            }
-            if (tok_is_word("BLOCK")) {
-                next();
-                if (tok_is_word("CONTAINS")) next();
-                if (tok.kind == TOK_NUMBER) next();
-                if (tok.kind == TOK_TO) diag_subset(MOD_SQ, 2, TOK_LOC, "BLOCK CONTAINS ... TO");
-                continue;
-            }
-            if (tok_spelled("REPORT") || tok_spelled("REPORTS")) {
-                // REPORT IS / REPORTS ARE report-name...: the Report Writer
-                diag_subset(MOD_RW, 1, TOK_LOC, "The REPORT clause");
-                next();
-                if (tok.kind == TOK_IS) next();
-                while (tok.kind == TOK_IDENT && !tok_spelled("LABEL") && !tok_spelled("GLOBAL") &&
-                       !tok_spelled("EXTERNAL") && !tok_spelled("BLOCK") && !tok_spelled("CODE-SET")) {
-                    if (num_fd_reports < 64) {
-                        fd_reports[num_fd_reports].fd = fd;
-                        fd_reports[num_fd_reports++].report = tok_to_str();
-                    }
-                    next();
-                }
-                continue;
-            }
-            if (tok_is_word("GLOBAL") || tok_is_word("EXTERNAL")) {
-                if (tok_is_word("GLOBAL")) fd->is_global = true;
-                else fd->is_external = true;
-                next();
-                continue;
-            }
-            if (tok.kind == TOK_LINAGE) {
-                SourceLocation lloc = {tok.filename, tok.line, tok.column};
-                diag_subset(MOD_SQ, 2, lloc, "LINAGE");
-                next();
-                if (tok.kind == TOK_IS) next();
-                AstNode *lin = ast_new(AST_SPECIAL, "LINAGE", lloc);
-                lin->on_error = parse_linage_operand();
-                if (tok.kind == TOK_LINES) next();
-                for (;;) {
-                    if (tok.kind == TOK_WITH) next();
-                    if (tok_is_word("FOOTING")) {
-                        next();
-                        if (tok.kind == TOK_AT) next();
-                        lin->not_on_error = parse_linage_operand();
-                    } else if (tok.kind == TOK_LINES || tok.kind == TOK_AT || tok_is_word("TOP") ||
-                               tok_is_word("BOTTOM")) {
-                        if (tok.kind == TOK_LINES) next();
-                        if (tok.kind == TOK_AT) next();
-                        bool top = tok_is_word("TOP");
-                        if (!top && !tok_is_word("BOTTOM")) break;
-                        next();
-                        if (top) lin->extra = parse_linage_operand();
-                        else lin->loop = parse_linage_operand();
-                    } else {
-                        break;
-                    }
-                }
-                fd->loop = lin;
-                declare_special_name("LINAGE-COUNTER", 1, lloc);
-                continue;
-            }
-            next();
-        }
-        if (tok.kind == TOK_PERIOD) next();
-
-        AstNode *tail = NULL;
-        while (tok.kind == TOK_NUMBER) {
-            const char *before = tok.lexeme;
-            parser_panic_mode = false;
-            AstNode *decl = parse_var_decl();
-            if (decl) list_append(&fd->children, &tail, decl);
-            if (decl && decl->name && decl->text && atoi(decl->text) == 1)
-                note_file_org(decl->name, file_org_of(fd->name));
-            if (tok.lexeme == before) next();
-        }
+        parse_fd_clauses(fd);
+        parse_fd_records(fd);
         list_append(&sec->children, &fd_tail, fd);
     }
     return sec;
