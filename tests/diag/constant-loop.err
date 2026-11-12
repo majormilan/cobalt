@@ -1,0 +1,13 @@
+tests/diag/constant-loop.cbl:9:52: warning: The relation is always false [-Wconstant-condition]
+     9 |            PERFORM VARYING I FROM 1 BY 1 UNTIL I > 9
+       |                                                    ^
+tests/diag/constant-loop.cbl:7:11: note: 'I' is never above 9 (PICTURE 9)
+     7 |        01 I PIC 9.
+       |           ^
+tests/diag/constant-loop.cbl:12:35: warning: The relation is always true [-Wconstant-condition]
+    12 |            PERFORM UNTIL NOT I <= 9
+       |                                   ^
+tests/diag/constant-loop.cbl:7:11: note: 'I' is never above 9 (PICTURE 9)
+     7 |        01 I PIC 9.
+       |           ^
+2 warnings generated.

@@ -2960,6 +2960,11 @@ static void check_relation_operands(AstNode *left, AstNode *right, const char *o
         diag_warning(W_COMPARE, other->loc, "%s and '%s' is not: they are compared as characters", nn, other->name);
 }
 
+// The relational operator as written in the source, while a relation is
+// lowered (emit_relation_false_jump gets it negated for a jump when true):
+// what warnings about the relation describe
+static const char *written_op;
+
 static void emit_relation_false_jump(IrProgram *ir, AstNode *left, AstNode *right,
                                      const char *op, const char *target) {
     int fl = figurative_char(left), fr = figurative_char(right);
@@ -2968,8 +2973,9 @@ static void emit_relation_false_jump(IrProgram *ir, AstNode *left, AstNode *righ
         !(fl == '0' && fr == '0')) {
         // ZERO compared with a numeric operand is the number 0
         if (num_expr_valid(left) && num_expr_valid(right)) {
-            if (same_plain_item(left, right)) check_relation_operands(left, right, op);
-            else check_constant_relation(left, right, op);
+            const char *as_written = written_op ? written_op : op;
+            if (same_plain_item(left, right)) check_relation_operands(left, right, as_written);
+            else check_constant_relation(left, right, as_written);
             int W = max_leaf_scale(left);
             if (max_leaf_scale(right) > W) W = max_leaf_scale(right);
             W = W + 2 > 18 ? 18 : W + 2;
@@ -3141,8 +3147,10 @@ static void emit_cond_jump(IrProgram *ir, AstNode *cond, const char *target, boo
             break;
         case AST_CONDITION: {
             const char *op = cond->text ? cond->text : "=";
+            written_op = op;
             emit_relation_false_jump(ir, cond->children, cond->children->next,
                                      when ? negate_op(op) : op, target);
+            written_op = NULL;
             break;
         }
         case AST_COND_NOT:

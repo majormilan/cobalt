@@ -23,6 +23,9 @@
 
 ### Fixed
 
+- The constant-condition warning for a loop condition (`PERFORM ... UNTIL
+  I > 9` with `I PIC 9`) says the relation is always false, as written,
+  instead of describing its negation.
 - UNSTRING into a numeric receiver keeps the low-order digits of a
   delimited field longer than 18 characters.
 - Intrinsic functions of large arguments: MAX, MIN, ORD-MAX, ORD-MIN,
