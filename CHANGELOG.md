@@ -23,6 +23,10 @@
 
 ### Fixed
 
+- COPY REPLACING and REPLACE no longer put spaces around the
+  replacement, so a replaced word inside a PICTURE string (`X(LEN)`) or
+  part of a word (`:P:-REC`) gives one character-string.
+- Pseudo-text that ends in a period (`==STOP RUN.==`) matches.
 - `0 ** 0` is a size error also when the exponent is a literal.
 - INITIALIZE ... REPLACING ... BY a figurative constant (SPACES, QUOTE,
   ALL literal) fills the items with it instead of storing its name.

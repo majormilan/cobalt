@@ -56,6 +56,12 @@ static bool is_sep_space(const char *t, size_t p) {
     return false;
 }
 
+// A period at p is a separator: at the end, before a space, or as the last
+// character of pseudo-text (==STOP RUN.==)
+static bool period_ends(const char *t, size_t p) {
+    return t[p + 1] == '\0' || is_sep_space(t, p + 1) || (t[p + 1] == '=' && t[p + 2] == '=');
+}
+
 static void tokenize(const char *t, Words *ws) {
     size_t p = 0;
     ws->n = 0;
@@ -88,11 +94,11 @@ static void tokenize(const char *t, Words *ws) {
         } else if (c == '(') { w.kind = W_PAREN_L; p++; }
         else if (c == ')') { w.kind = W_PAREN_R; p++; }
         else if (c == ':') { w.kind = W_COLON; p++; }
-        else if (c == '.' && (t[p + 1] == '\0' || is_sep_space(t, p + 1))) { w.kind = W_PERIOD; p++; }
+        else if (c == '.' && period_ends(t, p)) { w.kind = W_PERIOD; p++; }
         else {
             while (t[p] && !is_sep_space(t, p) && t[p] != '(' && t[p] != ')' && t[p] != ':' &&
                    t[p] != '"' && t[p] != '\'' && !(t[p] == '=' && t[p + 1] == '=') &&
-                   !(t[p] == '.' && (t[p + 1] == '\0' || is_sep_space(t, p + 1))))
+                   !(t[p] == '.' && period_ends(t, p)))
                 p++;
             if (p == w.start) p++;      // a lone character
         }
@@ -395,9 +401,10 @@ static void keep_breaks(Buf *out, const char *t, size_t s, size_t e) {
 }
 
 // The replacement: operand-2 as written (its separators kept: "X(115)" must
-// stay one character-string), with line breaks as spaces
+// stay one character-string), with line breaks as spaces. The matched text
+// is delimited by separators already, so none is added: X(LEN) with LEN
+// replaced by 4 stays X(4)
 static void put_words(Buf *out, const char *t, const Word *w, int n) {
-    put(out, " ", 1);
     if (n > 0) {
         for (size_t k = w[0].start; k < w[n - 1].end; k++) {
             char c = t[k];
@@ -409,7 +416,6 @@ static void put_words(Buf *out, const char *t, const Word *w, int n) {
             put(out, c == '\n' || c == '\r' ? " " : &t[k], 1);
         }
     }
-    put(out, " ", 1);
 }
 
 // Apply patterns to t; with statements, REPLACE statements in t set the
