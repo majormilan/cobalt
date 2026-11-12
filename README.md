@@ -217,6 +217,17 @@ Continuous integration builds the compiler, runs the test suites and the NIST
 validation suite on Linux, and verifies the Windows compiler on Windows for
 every change.
 
+### Code Quality
+
+The compiler source is reviewed and restructured on an ongoing basis. The
+largest parts of the parser, the IR lowering and the x86-64 code generator are
+organized as small functions (one per statement, per data-division phase,
+per group of instructions), dispatched through tables and flat switches
+rather than long, deeply nested conditional chains. Reviews include builds
+with strict compiler warnings and static analysis, and restructurings are
+checked by comparing the generated assembly and diagnostics for the test
+programs and the NIST suite before and after the change.
+
 ## Examples
 
 | Example | Demonstrates |

@@ -16,6 +16,10 @@
   it; elements Cobalt does not implement yet say so.
 - `make install` installs the existing build and no longer compiles; it
   stops with a message if the build is missing or out of date.
+- The parser, IR lowering and x86-64 code generator are restructured into
+  smaller functions (statement parsers dispatched by table, data-division
+  phases, report setup, FD clauses, per-instruction emitters); generated
+  code is unchanged.
 
 ### Fixed
 
