@@ -583,13 +583,21 @@ int main(int argc, char **argv) {
                     me = -1;
                 }
                 sema_basic_check(p, &ctx);
-                AstNode *nested[64];
+                // the programs it contains, pushed last first (so the
+                // first comes next)
                 int nn = 0;
                 for (AstNode *c = p->children; c; c = c->next)
-                    if (c->kind == AST_PROGRAM && nn < 64) nested[nn++] = c;
-                for (int j = nn - 1; j >= 0 && depth < 512; j--) {
+                    if (c->kind == AST_PROGRAM) nn++;
+                if (depth + nn > 512) {
+                    diag_error(p->loc, "Too many contained programs to compile (512 limit)");
+                    nn = 512 - depth;
+                }
+                for (int j = nn - 1; j >= 0; j--) {
+                    AstNode *c = p->children;
+                    for (int k = -1; c; c = c->next)
+                        if (c->kind == AST_PROGRAM && ++k == j) break;
                     stack_parent[depth] = me;
-                    stack[depth++] = nested[j];
+                    stack[depth++] = c;
                 }
             }
         }

@@ -28,6 +28,10 @@
 
 ### Fixed
 
+- A program may contain more than 64 programs; past the limit of 512
+  waiting to be compiled, an error says so instead of skipping them.
+- A copy library directory given with a trailing slash (`-I ./`) no longer
+  shows copybook paths starting with `/` in messages.
 - COPY also searches the current directory, so `COPY "dir/name.cpy"`
   written relative to the project's top directory is found.
 - MOVE of an item whose length is known only at run time (a reference

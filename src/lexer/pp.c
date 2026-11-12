@@ -301,11 +301,14 @@ static char *find_text(const char *name, const char *library, const char *includ
         for (int l = 0; l < (library ? 3 : 1); l++) {
             for (int c = 0; c < 3; c++) {
                 for (int e = 0; exts[e]; e++) {
+                    // (no doubled separator: "-I ./" and "-I ." give the same path)
                     char path[2048];
+                    size_t dl = strlen(dirs[d]);
+                    const char *sep = dl && dirs[d][dl - 1] == '/' ? "" : "/";
                     if (library)
-                        snprintf(path, sizeof(path), "%s/%s/%s%s", dirs[d], libs[l], names[c], exts[e]);
+                        snprintf(path, sizeof(path), "%s%s%s/%s%s", dirs[d], sep, libs[l], names[c], exts[e]);
                     else
-                        snprintf(path, sizeof(path), "%s/%s%s", dirs[d], names[c], exts[e]);
+                        snprintf(path, sizeof(path), "%s%s%s%s", dirs[d], sep, names[c], exts[e]);
                     FILE *f = fopen(path, "rb");
                     if (f) { fclose(f); return strdup(path); }
                 }

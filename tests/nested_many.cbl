@@ -1,0 +1,496 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. NESTED-MANY.
+      * More than 64 programs contained in one program
+       PROCEDURE DIVISION.
+           CALL "N1".
+           CALL "N2".
+           CALL "N3".
+           CALL "N4".
+           CALL "N5".
+           CALL "N6".
+           CALL "N7".
+           CALL "N8".
+           CALL "N9".
+           CALL "N10".
+           CALL "N11".
+           CALL "N12".
+           CALL "N13".
+           CALL "N14".
+           CALL "N15".
+           CALL "N16".
+           CALL "N17".
+           CALL "N18".
+           CALL "N19".
+           CALL "N20".
+           CALL "N21".
+           CALL "N22".
+           CALL "N23".
+           CALL "N24".
+           CALL "N25".
+           CALL "N26".
+           CALL "N27".
+           CALL "N28".
+           CALL "N29".
+           CALL "N30".
+           CALL "N31".
+           CALL "N32".
+           CALL "N33".
+           CALL "N34".
+           CALL "N35".
+           CALL "N36".
+           CALL "N37".
+           CALL "N38".
+           CALL "N39".
+           CALL "N40".
+           CALL "N41".
+           CALL "N42".
+           CALL "N43".
+           CALL "N44".
+           CALL "N45".
+           CALL "N46".
+           CALL "N47".
+           CALL "N48".
+           CALL "N49".
+           CALL "N50".
+           CALL "N51".
+           CALL "N52".
+           CALL "N53".
+           CALL "N54".
+           CALL "N55".
+           CALL "N56".
+           CALL "N57".
+           CALL "N58".
+           CALL "N59".
+           CALL "N60".
+           CALL "N61".
+           CALL "N62".
+           CALL "N63".
+           CALL "N64".
+           CALL "N65".
+           CALL "N66".
+           CALL "N67".
+           CALL "N68".
+           CALL "N69".
+           CALL "N70".
+           STOP RUN.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N1.
+       PROCEDURE DIVISION.
+           DISPLAY "N1".
+           EXIT PROGRAM.
+       END PROGRAM N1.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N2.
+       PROCEDURE DIVISION.
+           DISPLAY "N2".
+           EXIT PROGRAM.
+       END PROGRAM N2.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N3.
+       PROCEDURE DIVISION.
+           DISPLAY "N3".
+           EXIT PROGRAM.
+       END PROGRAM N3.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N4.
+       PROCEDURE DIVISION.
+           DISPLAY "N4".
+           EXIT PROGRAM.
+       END PROGRAM N4.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N5.
+       PROCEDURE DIVISION.
+           DISPLAY "N5".
+           EXIT PROGRAM.
+       END PROGRAM N5.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N6.
+       PROCEDURE DIVISION.
+           DISPLAY "N6".
+           EXIT PROGRAM.
+       END PROGRAM N6.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N7.
+       PROCEDURE DIVISION.
+           DISPLAY "N7".
+           EXIT PROGRAM.
+       END PROGRAM N7.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N8.
+       PROCEDURE DIVISION.
+           DISPLAY "N8".
+           EXIT PROGRAM.
+       END PROGRAM N8.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N9.
+       PROCEDURE DIVISION.
+           DISPLAY "N9".
+           EXIT PROGRAM.
+       END PROGRAM N9.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N10.
+       PROCEDURE DIVISION.
+           DISPLAY "N10".
+           EXIT PROGRAM.
+       END PROGRAM N10.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N11.
+       PROCEDURE DIVISION.
+           DISPLAY "N11".
+           EXIT PROGRAM.
+       END PROGRAM N11.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N12.
+       PROCEDURE DIVISION.
+           DISPLAY "N12".
+           EXIT PROGRAM.
+       END PROGRAM N12.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N13.
+       PROCEDURE DIVISION.
+           DISPLAY "N13".
+           EXIT PROGRAM.
+       END PROGRAM N13.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N14.
+       PROCEDURE DIVISION.
+           DISPLAY "N14".
+           EXIT PROGRAM.
+       END PROGRAM N14.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N15.
+       PROCEDURE DIVISION.
+           DISPLAY "N15".
+           EXIT PROGRAM.
+       END PROGRAM N15.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N16.
+       PROCEDURE DIVISION.
+           DISPLAY "N16".
+           EXIT PROGRAM.
+       END PROGRAM N16.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N17.
+       PROCEDURE DIVISION.
+           DISPLAY "N17".
+           EXIT PROGRAM.
+       END PROGRAM N17.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N18.
+       PROCEDURE DIVISION.
+           DISPLAY "N18".
+           EXIT PROGRAM.
+       END PROGRAM N18.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N19.
+       PROCEDURE DIVISION.
+           DISPLAY "N19".
+           EXIT PROGRAM.
+       END PROGRAM N19.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N20.
+       PROCEDURE DIVISION.
+           DISPLAY "N20".
+           EXIT PROGRAM.
+       END PROGRAM N20.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N21.
+       PROCEDURE DIVISION.
+           DISPLAY "N21".
+           EXIT PROGRAM.
+       END PROGRAM N21.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N22.
+       PROCEDURE DIVISION.
+           DISPLAY "N22".
+           EXIT PROGRAM.
+       END PROGRAM N22.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N23.
+       PROCEDURE DIVISION.
+           DISPLAY "N23".
+           EXIT PROGRAM.
+       END PROGRAM N23.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N24.
+       PROCEDURE DIVISION.
+           DISPLAY "N24".
+           EXIT PROGRAM.
+       END PROGRAM N24.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N25.
+       PROCEDURE DIVISION.
+           DISPLAY "N25".
+           EXIT PROGRAM.
+       END PROGRAM N25.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N26.
+       PROCEDURE DIVISION.
+           DISPLAY "N26".
+           EXIT PROGRAM.
+       END PROGRAM N26.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N27.
+       PROCEDURE DIVISION.
+           DISPLAY "N27".
+           EXIT PROGRAM.
+       END PROGRAM N27.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N28.
+       PROCEDURE DIVISION.
+           DISPLAY "N28".
+           EXIT PROGRAM.
+       END PROGRAM N28.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N29.
+       PROCEDURE DIVISION.
+           DISPLAY "N29".
+           EXIT PROGRAM.
+       END PROGRAM N29.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N30.
+       PROCEDURE DIVISION.
+           DISPLAY "N30".
+           EXIT PROGRAM.
+       END PROGRAM N30.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N31.
+       PROCEDURE DIVISION.
+           DISPLAY "N31".
+           EXIT PROGRAM.
+       END PROGRAM N31.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N32.
+       PROCEDURE DIVISION.
+           DISPLAY "N32".
+           EXIT PROGRAM.
+       END PROGRAM N32.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N33.
+       PROCEDURE DIVISION.
+           DISPLAY "N33".
+           EXIT PROGRAM.
+       END PROGRAM N33.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N34.
+       PROCEDURE DIVISION.
+           DISPLAY "N34".
+           EXIT PROGRAM.
+       END PROGRAM N34.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N35.
+       PROCEDURE DIVISION.
+           DISPLAY "N35".
+           EXIT PROGRAM.
+       END PROGRAM N35.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N36.
+       PROCEDURE DIVISION.
+           DISPLAY "N36".
+           EXIT PROGRAM.
+       END PROGRAM N36.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N37.
+       PROCEDURE DIVISION.
+           DISPLAY "N37".
+           EXIT PROGRAM.
+       END PROGRAM N37.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N38.
+       PROCEDURE DIVISION.
+           DISPLAY "N38".
+           EXIT PROGRAM.
+       END PROGRAM N38.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N39.
+       PROCEDURE DIVISION.
+           DISPLAY "N39".
+           EXIT PROGRAM.
+       END PROGRAM N39.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N40.
+       PROCEDURE DIVISION.
+           DISPLAY "N40".
+           EXIT PROGRAM.
+       END PROGRAM N40.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N41.
+       PROCEDURE DIVISION.
+           DISPLAY "N41".
+           EXIT PROGRAM.
+       END PROGRAM N41.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N42.
+       PROCEDURE DIVISION.
+           DISPLAY "N42".
+           EXIT PROGRAM.
+       END PROGRAM N42.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N43.
+       PROCEDURE DIVISION.
+           DISPLAY "N43".
+           EXIT PROGRAM.
+       END PROGRAM N43.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N44.
+       PROCEDURE DIVISION.
+           DISPLAY "N44".
+           EXIT PROGRAM.
+       END PROGRAM N44.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N45.
+       PROCEDURE DIVISION.
+           DISPLAY "N45".
+           EXIT PROGRAM.
+       END PROGRAM N45.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N46.
+       PROCEDURE DIVISION.
+           DISPLAY "N46".
+           EXIT PROGRAM.
+       END PROGRAM N46.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N47.
+       PROCEDURE DIVISION.
+           DISPLAY "N47".
+           EXIT PROGRAM.
+       END PROGRAM N47.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N48.
+       PROCEDURE DIVISION.
+           DISPLAY "N48".
+           EXIT PROGRAM.
+       END PROGRAM N48.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N49.
+       PROCEDURE DIVISION.
+           DISPLAY "N49".
+           EXIT PROGRAM.
+       END PROGRAM N49.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N50.
+       PROCEDURE DIVISION.
+           DISPLAY "N50".
+           EXIT PROGRAM.
+       END PROGRAM N50.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N51.
+       PROCEDURE DIVISION.
+           DISPLAY "N51".
+           EXIT PROGRAM.
+       END PROGRAM N51.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N52.
+       PROCEDURE DIVISION.
+           DISPLAY "N52".
+           EXIT PROGRAM.
+       END PROGRAM N52.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N53.
+       PROCEDURE DIVISION.
+           DISPLAY "N53".
+           EXIT PROGRAM.
+       END PROGRAM N53.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N54.
+       PROCEDURE DIVISION.
+           DISPLAY "N54".
+           EXIT PROGRAM.
+       END PROGRAM N54.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N55.
+       PROCEDURE DIVISION.
+           DISPLAY "N55".
+           EXIT PROGRAM.
+       END PROGRAM N55.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N56.
+       PROCEDURE DIVISION.
+           DISPLAY "N56".
+           EXIT PROGRAM.
+       END PROGRAM N56.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N57.
+       PROCEDURE DIVISION.
+           DISPLAY "N57".
+           EXIT PROGRAM.
+       END PROGRAM N57.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N58.
+       PROCEDURE DIVISION.
+           DISPLAY "N58".
+           EXIT PROGRAM.
+       END PROGRAM N58.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N59.
+       PROCEDURE DIVISION.
+           DISPLAY "N59".
+           EXIT PROGRAM.
+       END PROGRAM N59.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N60.
+       PROCEDURE DIVISION.
+           DISPLAY "N60".
+           EXIT PROGRAM.
+       END PROGRAM N60.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N61.
+       PROCEDURE DIVISION.
+           DISPLAY "N61".
+           EXIT PROGRAM.
+       END PROGRAM N61.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N62.
+       PROCEDURE DIVISION.
+           DISPLAY "N62".
+           EXIT PROGRAM.
+       END PROGRAM N62.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N63.
+       PROCEDURE DIVISION.
+           DISPLAY "N63".
+           EXIT PROGRAM.
+       END PROGRAM N63.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N64.
+       PROCEDURE DIVISION.
+           DISPLAY "N64".
+           EXIT PROGRAM.
+       END PROGRAM N64.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N65.
+       PROCEDURE DIVISION.
+           DISPLAY "N65".
+           EXIT PROGRAM.
+       END PROGRAM N65.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N66.
+       PROCEDURE DIVISION.
+           DISPLAY "N66".
+           EXIT PROGRAM.
+       END PROGRAM N66.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N67.
+       PROCEDURE DIVISION.
+           DISPLAY "N67".
+           EXIT PROGRAM.
+       END PROGRAM N67.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N68.
+       PROCEDURE DIVISION.
+           DISPLAY "N68".
+           EXIT PROGRAM.
+       END PROGRAM N68.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N69.
+       PROCEDURE DIVISION.
+           DISPLAY "N69".
+           EXIT PROGRAM.
+       END PROGRAM N69.
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. N70.
+       PROCEDURE DIVISION.
+           DISPLAY "N70".
+           EXIT PROGRAM.
+       END PROGRAM N70.
+       END PROGRAM NESTED-MANY.
