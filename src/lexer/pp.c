@@ -584,13 +584,18 @@ static bool expand(Buf *out, const char *t, int file, int depth, const PpOptions
         if (lib) lexer_strip_floating_comments(lib, diag_file_name(lib_file));
         if (!opt->free_format) lexer_check_columns(raw, diag_file_name(lib_file));
         free(raw);
-        put(out, t + last, w->start - last);
+        // A COPY alone at the start of its line: the copied text replaces the
+        // line with its own columns (-E output keeps Area A entries there)
+        size_t bol = w->start;
+        while (bol > last && t[bol - 1] == ' ') bol--;
+        bool line_start = bol == 0 || t[bol - 1] == '\n';
+        put(out, t + last, (line_start ? bol : w->start) - last);
         if (ps.n) {
             char *r = replace_text(lib, &ps, false, lib_file);
             free(lib);
             lib = r;
         }
-        put(out, " ", 1);
+        if (!line_start) put(out, " ", 1);
         mark(out, 1, 1, lib_file);
         ok = expand(out, lib, lib_file, depth + 1, opt) && ok;
         put(out, " ", 1);
