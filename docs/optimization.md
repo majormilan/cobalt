@@ -107,9 +107,10 @@ Every numeric value is a signed 64-bit integer scaled by a power of ten
 - A MOVE of a literal into a small alphanumeric item stores its final bytes
   as immediates; other alphanumeric moves pass their lengths packed in one
   register (`runtime_move_alphanum_p`).
-- PERFORM saves the return slot with `push` / `pop` and stores the return
-  address as an immediate; a procedure end that no PERFORM range ends at has
-  no return-slot test.
+- Each PERFORM statement saves the return slot in a static cell of its own
+  (as IBM does), so a PERFORM left with GO TO leaves nothing on the stack,
+  and stores the return address as an immediate; a procedure end that no
+  PERFORM range ends at has no return-slot test.
 - A statement that moves no number clears no size-error byte, and a clear
   that no store reads is left out.
 

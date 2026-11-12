@@ -63,8 +63,13 @@ static const char *const runtime_routines[] = {
 //   of every procedure jumps through its slot when it is set.
 // - rsp is 16-byte aligned everywhere (_start is entered aligned and every
 //   push uses a 16-byte slot), so every runtime call is made aligned.
-// - rbx holds the PERFORM ... TIMES counter. Each loop saves the previous
-//   value in a stack slot, so loops nest.
+// - Each PERFORM statement saves the slot it sets in a static cell S_<k>
+//   and restores it at its return point (as IBM's implementation does): a
+//   PERFORM left with GO TO leaves nothing behind, and PERFORMs that end out
+//   of order each restore their own slot. A PERFORM statement executed again
+//   while it is active (recursion) is not supported, as in the standard.
+// - rbx holds the PERFORM ... TIMES counter. Each loop saves the enclosing
+//   loop's counter in a static cell T_<loop>, so loops nest.
 // - The numeric stack machine (IR_NUM_*) keeps values on the machine stack in
 //   16-byte slots, so rsp stays aligned while values are pending.
 // - cobrt_tgt_err collects errors (overflow, division by zero) while one
@@ -1536,6 +1541,16 @@ static void emit_bss(Emitter *em, FILE *f) {
         fprintf(f, "L_entry_rsp: resq 1\n");      // the stack at the entry (EXIT PROGRAM)
         fprintf(f, "L_prog_state: resq 1\n");     // 0: initialize on the next CALL
     }
+    // the save cells of PERFORM statements and PERFORM ... TIMES loops
+    int nperform = 0;
+    for (i = ir->head; i; i = i->next) {
+        if (i->op == IR_PERFORM) fprintf(f, "S_%d: resq 1\n", nperform++);
+        else if (i->op == IR_TIMES_BEGIN && i->var_name) {
+            char *label = sanitize_label_name(i->var_name);
+            fprintf(f, "T_%s: resq 1\n", label);
+            free(label);
+        }
+    }
     fprintf(f, "L_callargs: resq 64\n");          // CALL arguments
     fprintf(f, "L_fargs: resq 3072\n");           // intrinsic function arguments
     // Address and length slots of field references computed at run time
@@ -2354,18 +2369,19 @@ static void emit_instr(Emitter *em, FILE *f, IrInstr *i, const char *sanitized_v
             fprintf(f, "    jmp rax\n");
             fprintf(f, "L_proc_end_%lld:\n", i->imm);
             break;
-        case IR_PERFORM:
-            // the slot saved in a 16-byte stack slot (at [rsp]), the
-            // return address stored as an immediate (below 2 GiB)
-            fprintf(f, "    sub rsp, 8\n");
-            fprintf(f, "    push qword [rel R_%d]\n", i->proc_end);
-            fprintf(f, "    mov qword [rel R_%d], L_perform_%d\n", i->proc_end, em->perform_counter);
+        case IR_PERFORM: {
+            // the slot saved in this statement's cell, the return address
+            // stored as an immediate (below 2 GiB)
+            int k = em->perform_counter++;
+            fprintf(f, "    mov rax, [rel R_%d]\n", i->proc_end);
+            fprintf(f, "    mov [rel S_%d], rax\n", k);
+            fprintf(f, "    mov qword [rel R_%d], L_perform_%d\n", i->proc_end, k);
             fprintf(f, "    jmp P_%lld\n", i->imm);
-            fprintf(f, "L_perform_%d:\n", em->perform_counter);
-            fprintf(f, "    pop qword [rel R_%d]\n", i->proc_end);
-            fprintf(f, "    add rsp, 8\n\n");
-            em->perform_counter++;
+            fprintf(f, "L_perform_%d:\n", k);
+            fprintf(f, "    mov rax, [rel S_%d]\n", k);
+            fprintf(f, "    mov [rel R_%d], rax\n\n", i->proc_end);
             break;
+        }
         case IR_GOTO:
             fprintf(f, "    jmp P_%lld\n\n", i->imm);
             break;
@@ -2380,8 +2396,7 @@ static void emit_instr(Emitter *em, FILE *f, IrInstr *i, const char *sanitized_v
         case IR_TIMES_BEGIN:
             if (i->flags) emit_pop(f, "rax");
             else fprintf(f, "    mov rax, %lld\n", i->imm);
-            fprintf(f, "    sub rsp, 16\n");
-            fprintf(f, "    mov [rsp], rbx\n"); // save the outer counter
+            fprintf(f, "    mov [rel T_%s], rbx\n", sanitized_var_name);    // the outer counter
             fprintf(f, "    mov rbx, rax\n");
             fprintf(f, "    test rbx, rbx\n");
             fprintf(f, "    jle %s\n", sanitized_jump);
@@ -2391,8 +2406,7 @@ static void emit_instr(Emitter *em, FILE *f, IrInstr *i, const char *sanitized_v
             fprintf(f, "    dec rbx\n");
             fprintf(f, "    jnz %s\n", sanitized_var_name);
             fprintf(f, "%s:\n", sanitized_jump);
-            fprintf(f, "    mov rbx, [rsp]\n");
-            fprintf(f, "    add rsp, 16\n\n");
+            fprintf(f, "    mov rbx, [rel T_%s]\n\n", sanitized_var_name);
             break;
         case IR_CALL_EXIT:
             fprintf(f, "    call runtime_exit\n");

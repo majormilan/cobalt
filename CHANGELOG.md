@@ -23,6 +23,11 @@
 
 ### Fixed
 
+- A PERFORM, or an inline PERFORM ... TIMES loop, left with GO TO no
+  longer leaves data on the stack: each statement saves its return slot or
+  outer loop counter in a static cell, as IBM's implementation does.
+  Programs that leave a PERFORM this way repeatedly no longer crash, and
+  PERFORM ranges that end out of order each restore their own slot.
 - A name declared both as a condition-name and as a data item is told
   apart by its qualification (`IF ACTIVE OF REC-A`, `EVALUATE ACTIVE OF
   REC-B`), whatever order the declarations come in.
