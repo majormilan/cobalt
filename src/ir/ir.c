@@ -5607,6 +5607,14 @@ static void lower_display(IrProgram *ir, AstNode *node) {
                 // ("S99.99"); P positions show as zeros
                 int s = f.var->decimal_places, d = display_digits(f.var);
                 int int_digits = d - s > 0 ? d - s : 0, frac = s > 0 ? s : 0;
+                if (f.var->usage_type == USAGE_COMP5 && !f.var->is_index && s >= 0) {
+                    // COMP-5 (GnuCOBOL): the digits its storage holds (1, 2, 4
+                    // or 8 bytes by PICTURE digits), the stored integer
+                    // without a decimal point
+                    int pd = f.var->digits;
+                    int_digits = pd <= 2 ? 3 : pd <= 4 ? 5 : pd <= 9 ? 10 : 20;
+                    frac = 0;
+                }
                 static char mask[48];
                 static VarInfo pretty;
                 // (SIGN TRAILING SEPARATE: the sign last, as stored)

@@ -31,6 +31,8 @@
 
 ### Fixed
 
+- `-D gnucobol`: DISPLAY of a COMP-5 item shows the digits its storage
+  holds and the stored integer, as GnuCOBOL does.
 - No false size error when an 18-digit item and one with decimals are
   added or subtracted into a receiver (the sum is aligned in 128 bits), or
   when a power with a variable exponent is stored; ROUNDED into an item
