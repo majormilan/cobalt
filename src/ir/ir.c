@@ -5907,117 +5907,147 @@ static void lower_terminate(IrProgram *ir, AstNode *node) {
     }
 }
 
+// The slot of a report group in its report (NULL: none); *level: the
+// control a CONTROL HEADING / FOOTING group belongs to (-1: FINAL)
+static AstNode **rw_group_slot(RwReport *r, AstNode *rd, AstNode *g, int *level) {
+    RwDesc *d = g->rw;
+    *level = -2;
+    switch (d->type) {
+        case RW_RH: return &r->rh;
+        case RW_PH: return &r->ph;
+        case RW_PF: return &r->pf;
+        case RW_RF: return &r->rf;
+        case RW_CH: case RW_CF: break;
+        default: return NULL;
+    }
+    bool heading = d->type == RW_CH;
+    if (d->control && strcasecmp(d->control, "FINAL") == 0) {
+        if (!rd->rw->final_control)
+            diag_error(g->loc, "CONTROL %s FINAL, but the CONTROL clause of '%s' does not name FINAL",
+                       heading ? "HEADING" : "FOOTING", rd->name);
+        *level = -1;
+        return heading ? &r->chf : &r->cff;
+    }
+    AstNode **slot = NULL;
+    for (int i = 0; i < r->nctl; i++)
+        if (d->control && strcasecmp(r->ctl[i]->name, d->control) == 0) {
+            slot = heading ? &r->ch[i] : &r->cf[i];
+            *level = i;
+        }
+    if (!slot) {
+        diag_error(g->loc, "'%s' is not a control of the report '%s'", d->control ? d->control : "?", rd->name);
+        diag_note(rd->loc, "the CONTROL clause of '%s' names its controls", rd->name);
+    }
+    return slot;
+}
+
+// The control level a sum counter's RESET ON names (-1: FINAL)
+static int rw_reset_level(const RwReport *r, AstNode *rd, AstNode *field) {
+    if (strcasecmp(field->rw->reset, "FINAL") == 0) return -1;
+    for (int i = 0; i < r->nctl; i++)
+        if (strcasecmp(r->ctl[i]->name, field->rw->reset) == 0) return i;
+    diag_error(field->loc, "RESET ON '%s': it is not a control of the report '%s'", field->rw->reset, rd->name);
+    return -3;
+}
+
+// A sum counter of a group
+static void rw_add_sum(RwReport *r, AstNode *rd, AstNode *g, int level, AstNode *field) {
+    if (rw_num_sums >= 256) return;
+    RwSum *sum = &rw_sums[rw_num_sums++];
+    sum->field = field;
+    sum->report = rw_num_reports;
+    sum->group = g;
+    sum->var = rw_var_named(field->name);
+    int dp = sum->var >= 0 && vars[sum->var].decimal_places > 0 ? vars[sum->var].decimal_places : 0;
+    sum->acc = temp_numeric(dp, rd);
+    sum->reset_level = g->rw->type == RW_CF ? level : -2;
+    if (field->rw->reset) sum->reset_level = rw_reset_level(r, rd, field);
+}
+
+// A report group: its slot in the report, its sum counters and GROUP
+// INDICATE flag
+static void rw_setup_group(RwReport *r, AstNode *rd, AstNode *g) {
+    RwDesc *d = g->rw;
+    int level;
+    AstNode **slot = rw_group_slot(r, rd, g, &level);
+    if ((d->type == RW_PH || d->type == RW_PF) && !rd->rw->page)
+        diag_error(g->loc, "A PAGE %s group needs a PAGE clause in the RD of '%s'",
+                   d->type == RW_PH ? "HEADING" : "FOOTING", rd->name);
+    if (slot && *slot) diag_error(g->loc, "The report '%s' has two groups of this type", rd->name);
+    else if (slot) *slot = g;
+    bool gi = false;
+    for (AstNode *c = g->children; c; c = c->next) {
+        // a report line's fields, or a field of the group itself
+        bool line = c->kind == AST_REPORT_LINE;
+        for (AstNode *f = line ? c->children : c; f; f = line ? f->next : NULL) {
+            gi |= f->rw->group_indicate;
+            if (f->rw->sum) rw_add_sum(r, rd, g, level, f);
+        }
+    }
+    if (gi && rw_num_gi < 64) {
+        rw_gi[rw_num_gi].group = g;
+        rw_gi[rw_num_gi++].flag = temp_numeric(0, rd);
+    }
+}
+
+// A report (RD): its file, counters, controls and groups; false if it has
+// no file or counters (reported elsewhere)
+static bool rw_setup_report(RwReport *r, AstNode *rd) {
+    memset(r, 0, sizeof(*r));
+    r->rd = rd;
+    r->file = -1;
+    for (int f = 0; f < num_files; f++)
+        if (rd->rw->file && strcasecmp(files[f].name, rd->rw->file) == 0) r->file = f;
+    if (r->file < 0) return false;              // (reported by the parser)
+    snprintf(r->rec_name, sizeof(r->rec_name), "$RWR-%s", files[r->file].name);
+    r->pc = r->lc = -1;
+    for (int i = 0; i < num_vars; i++) {
+        if (vars[i].parent < 0 || strcasecmp(vars[vars[i].parent].name, rd->name) != 0) continue;
+        if (strcasecmp(vars[i].name, "PAGE-COUNTER") == 0) r->pc = i;
+        if (strcasecmp(vars[i].name, "LINE-COUNTER") == 0) r->lc = i;
+    }
+    if (r->pc < 0 || r->lc < 0) return false;
+    r->state = temp_numeric(0, rd);
+    r->pl = temp_numeric(0, rd);
+    r->eject = temp_numeric(0, rd);
+    r->body = temp_numeric(0, rd);
+    r->force = temp_numeric(0, rd);
+    r->level = temp_numeric(0, rd);
+    r->tg = temp_numeric(0, rd);
+    r->adv = temp_numeric(0, rd);
+    for (AstNode *c = rd->extra; c && r->nctl < 16; c = c->next) {
+        VarInfo *v = find_item(c, true);
+        if (!v) continue;
+        r->ctl[r->nctl] = c;
+        r->saved[r->nctl] = temp_alnum(v->size, rd);
+        r->swap[r->nctl] = temp_alnum(v->size, rd);
+        r->nctl++;
+    }
+    for (AstNode *g = rd->children; g; g = g->next) rw_setup_group(r, rd, g);
+    return true;
+}
+
+// The REPORT SECTION of a program (NULL: none)
+static AstNode *report_section(AstNode *program) {
+    for (AstNode *div = program->children; div; div = div->next) {
+        if (div->kind != AST_DIVISION || strcasecmp(div->name, "DATA") != 0) continue;
+        for (AstNode *sec = div->children; sec; sec = sec->next)
+            if (sec->kind == AST_SECTION && sec->name && strcmp(sec->name, "REPORT") == 0) return sec;
+    }
+    return NULL;
+}
+
 // The reports of a program: their groups, controls, sum counters and state
 static void rw_setup(AstNode *program) {
     rw_num_reports = rw_num_sums = rw_num_gi = 0;
     rw_blank = rw_suppress = -1;
-    for (AstNode *div = program->children; div; div = div->next) {
-        if (div->kind != AST_DIVISION || strcasecmp(div->name, "DATA") != 0) continue;
-        for (AstNode *sec = div->children; sec; sec = sec->next) {
-            if (sec->kind != AST_SECTION || !sec->name || strcmp(sec->name, "REPORT") != 0) continue;
-            for (AstNode *rd = sec->children; rd; rd = rd->next) {
-                if (rw_num_reports == 16) {
-                    diag_error(rd->loc, "Too many reports in one program (16 limit)");
-                    break;
-                }
-                RwReport *r = &rw_reports[rw_num_reports];
-                memset(r, 0, sizeof(*r));
-                r->rd = rd;
-                r->file = -1;
-                for (int f = 0; f < num_files; f++)
-                    if (rd->rw->file && strcasecmp(files[f].name, rd->rw->file) == 0) r->file = f;
-                if (r->file < 0) continue;              // (reported by the parser)
-                snprintf(r->rec_name, sizeof(r->rec_name), "$RWR-%s", files[r->file].name);
-                r->pc = r->lc = -1;
-                for (int i = 0; i < num_vars; i++) {
-                    if (vars[i].parent < 0 || strcasecmp(vars[vars[i].parent].name, rd->name) != 0) continue;
-                    if (strcasecmp(vars[i].name, "PAGE-COUNTER") == 0) r->pc = i;
-                    if (strcasecmp(vars[i].name, "LINE-COUNTER") == 0) r->lc = i;
-                }
-                if (r->pc < 0 || r->lc < 0) continue;
-                r->state = temp_numeric(0, rd);
-                r->pl = temp_numeric(0, rd);
-                r->eject = temp_numeric(0, rd);
-                r->body = temp_numeric(0, rd);
-                r->force = temp_numeric(0, rd);
-                r->level = temp_numeric(0, rd);
-                r->tg = temp_numeric(0, rd);
-                r->adv = temp_numeric(0, rd);
-                for (AstNode *c = rd->extra; c && r->nctl < 16; c = c->next) {
-                    VarInfo *v = find_item(c, true);
-                    if (!v) continue;
-                    r->ctl[r->nctl] = c;
-                    r->saved[r->nctl] = temp_alnum(v->size, rd);
-                    r->swap[r->nctl] = temp_alnum(v->size, rd);
-                    r->nctl++;
-                }
-                for (AstNode *g = rd->children; g; g = g->next) {
-                    RwDesc *d = g->rw;
-                    AstNode **slot = NULL;
-                    int level = -2;
-                    if (d->type == RW_CH || d->type == RW_CF) {
-                        if (d->control && strcasecmp(d->control, "FINAL") == 0) {
-                            if (!rd->rw->final_control)
-                                diag_error(g->loc, "CONTROL %s FINAL, but the CONTROL clause of '%s' does not name FINAL",
-                                           d->type == RW_CH ? "HEADING" : "FOOTING", rd->name);
-                            slot = d->type == RW_CH ? &r->chf : &r->cff;
-                            level = -1;
-                        } else {
-                            for (int i = 0; i < r->nctl; i++)
-                                if (d->control && strcasecmp(r->ctl[i]->name, d->control) == 0) {
-                                    slot = d->type == RW_CH ? &r->ch[i] : &r->cf[i];
-                                    level = i;
-                                }
-                            if (!slot) {
-                                diag_error(g->loc, "'%s' is not a control of the report '%s'", d->control ? d->control : "?", rd->name);
-                                diag_note(rd->loc, "the CONTROL clause of '%s' names its controls", rd->name);
-                            }
-                        }
-                    } else if (d->type == RW_RH) slot = &r->rh;
-                    else if (d->type == RW_PH) slot = &r->ph;
-                    else if (d->type == RW_PF) slot = &r->pf;
-                    else if (d->type == RW_RF) slot = &r->rf;
-                    if ((d->type == RW_PH || d->type == RW_PF) && !rd->rw->page)
-                        diag_error(g->loc, "A PAGE %s group needs a PAGE clause in the RD of '%s'",
-                                   d->type == RW_PH ? "HEADING" : "FOOTING", rd->name);
-                    if (slot && *slot) diag_error(g->loc, "The report '%s' has two groups of this type", rd->name);
-                    else if (slot) *slot = g;
-                    // its sum counters and GROUP INDICATE fields
-                    bool gi = false;
-                    for (AstNode *c = g->children; c; c = c->next) {
-                        AstNode *fields = c->kind == AST_REPORT_LINE ? c->children : c;
-                        for (AstNode *f = fields; f; f = c->kind == AST_REPORT_LINE ? f->next : NULL) {
-                            gi |= f->rw->group_indicate;
-                            if (!f->rw->sum || rw_num_sums >= 256) continue;
-                            RwSum *sum = &rw_sums[rw_num_sums++];
-                            sum->field = f;
-                            sum->report = rw_num_reports;
-                            sum->group = g;
-                            sum->var = rw_var_named(f->name);
-                            int dp = sum->var >= 0 && vars[sum->var].decimal_places > 0 ? vars[sum->var].decimal_places : 0;
-                            sum->acc = temp_numeric(dp, rd);
-                            sum->reset_level = d->type == RW_CF ? level : -2;
-                            if (f->rw->reset) {
-                                if (strcasecmp(f->rw->reset, "FINAL") == 0) sum->reset_level = -1;
-                                else {
-                                    sum->reset_level = -3;
-                                    for (int i = 0; i < r->nctl; i++)
-                                        if (strcasecmp(r->ctl[i]->name, f->rw->reset) == 0) sum->reset_level = i;
-                                    if (sum->reset_level == -3)
-                                        diag_error(f->loc, "RESET ON '%s': it is not a control of the report '%s'",
-                                                   f->rw->reset, rd->name);
-                                }
-                            }
-                        }
-                    }
-                    if (gi && rw_num_gi < 64) {
-                        rw_gi[rw_num_gi].group = g;
-                        rw_gi[rw_num_gi++].flag = temp_numeric(0, rd);
-                    }
-                }
-                rw_num_reports++;
-            }
+    AstNode *sec = report_section(program);
+    for (AstNode *rd = sec ? sec->children : NULL; rd; rd = rd->next) {
+        if (rw_num_reports == 16) {
+            diag_error(rd->loc, "Too many reports in one program (16 limit)");
+            break;
         }
+        if (rw_setup_report(&rw_reports[rw_num_reports], rd)) rw_num_reports++;
     }
     if (rw_num_reports) {
         rw_blank = temp_alnum(1, program);
