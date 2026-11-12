@@ -22,7 +22,7 @@ static bool allowed(IrOpcode op) {
         case IR_NUM_LOAD: case IR_NUM_CONST: case IR_NUM_RESCALE:
         case IR_NUM_ADD: case IR_NUM_SUB: case IR_NUM_MUL: case IR_NUM_DIV:
         case IR_NUM_NEG: case IR_NUM_DUP: case IR_NUM_DROP: case IR_NUM_SWAP:
-        case IR_NUM_TRUNC: case IR_NUM_POW:
+        case IR_NUM_TRUNC: case IR_NUM_POW: case IR_NUM_ADDW:
         case IR_ERR_SAVE: case IR_ERR_RESTORE: case IR_NUM_STORE:
         case IR_NUM_CMP_JUMP_IF_FALSE: case IR_SIZE_ERR_CLEAR: case IR_JUMP_IF_NO_SIZE_ERR:
         case IR_LABEL: case IR_JUMP:
@@ -43,7 +43,7 @@ static void stack_effect(const IrInstr *i, int *need, int *delta) {
         case IR_NUM_DUP: *need = 1; *delta = 1; break;
         case IR_NUM_RESCALE: case IR_NUM_NEG: case IR_NUM_TRUNC: *need = 1; break;
         case IR_NUM_ADD: case IR_NUM_SUB: case IR_NUM_MUL: case IR_NUM_DIV:
-        case IR_NUM_POW: *need = 2; *delta = -1; break;
+        case IR_NUM_POW: case IR_NUM_ADDW: *need = 2; *delta = -1; break;
         case IR_NUM_SWAP: *need = 2; break;
         case IR_NUM_DROP: case IR_NUM_STORE: case IR_ADDR_ADD: case IR_LEN_SET:
             *need = 1; *delta = -1; break;
@@ -486,7 +486,7 @@ static bool size_err_transparent(IrOpcode op) {
         case IR_NUM_LOAD: case IR_NUM_CONST: case IR_NUM_RESCALE:
         case IR_NUM_ADD: case IR_NUM_SUB: case IR_NUM_MUL: case IR_NUM_DIV:
         case IR_NUM_NEG: case IR_NUM_DUP: case IR_NUM_DROP: case IR_NUM_SWAP:
-        case IR_NUM_TRUNC: case IR_NUM_POW: case IR_NUM_DEEDIT: case IR_NUM_TO_TEXT:
+        case IR_NUM_TRUNC: case IR_NUM_POW: case IR_NUM_ADDW: case IR_NUM_DEEDIT: case IR_NUM_TO_TEXT:
         case IR_ERR_SAVE: case IR_ERR_RESTORE: case IR_NUM_STORE:
         case IR_LABEL: case IR_PROC_ENTRY:
         case IR_CALL_DISPLAY_STR: case IR_CALL_DISPLAY_VAR_STR: case IR_EMIT_NEWLINE:

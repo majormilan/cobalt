@@ -31,6 +31,10 @@
 
 ### Fixed
 
+- No false size error when an 18-digit item and one with decimals are
+  added or subtracted into a receiver (the sum is aligned in 128 bits), or
+  when a power with a variable exponent is stored; ROUNDED into an item
+  with 18 decimal places rounds.
 - `-E`: text copied by a COPY statement that stands alone on its line
   keeps its own columns, so the output compiles without area warnings.
 - Invalid code that compiled without a message is now reported: a

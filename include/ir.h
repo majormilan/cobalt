@@ -140,6 +140,8 @@ typedef enum {
     IR_CALL_SET_COLLATION,  // program collating sequence: weight table var_name
     IR_SWITCH_JUMP,         // jump to jump_target if switch imm is on (flags 1) / off (0)
     IR_NUM_POW,             // pop exponent (scale size), base (scale digits); push base ** exponent at scale imm
+    IR_NUM_ADDW,            // pop b (scale size), a (scale digits); push a + b (flags 1: a - b) at scale
+                            //   imm, aligned in 128 bits (runtime_num_addw)
     IR_CALL_STRING,         // pop pointer; STRING into var_name (size bytes) from the source
                             // table lit_name (imm entries); push the new pointer, overflow
                             // in cobrt_stmt_err

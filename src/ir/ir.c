@@ -2351,6 +2351,22 @@ static int num_expr(IrProgram *ir, AstNode *e, int W) {
             AstNode *l = e->children, *r = l->next;
             int sl = num_expr(NULL, l, W), sr = num_expr(NULL, r, W);
             int s = sl > sr ? sl : sr;
+            if (e == expr_root && s > 18 - int_digits(e) && root_floor < s && root_floor <= 18 &&
+                sl >= 0 && sr >= 0 && sl <= 18 && sr <= 18) {
+                // the stored sum: aligned in 128 bits, at the receiver's
+                // scale (18 digits and decimals together do not fit 64)
+                int t = root_floor;
+                if (ir) {
+                    num_expr(ir, l, W);
+                    num_expr(ir, r, W);
+                    IrInstr *w = emit(ir, IR_NUM_ADDW);
+                    w->digits = sl;
+                    w->size = sr;
+                    w->imm = t;
+                    w->flags = e->kind == AST_EXPR_SUB;
+                }
+                return t;
+            }
             if (s > 18 - int_digits(e)) s = fit_scale(NULL, s, s, int_digits(e));
             if (ir) {
                 num_expr(ir, l, W);
@@ -2364,7 +2380,9 @@ static int num_expr(IrProgram *ir, AstNode *e, int W) {
         case AST_EXPR_MUL: {
             AstNode *l = e->children, *r = l->next;
             int sl = num_expr(ir, l, W), sr = num_expr(ir, r, W);
-            int p = sl + sr, shift = p - fit_scale(e, p, W, int_digits(e));
+            int fit = fit_scale(e, sl + sr, W, int_digits(e));
+            if (e == expr_root && root_floor == 19 && sl + sr >= 19) fit = 19;  // ROUNDED into 18 decimals
+            int p = sl + sr, shift = p - fit;
             if (ir) emit_num(ir, IR_NUM_MUL, shift, 0);
             return p - shift;
         }
@@ -2372,6 +2390,7 @@ static int num_expr(IrProgram *ir, AstNode *e, int W) {
             AstNode *l = e->children, *r = l->next;
             int sl = num_expr(NULL, l, W), sr = num_expr(NULL, r, W);
             int q = fit_scale(e, W, W, int_digits(e));
+            if (e == expr_root && root_floor == 19) q = 19;     // ROUNDED into 18 decimals
             int shift = q - sl + sr;
             if (ir) {
                 num_expr(ir, l, W);
@@ -2388,15 +2407,17 @@ static int num_expr(IrProgram *ir, AstNode *e, int W) {
             if (base->next->kind != AST_LITERAL_NUMBER ||
                 !parse_num_literal(base->next->name, &n, &exp_scale) || exp_scale != 0 || n < 0 || n > 18) {
                 // Exponent known at run time: the result at the working scale
+                // (the stored power: at the receiver's, as 18 digits allow)
+                int ws = e == expr_root && root_floor < W ? root_floor : W;
                 int sb = num_expr(ir, base, W);
                 int se = num_expr(ir, base->next, W);
                 if (ir) {
                     IrInstr *p = emit(ir, IR_NUM_POW);
-                    p->imm = W;
+                    p->imm = ws;
                     p->digits = sb;
                     p->size = se;
                 }
-                return W;
+                return ws;
             }
             if (n == 0) {
                 // x ** 0 is 1, but 0 ** 0 is a size error: a base that may
@@ -2460,13 +2481,17 @@ static VarInfo *receiving_item(AstNode *n) {
 static void lower_assign(IrProgram *ir, AstNode *tree, AstNode *receiver, bool keep) {
     VarInfo *t = receiving_item(receiver);
     if (!t || !num_expr_valid(tree)) return;
-    int saved_floor = expr_floor;
+    // (saved: a function argument is assigned while the expression is
+    // evaluated)
+    int saved_floor = expr_floor, saved_root_floor = root_floor;
+    const AstNode *saved_root = expr_root;
     expr_floor = t->decimal_places + 2;
     expr_root = tree;
     root_floor = t->decimal_places + (receiver->rounded ? 1 : 0);
     int s = num_expr(ir, tree, working_scale(tree, t));
     expr_floor = saved_floor;
-    expr_root = NULL;
+    expr_root = saved_root;
+    root_floor = saved_root_floor;
     emit_rescale(ir, t->decimal_places - s, receiver->rounded);
     FieldRef f;
     if (!resolve_ref(ir, receiver, &f)) return;
@@ -2618,12 +2643,15 @@ static void lower_giving(IrProgram *ir, AstNode *tree, AstNode **recv, int n, bo
         if (v && v->decimal_places > most) most = v->decimal_places;
         rounded |= recv[i]->rounded;
     }
+    const AstNode *saved_root = expr_root;
+    int saved_root_floor = root_floor;
     expr_floor = most + 2;
     expr_root = tree;
     root_floor = most + (rounded ? 1 : 0);
     int s = num_expr(ir, tree, working_scale_all(tree, recv, n));
     expr_floor = saved_floor;
-    expr_root = NULL;
+    expr_root = saved_root;
+    root_floor = saved_root_floor;
     emit(ir, IR_ERR_SAVE);
     for (int i = 0; i < n; i++) store_copy(ir, recv[i], s, keep);
     emit(ir, IR_NUM_DROP);

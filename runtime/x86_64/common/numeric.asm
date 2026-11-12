@@ -13,6 +13,7 @@
 section .text
 
 global runtime_num_load
+global runtime_num_addw
 global runtime_num_store
 global runtime_num_load_p
 extern runtime_check_data_fail
@@ -1235,6 +1236,105 @@ runtime_num_mul:
 .m_err:
     xor eax, eax
     mov edx, 1
+    ret
+
+; ARG0 = a (at scale ARG2), ARG1 = b (at scale ARG3), ARG4 = the result's
+; scale t, ARG5 = 1 to subtract b. Returns RET0 = a + b (or a - b) at scale
+; t, truncated toward zero, the operands aligned and added in 128 bits
+; (an 18-digit item and one with decimals); RET1 = 1 if it does not fit.
+runtime_num_addw:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    mov r11, ARG0                       ; a
+    mov rbx, ARG1                       ; b
+    mov r12, ARG2                       ; scale of a
+    mov r13, ARG3                       ; scale of b
+    mov r14, ARG4                       ; t
+    mov r15, ARG5                       ; subtract
+    cmp r12, 18
+    ja .a_err
+    cmp r13, 18
+    ja .a_err
+    cmp r14, 18
+    ja .a_err
+    mov r10, r12                        ; s = the larger scale
+    cmp r13, r10
+    jbe .a_s
+    mov r10, r13
+.a_s:
+    lea rcx, [rel pow10]
+    ; A = a * 10^(s - sa), signed 128 bits, in r9:r8
+    mov rax, r10
+    sub rax, r12
+    mov rdx, [rcx + rax*8]
+    mov rax, r11
+    imul rdx
+    mov r8, rax
+    mov r9, rdx
+    ; B = b * 10^(s - sb)
+    mov rax, r10
+    sub rax, r13
+    mov rdx, [rcx + rax*8]
+    mov rax, rbx
+    imul rdx
+    test r15, r15
+    jz .a_add
+    neg rax                             ; -B
+    adc rdx, 0
+    neg rdx
+.a_add:
+    add r8, rax
+    adc r9, rdx                         ; the sum at scale s
+    ; |sum|, its sign kept in r11
+    mov r11, r9
+    test r9, r9
+    jns .a_abs
+    neg r8
+    adc r9, 0
+    neg r9
+.a_abs:
+    mov rax, r8
+    mov rdx, r9
+    cmp r14, r10
+    jae .a_up
+    ; down to scale t: divide by 10^(s - t)
+    mov rbx, r10
+    sub rbx, r14
+    mov rbx, [rcx + rbx*8]
+    cmp rdx, rbx
+    jae .a_err                          ; the quotient would not fit
+    div rbx
+    jmp .a_fit
+.a_up:
+    ; up to scale t: multiply by 10^(t - s)
+    test rdx, rdx
+    jnz .a_err
+    mov rbx, r14
+    sub rbx, r10
+    mul qword [rcx + rbx*8]
+    test rdx, rdx
+    jnz .a_err
+.a_fit:
+    test rax, rax
+    js .a_err
+    test r11, r11
+    jns .a_ok
+    neg rax
+.a_ok:
+    xor edx, edx
+    jmp .a_ret
+.a_err:
+    xor eax, eax
+    mov edx, 1
+.a_ret:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
     ret
 
 ; ARG0 = a, ARG1 = b, ARG2 = shift (0..36)

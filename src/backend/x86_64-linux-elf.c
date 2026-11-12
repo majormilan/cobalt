@@ -838,7 +838,7 @@ static bool keeps_known(const IrInstr *i) {
     switch (i->op) {
         case IR_NUM_LOAD: case IR_NUM_CONST: case IR_NUM_RESCALE: case IR_NUM_ADD: case IR_NUM_SUB:
         case IR_NUM_MUL: case IR_NUM_DIV: case IR_NUM_NEG: case IR_NUM_DUP: case IR_NUM_DROP:
-        case IR_NUM_SWAP: case IR_NUM_TRUNC: case IR_NUM_DEEDIT: case IR_NUM_POW: case IR_NUM_STORE:
+        case IR_NUM_SWAP: case IR_NUM_TRUNC: case IR_NUM_DEEDIT: case IR_NUM_POW: case IR_NUM_ADDW: case IR_NUM_STORE:
         case IR_ERR_SAVE: case IR_ERR_RESTORE: case IR_SIZE_ERR_CLEAR: case IR_SET_WHERE:
         case IR_NUM_CMP_JUMP_IF_FALSE: case IR_CALL_DISPLAY_STR: case IR_CALL_DISPLAY_VAR_STR:
         case IR_EMIT_NEWLINE: case IR_CALL_DISPLAY_FILL: case IR_CHECK_RANGE:
@@ -2571,6 +2571,17 @@ static void emit_instr(Emitter *em, FILE *f, IrInstr *i, const char *sanitized_v
         case IR_NUM_MUL:
         case IR_NUM_DIV:
             emit_num_mul_div(f, i);
+            break;
+        case IR_NUM_ADDW:
+            emit_pop(f, "rsi");
+            emit_pop(f, "rdi");
+            fprintf(f, "    mov rdx, %d\n", i->digits);
+            fprintf(f, "    mov rcx, %d\n", i->size);
+            fprintf(f, "    mov r8, %lld\n", i->imm);
+            fprintf(f, "    mov r9, %d\n", i->flags);
+            fprintf(f, "    call runtime_num_addw\n");
+            fprintf(f, "    or [rel cobrt_tgt_err], dl\n");
+            emit_push(f);
             break;
         case IR_NUM_POW:
             emit_pop(f, "rdx");
