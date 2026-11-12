@@ -1,0 +1,30 @@
+tests/diag/vendor-extensions.cbl:7:31: error: ASSIGN TO DYNAMIC (a file name held in a data item) is a GnuCOBOL and Micro Focus extension, not COBOL-85; Cobalt does not support it yet
+     7 |            SELECT F ASSIGN TO DYNAMIC F-NAME.
+       |                               ^~~~~~~
+tests/diag/vendor-extensions.cbl:15:28: warning: USAGE COMP-5 is an extension to COBOL-85 [-Wextension]
+    15 |        01  N      PIC 9(4) COMP-5.
+       |                            ^~~~~~
+note: COMP-5 is native binary; BINARY is the standard usage
+tests/diag/vendor-extensions.cbl:16:28: warning: USAGE COMP-5 is an extension to COBOL-85 [-Wextension]
+    16 |        01  R      PIC 9(4) COMP-5.
+       |                            ^~~~~~
+note: COMP-5 is native binary; BINARY is the standard usage
+tests/diag/vendor-extensions.cbl:19:29: error: ACCEPT ... FROM ENVIRONMENT is a GnuCOBOL and Micro Focus extension, not COBOL-85; Cobalt does not support it yet
+    19 |            ACCEPT PATH FROM ENVIRONMENT "HOME"
+       |                             ^~~~~~~~~~~
+tests/diag/vendor-extensions.cbl:23:35: error: BY VALUE is COBOL 2002, not COBOL-85; Cobalt does not support it yet
+    23 |            CALL "socket" USING BY VALUE N
+       |                                   ^~~~~
+tests/diag/vendor-extensions.cbl:25:16: error: CALL ... RETURNING is COBOL 2002, not COBOL-85; Cobalt does not support it yet
+    25 |                RETURNING R
+       |                ^~~~~~~~~
+tests/diag/vendor-extensions.cbl:27:32: error: INSPECT ... TRAILING is a GnuCOBOL and Micro Focus extension, not COBOL-85; Cobalt does not support it yet
+    27 |            INSPECT S REPLACING TRAILING SPACES BY "*"
+       |                                ^~~~~~~~
+tests/diag/vendor-extensions.cbl:28:17: error: A hexadecimal literal with the byte 00 is not supported by Cobalt yet
+    28 |            MOVE X"410042" TO S
+       |                 ^
+tests/diag/vendor-extensions.cbl:28:17: warning: A hexadecimal literal (X"...") is an extension to COBOL-85 [-Wextension]
+    28 |            MOVE X"410042" TO S
+       |                 ^
+6 errors and 3 warnings generated.

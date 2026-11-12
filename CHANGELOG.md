@@ -4,6 +4,11 @@
 
 ### Added
 
+- Hexadecimal literals (`X"0D0A"`) and `LENGTH OF identifier`, in the
+  `common`, `ibm` and `gnucobol` extension sets.
+- ASSIGN TO DYNAMIC, CALL ... BY VALUE and RETURNING, INSPECT ...
+  TRAILING and ACCEPT ... FROM ENVIRONMENT are named as extensions Cobalt
+  does not support yet, without follow-on errors.
 - Extension sets (`-fext=common | ibm | gnucobol | cobol2002 | none`) select
   which elements beyond the standard are accepted. The `common` set is the
   default; `-X pedantic` accepts only the sets named explicitly, and
@@ -23,6 +28,8 @@
 
 ### Fixed
 
+- COPY also searches the current directory, so `COPY "dir/name.cpy"`
+  written relative to the project's top directory is found.
 - MOVE of an item whose length is known only at run time (a reference
   modifier with variable start or length) to a numeric item is supported.
 - Exponentiation takes an exponent with decimals (`9 ** 0.5` is 3); a

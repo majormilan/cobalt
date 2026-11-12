@@ -404,6 +404,51 @@ void lexer_pop_source(Lexer *l) {
 }
 
 
+// A hexadecimal literal X"hh..." at l->src: a TOK_STRING whose lexeme is the
+// bytes it stands for (in a buffer of its own, after a delimiter byte the
+// bytes do not contain, so that no doubled delimiter collapses)
+static Token hex_literal(Lexer *l) {
+    int line = l->current_line, col = l->current_col;
+    SourceLocation loc = { l->filename, line, col };
+    advance(l);                                 // X
+    char q = *l->src;
+    advance(l);
+    const char *digits = l->src;
+    while (*l->src && *l->src != '\n' && *l->src != q) advance(l);
+    size_t n = (size_t)(l->src - digits);
+    bool closed = *l->src == q;
+    if (closed) advance(l);
+    char *buf = malloc(n / 2 + 2);
+    size_t len = 0;
+    bool ok = closed && n > 0 && n % 2 == 0 && buf;
+    for (size_t k = 0; ok && k < n; k += 2) {
+        if (!isxdigit((unsigned char)digits[k]) || !isxdigit((unsigned char)digits[k + 1])) { ok = false; break; }
+        char pair[3] = { digits[k], digits[k + 1], 0 };
+        int byte = (int)strtol(pair, NULL, 16);
+        if (byte == 0) {                        // (literals are C strings in the compiler)
+            if (!l->quiet) diag_error(loc, "A hexadecimal literal with the byte 00 is not supported by Cobalt yet");
+            byte = ' ';
+        }
+        buf[1 + len++] = (char)byte;
+    }
+    if (!ok && !l->quiet) {
+        diag_error(loc, "Hexadecimal literal X%c%.*s%c is not valid", q, (int)n, digits, q);
+        diag_note_plain("it holds pairs of hexadecimal digits (0-9, A-F), at least one pair");
+    }
+    if (!buf) buf = malloc(2);
+    if (!ok) len = 0;
+    // a delimiter byte that the bytes do not contain
+    unsigned char delim = 1;
+    while (delim < 255 && memchr(buf + 1, delim, len)) delim++;
+    buf[0] = (char)delim;
+    buf[1 + len] = '\0';
+    Token t = make_token_public(l, TOK_STRING, buf + 1, len);
+    t.line = line;
+    t.column = col;
+    if (!l->quiet && ok) diag_feature(F_HEX_LITERAL, loc, NULL);
+    return t;
+}
+
 Token lexer_next(Lexer *l) {
     // Keep trying to get a token until a non-EOF token is found
     // or we truly hit EOF on the base lexer.
@@ -447,6 +492,10 @@ Token lexer_next(Lexer *l) {
         }
         return make_token_public(l, TOK_PIC_STRING, start, l->src - start);
     }
+
+    // Hexadecimal literal X"0D0A": a nonnumeric literal of those bytes
+    if ((*l->src == 'X' || *l->src == 'x') && (l->src[1] == '"' || l->src[1] == '\''))
+        return hex_literal(l);
 
     // Nonnumeric literal: "..." or '...'; a doubled delimiter stands for one
     // (the parser collapses it, see the lexeme's preceding delimiter)

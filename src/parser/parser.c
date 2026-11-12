@@ -259,6 +259,24 @@ static bool identifier_then(TokenKind kind) {
     return false;
 }
 
+// After an error inside a statement: past its explicit scope terminator
+// (END-ACCEPT, ...) when one closes it before the sentence ends, counting
+// the statements of the same kind nested in it. False if none does.
+static bool skip_to_scope_end(TokenKind verb, const char *end) {
+    Lexer copy = *current_lexer;
+    copy.quiet = true;
+    copy.prev = NULL;
+    int depth = 0, count = 0;
+    for (Token t = tok; t.kind != TOK_EOF && t.kind != TOK_PERIOD; t = lexer_next(&copy), count++) {
+        if (t.kind == verb) depth++;
+        else if (t.length == strlen(end) && strncasecmp(t.lexeme, end, t.length) == 0 && depth-- == 0) {
+            for (int k = 0; k <= count; k++) next();
+            return true;
+        }
+    }
+    return false;
+}
+
 static AstNode *parse_identification_paragraph(void) {
     if (tok.kind != TOK_IDENT) return NULL;
     if (parser_panic_mode) return NULL; // Don't parse if in panic mode
@@ -811,6 +829,18 @@ static AstNode *parse_identifier(void) {
     if (tok_is_word("FUNCTION")) {
         diag_subset(MOD_IF, 1, TOK_LOC, "An intrinsic function");
         return parse_function();
+    }
+    if (tok_is_word("LENGTH") && peek_token().kind == TOK_OF &&
+        !symtab_resolve_symbol(current_symtab, "LENGTH")) {
+        // LENGTH OF identifier (IBM special register): FUNCTION LENGTH
+        SourceLocation loc = TOK_LOC;
+        diag_feature(F_LENGTH_OF, loc, NULL);
+        next();                                 // LENGTH
+        next();                                 // OF
+        AstNode *f = ast_new(AST_IDENTIFIER, "!LENGTH", loc);
+        f->on_error = tok.kind == TOK_IDENT ? parse_identifier() : NULL;
+        if (!f->on_error) arith_error("Expected a data-name after LENGTH OF");
+        return f;
     }
     SourceLocation loc = {tok.filename, tok.line, tok.column};
     char *name = tok_to_str();
@@ -2566,6 +2596,14 @@ static AstNode *parse_search_statement(SourceLocation loc) {
 //                        {ALL|LEADING|FIRST} {operand BY operand [phrases]}...}...]
 // INSPECT id CONVERTING operand TO operand [phrases]
 // phrases: [{BEFORE|AFTER} [INITIAL] operand]...
+// INSPECT ... TRAILING (GnuCOBOL, Micro Focus): named, then read as LEADING
+// so that the rest of the statement parses
+static void inspect_trailing(void) {
+    if (tok.kind != TOK_TRAILING) return;
+    diag_feature(L_INSPECT_TRAILING, TOK_LOC, NULL);
+    tok.kind = TOK_LEADING;
+}
+
 static AstNode *parse_inspect_statement(SourceLocation loc) {
     next();
     AstNode *insp = ast_new(AST_STATEMENT_INSPECT, NULL, loc);
@@ -2592,6 +2630,7 @@ static AstNode *parse_inspect_statement(SourceLocation loc) {
             next();
             const char *kind = NULL;
             while (true) {
+                inspect_trailing();
                 if (tok.kind == TOK_CHARACTERS) kind = "CHARACTERS";
                 else if (tok.kind == TOK_ALL) kind = "ALL";
                 else if (tok.kind == TOK_LEADING) kind = "LEADING";
@@ -2618,6 +2657,7 @@ static AstNode *parse_inspect_statement(SourceLocation loc) {
         next();
         const char *kind = NULL;
         while (true) {
+            inspect_trailing();
             if (tok.kind == TOK_CHARACTERS) kind = "CHARACTERS";
             else if (tok.kind == TOK_ALL) kind = "ALL";
             else if (tok.kind == TOK_LEADING) kind = "LEADING";
@@ -2724,16 +2764,29 @@ static AstNode *parse_call_statement(SourceLocation loc) {
     AstNode *tail = NULL;
     if (tok.kind == TOK_USING) {
         next();
-        bool content = false;
+        bool content = false, by_value = false;
         for (;;) {
             if (tok.kind == TOK_BY) next();
             if (tok_is_word("REFERENCE")) { diag_subset(MOD_IC, 2, TOK_LOC, "CALL ... BY REFERENCE"); content = false; next(); continue; }
             if (tok_is_word("CONTENT")) { diag_subset(MOD_IC, 2, TOK_LOC, "CALL ... BY CONTENT"); content = true; next(); continue; }
-            if (tok.kind != TOK_IDENT) break;
+            if (tok.kind == TOK_VALUE) {
+                // BY VALUE (COBOL 2002): named once, then read as BY CONTENT
+                if (!by_value) diag_later_element(TOK_LOC, LATER_PHRASE, "VALUE", 5);
+                by_value = true;
+                content = true;
+                next();
+                continue;
+            }
+            if (by_value && (tok.kind == TOK_NUMBER || tok.kind == TOK_STRING)) { next(); continue; }
+            if (tok.kind != TOK_IDENT || tok_is_word("RETURNING")) break;
             AstNode *arg = parse_identifier();
             arg->is_signed = content;
             list_append(&call->children, &tail, arg);
         }
+    }
+    if (tok_is_word("RETURNING") && diag_later_element(TOK_LOC, LATER_PHRASE, "RETURNING", 9)) {
+        next();
+        if (tok.kind == TOK_IDENT) ast_free(parse_identifier());
     }
     for (;;) {
         if (tok.kind == TOK_ON && (peek_token().kind == TOK_OVERFLOW || peek_token().kind == TOK_EXCEPTION))
@@ -3023,7 +3076,8 @@ static AstNode *parse_accept_statement(SourceLocation loc) {
             else if (diag_later_element(TOK_LOC, LATER_PHRASE, tok.lexeme, tok.length)) {
                 ast_free(accept_stmt);
                 next();             // (ENVIRONMENT would stop the recovery)
-                synchronize();
+                // the rest of the statement, its ON EXCEPTION phrases with it
+                if (!skip_to_scope_end(TOK_ACCEPT, "END-ACCEPT")) synchronize();
                 return NULL;
             }
             else if (tok.kind != TOK_IDENT) { ast_free(accept_stmt); arith_error("Expected DATE, DAY, DAY-OF-WEEK, TIME or a device"); return NULL; }
@@ -4344,6 +4398,10 @@ static AstNode *parse_select(void) {
         if (tok.kind == TOK_ASSIGN) {
             next();
             if (tok.kind == TOK_TO) next();
+            if (tok.kind == TOK_DYNAMIC) {           // (then read as ASSIGN TO the name)
+                diag_feature(L_ASSIGN_DYNAMIC, TOK_LOC, NULL);
+                next();
+            }
             if (tok.kind != TOK_STRING && tok.kind != TOK_IDENT) {
                 ast_free(sel);
                 arith_error("Expected file name or literal after ASSIGN");

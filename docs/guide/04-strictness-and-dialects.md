@@ -36,6 +36,8 @@ The extensions Cobalt implements, and the sets that contain them:
 | Nonnumeric literals in apostrophes (`'text'`) | yes | yes | yes | yes |
 | `ACCEPT ... FROM DATE YYYYMMDD`, `FROM DAY YYYYDDD` | yes | yes | yes | yes |
 | ORGANIZATION LINE SEQUENTIAL | yes | yes | yes | |
+| Hexadecimal literals (`X"0D0A"`; the byte 00 not yet) | yes | yes | yes | yes |
+| `LENGTH OF identifier` | yes | yes | yes | |
 | The RETURN-CODE special register | yes | yes | yes | |
 | `_` in a user-defined word | yes | | yes | yes |
 | Words longer than 30 characters | yes | | yes | |

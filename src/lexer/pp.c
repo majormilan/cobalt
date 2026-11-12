@@ -251,6 +251,9 @@ static char *find_text(const char *name, const char *library, const char *includ
     if (slash) *slash = '\0';
     else strcpy(incdir, ".");
     dirs[nd++] = incdir;
+    // then the current directory (COPY "sources/x.cpy" from the project's
+    // top directory, as GnuCOBOL finds it), then the -I directories
+    if (strcmp(incdir, ".") != 0) dirs[nd++] = ".";
     for (int k = 0; k < opt->ndirs && nd < 48; k++) dirs[nd++] = opt->dirs[k];
     char cobcpy[2048] = "";
     const char *env = getenv("COBCPY");
@@ -556,9 +559,9 @@ static bool expand(Buf *out, const char *t, int file, int depth, const PpOptions
                 char dirs[512] = "";
                 for (int d = 0; d < opt->ndirs; d++)
                     snprintf(dirs + strlen(dirs), sizeof(dirs) - strlen(dirs), "%s%s", d ? ", " : "", opt->dirs[d]);
-                diag_note_plain("searched the directory of the source and %s", dirs);
+                diag_note_plain("searched the directory of the source, the current directory and %s", dirs);
             } else {
-                diag_note_plain("searched the directory of the source; add copy library directories with -I DIR");
+                diag_note_plain("searched the directory of the source and the current directory; add copy library directories with -I DIR");
             }
             free(name); free(library); free(path); patterns_free(&ps);
             ok = false;
