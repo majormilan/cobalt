@@ -170,6 +170,12 @@ char *lexer_reference_format(const char *src) {
             }
             sb_append(prev, text + skip, text_len - skip);
         } else {
+            // (anything but a space here is not an indicator: reported, and
+            // the line read as program text; a $ line is a directive)
+            if (indicator != ' ' && indicator != '-' && indicator != '$' && indicator != 'D' && indicator != 'd' &&
+                isprint((unsigned char)indicator))
+                diag_error((SourceLocation){ format_file, (int)n + 1, 7 },
+                           "'%c' in column 7 is not an indicator (space, *, /, - or D)", indicator);
             sb_append(&out[n], "       ", 7);   // keep columns for diagnostics
             sb_append(&out[n], text, text_len);
             for (size_t k = 0; k < text_len; k++) {

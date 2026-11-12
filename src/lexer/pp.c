@@ -383,6 +383,7 @@ static bool parse_pairs(const char *t, const Words *ws, int *i, Patterns *ps, bo
     while (*i < ws->n && ws->w[*i].kind != W_PERIOD) {
         Pattern p = { t, NULL, 0, NULL, 0 };
         if (!parse_operand(t, ws, i, &p.from, &p.nfrom, pseudo_only)) return false;
+        if (p.nfrom == 0) { free(p.from); return false; }   // ==== matches nothing: invalid
         if (*i >= ws->n || !word_is(t, &ws->w[*i], "BY")) { free(p.from); return false; }
         (*i)++;
         if (!parse_operand(t, ws, i, &p.to, &p.nto, pseudo_only)) { free(p.from); return false; }

@@ -386,6 +386,8 @@ static AstNode *parse_var_decl(void) {
         name = tok_to_str();
         next();
     } else {
+        if (level_num == 77 || level_num == 66 || level_num == 88)   // these always have a name
+            diag_error(loc, "A level %02d entry needs a data-name, found %s", level_num, tok_desc());
         if (tok.kind == TOK_FILLER) next();
         name = strdup("FILLER");
     }
@@ -620,7 +622,16 @@ static AstNode *parse_var_decl(void) {
                 next();
                 if (tok.kind == TOK_KEY) next();
                 if (tok.kind == TOK_IS) next();
-                while (tok.kind == TOK_IDENT) next();   // keys only matter to SEARCH ALL ordering
+                // the keys: SEARCH ALL tests them (occurs->loop, a list of names)
+                AstNode **key_tail = &occurs->loop;
+                while (*key_tail) key_tail = &(*key_tail)->next;
+                while (tok.kind == TOK_IDENT) {
+                    char *key = tok_to_str();
+                    *key_tail = ast_new(AST_IDENTIFIER, key, TOK_LOC);
+                    key_tail = &(*key_tail)->next;
+                    free(key);
+                    next();
+                }
             }
             if (tok.kind == TOK_INDEXED) {
                 next();
@@ -4255,7 +4266,11 @@ static void parse_char_specs(AstNode *entry, bool allow_also) {
         AstNode *lit = parse_rel_operand();
         if (!lit) break;
         lit->is_signed = also;
+        if (also && tail && tail->extra)
+            diag_error(lit->loc, "ALSO cannot follow a THRU range: ALSO names characters equal to a single one");
         if (tok.kind == TOK_THROUGH) {
+            if (also)
+                diag_error(TOK_LOC, "THRU cannot follow an ALSO literal: ALSO names characters equal to a single one");
             next();
             lit->extra = parse_rel_operand();
         }

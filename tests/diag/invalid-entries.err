@@ -1,0 +1,13 @@
+tests/diag/invalid-entries.cbl:17:7: error: 'X' in column 7 is not an indicator (space, *, /, - or D)
+    17 |       X    DISPLAY "X".
+       |       ^
+tests/diag/invalid-entries.cbl:16:12: error: Malformed REPLACE statement
+    16 |            REPLACE ==== BY ==Y==.
+       |            ^~~~~~~
+tests/diag/invalid-entries.cbl:7:41: error: THRU cannot follow an ALSO literal: ALSO names characters equal to a single one
+     7 |            ALPHABET ODD IS "A" ALSO "a" THRU "c".
+       |                                         ^~~~
+tests/diag/invalid-entries.cbl:10:8: error: A level 77 entry needs a data-name, found 'PIC'
+    10 |        77  PIC 9.
+       |        ^~
+4 errors generated.

@@ -1064,7 +1064,16 @@ static bool add_item(ItemBuilder *b, const DataDecl *dd, int level) {
     }
 
     AstNode *occurs = find_clause(decl, AST_OCCURS);
-    return !occurs || add_occurs(idx, decl, occurs);
+    if (occurs && !add_occurs(idx, decl, occurs)) return false;
+    // VALUE in a table: COBOL 2002 (COBOL-85 has no initial value there)
+    v = &vars[idx];
+    if (v->value)
+        for (const VarInfo *a = v; a; a = a->parent >= 0 ? &vars[a->parent] : NULL)
+            if (a->occurs) {
+                diag_feature(F_VALUE_IN_TABLE, v->value->loc, NULL);
+                break;
+            }
+    return true;
 }
 
 // The data items of the entries; false: out of space
@@ -4108,6 +4117,39 @@ static void lower_set(IrProgram *ir, AstNode *node) {
     }
 }
 
+// SEARCH ALL: the table has KEY items, and each WHEN condition tests keys
+// for equality (or is a condition-name of a key), joined by AND
+static bool is_table_key(const AstNode *keys, const AstNode *ref) {
+    if (!ref || (ref->kind != AST_IDENTIFIER && ref->kind != AST_COND_NAME) || !ref->name) return false;
+    VarInfo *v = find_item(ref, false);
+    if (v && v->is_cond && v->parent >= 0) v = &vars[v->parent];
+    for (const AstNode *k = keys; k; k = k->next)
+        if (strcasecmp(k->name, v ? v->name : ref->name) == 0) return true;
+    return false;
+}
+
+static void check_search_all_condition(const AstNode *cond, const AstNode *keys, const char *table) {
+    if (!cond) return;
+    switch (cond->kind) {
+        case AST_COND_AND:
+            check_search_all_condition(cond->children, keys, table);
+            check_search_all_condition(cond->children->next, keys, table);
+            return;
+        case AST_COND_NAME:
+            if (is_table_key(keys, cond)) return;
+            break;
+        case AST_CONDITION:
+            if ((!cond->text || strcmp(cond->text, "=") == 0) &&
+                (is_table_key(keys, cond->children) || is_table_key(keys, cond->children->next)))
+                return;
+            break;
+        default:
+            break;
+    }
+    diag_error(cond->loc, "SEARCH ALL tests the KEY items of '%s' for equality, joined by AND", table);
+    diag_note_plain("its keys:%s%s", keys ? " " : " none", keys ? keys->name : "");
+}
+
 // SEARCH (serial, from the current index value) and SEARCH ALL (from 1).
 // SEARCH ALL is done serially too: on a table ordered by its keys it finds
 // the same element a binary search would.
@@ -4132,6 +4174,12 @@ static void lower_search(IrProgram *ir, AstNode *node) {
 
     emit(ir, IR_SIZE_ERR_CLEAR);
     if (node->name && strcmp(node->name, "ALL") == 0) {
+        AstNode *occ = tv->decl ? find_clause(tv->decl, AST_OCCURS) : NULL;
+        if (!occ || !occ->loop)
+            diag_error(table->loc, "SEARCH ALL needs a table with an ASCENDING or DESCENDING KEY ('%s')", table->name);
+        else
+            for (AstNode *when = node->children; when; when = when->next)
+                check_search_all_condition(when->extra, occ->loop, table->name);
         AstNode *one = ast_new(AST_LITERAL_NUMBER, "1", table->loc);
         lower_assign(ir, one, index, false);
         ast_free(one);

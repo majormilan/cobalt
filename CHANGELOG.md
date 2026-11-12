@@ -31,6 +31,13 @@
 
 ### Fixed
 
+- Invalid code that compiled without a message is now reported: a
+  character other than an indicator in column 7, empty pseudo-text-1, a
+  level 77, 66 or 88 entry without a name, THRU after ALSO in an
+  ALPHABET clause, and SEARCH ALL on a table without KEY or whose WHEN
+  does not test its keys for equality.
+- A VALUE clause in a table entry is named as the COBOL 2002 extension it
+  is (a warning by default, an error with `-X pedantic`).
 - A REDEFINES entry that does not immediately follow the item it
   redefines (another entry between them) is an error.
 - `-X pedantic`: MOVE SPACE to a numeric edited item is an error, as in

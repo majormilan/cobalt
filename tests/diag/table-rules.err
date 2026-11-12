@@ -1,0 +1,12 @@
+tests/diag/table-rules.cbl:9:34: error: A VALUE clause in a table entry (OCCURS) is not COBOL-85
+     9 |                10  V PIC X VALUE "Y".
+       |                                  ^~~
+note: it is COBOL 2002; -fext=cobol2002 accepts it
+tests/diag/table-rules.cbl:14:21: error: SEARCH ALL tests the KEY items of 'E' for equality, joined by AND
+    14 |                WHEN V (X) = "A" DISPLAY "FOUND"
+       |                     ^
+note: its keys: K
+tests/diag/table-rules.cbl:16:23: error: SEARCH ALL needs a table with an ASCENDING or DESCENDING KEY ('F')
+    16 |            SEARCH ALL F
+       |                       ^
+3 errors generated.
