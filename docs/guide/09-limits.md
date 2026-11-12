@@ -39,8 +39,6 @@ compilers:
   environment can map the names of ASSIGN when the program runs (chapter 6).
 - USAGE COMP-1 and COMP-2 (floating point), and the other extensions of
   later standards and of vendors that chapter 4 does not list.
-- In the Report Writer, the data-name of a SUM entry names its printed
-  field, not the sum counter (chapter 3).
 - Accepted with no effect: CODE-SET (data are ASCII), SYNCHRONIZED, RERUN,
   MEMORY SIZE, BLOCK CONTAINS, RESERVE.
 

@@ -5791,10 +5791,18 @@ static void rw_page_break(IrProgram *ir, RwReport *r) {
 
 // The fields of a line take their values: SOURCE, SUM, and (GROUP INDICATE)
 // spaces or their value
+// The item of a printed field (a SUM entry's is not found by its name: the
+// name belongs to the sum counter)
+static int rw_field_var(const AstNode *f) {
+    for (int k = 0; k < rw_num_sums; k++)
+        if (rw_sums[k].field == f) return rw_sums[k].var;
+    return rw_var_named(f->name);
+}
+
 static void rw_fill(IrProgram *ir, RwReport *r, AstNode *g, AstNode *line) {
     int gi = rw_gi_flag(g);
     for (AstNode *f = line->children; f; f = f->next) {
-        int var = rw_var_named(f->name);
+        int var = rw_field_var(f);
         if (var < 0) continue;
         char skip[32] = "", done[32] = "";
         if (f->rw->group_indicate && gi >= 0) {
@@ -6194,6 +6202,20 @@ static void rw_add_sum(RwReport *r, AstNode *rd, AstNode *g, int level, AstNode 
     sum->acc = temp_numeric(dp, rd);
     sum->reset_level = g->rw->type == RW_CF ? level : -2;
     if (field->rw->reset) sum->reset_level = rw_reset_level(r, rd, field);
+    // The entry's data-name names the sum counter (procedures may use it):
+    // a signed DISPLAY item with the printed field's digits; the printed
+    // field is filled through the sum entry (rw_field_var)
+    if (sum->var >= 0 && field->name && field->name[0] != '$' && strcasecmp(field->name, "FILLER") != 0) {
+        VarInfo *pv = &vars[sum->var], *cv = &vars[sum->acc];
+        free(cv->name);
+        cv->name = strdup(pv->name);
+        cv->is_filler = false;
+        cv->usage_type = USAGE_DISPLAY;
+        cv->digits = pv->digits > 0 && pv->digits <= 18 ? pv->digits : 18;
+        cv->size = cv->digits;
+        record_size[cv->record] = cv->size;
+        pv->is_filler = true;
+    }
 }
 
 // A report group: its slot in the report, its sum counters and GROUP

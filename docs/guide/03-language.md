@@ -169,8 +169,9 @@ REPORTING with SUPPRESS PRINTING.
 
 A report is written to the file whose FD has the REPORT clause, as lines of
 text (chapter 6), with a form feed between pages. Control breaks compare the
-controls as their stored bytes. The data-name of a SUM entry names its
-printed field; the sum counter itself is not addressable.
+controls as their stored bytes. The data-name of a SUM entry names its sum
+counter, a signed numeric item with the digits of the printed field, which
+procedures can read and change.
 
 ## Special registers
 

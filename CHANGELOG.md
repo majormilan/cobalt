@@ -28,6 +28,8 @@
 
 ### Fixed
 
+- Report Writer: the data-name of a SUM entry names the sum counter, as
+  the standard defines, so procedures can read and change it.
 - DISPLAY UPON SYSERR, or a mnemonic-name of SYSERR, writes to standard
   error.
 - A program may contain more than 64 programs; past the limit of 512
