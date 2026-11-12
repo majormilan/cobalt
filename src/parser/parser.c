@@ -1723,1320 +1723,1408 @@ static void subset_statement(void) {
 static int if_depth;                    // nested IF statements (subset flagging)
 static int segment_limit;               // SEGMENT-LIMIT (subset flagging)
 
-static AstNode *parse_statement(void) {
-    if (parser_panic_mode) return NULL; // Don't try to parse statements if in panic mode
-
-    SourceLocation loc = {tok.filename, tok.line, tok.column};
-    subset_statement();
-
-    if (tok.kind == TOK_DISPLAY) {
+static AstNode *parse_display_statement(SourceLocation loc) {
+    next();
+    AstNode *display = ast_new(AST_STATEMENT_DISPLAY, NULL, loc);
+    AstNode *last = NULL, *arg;
+    while (!parser_panic_mode && !(tok.kind == TOK_IDENT && tok_is_word("NO")) &&
+           (arg = parse_value_operand()))
+        list_append(&display->children, &last, arg);
+    if (tok.kind == TOK_UPON) {         // the console is the only device
+        diag_subset(MOD_NC, 2, TOK_LOC, "DISPLAY ... UPON");
         next();
+        if (tok.kind == TOK_IDENT) next();
+    }
+    if (tok.kind == TOK_WITH || tok_is_word("NO")) {
+        if (tok.kind == TOK_WITH) next();
+        if (tok_is_word("NO")) next();
+        if (tok.kind == TOK_ADVANCING) next();
+        display->is_numeric = true;     // WITH NO ADVANCING
+    }
+    return display;
+}
+
+static AstNode *parse_stop_statement(SourceLocation loc) {
+    next();
+    // STOP literal: shows the literal to the operator and suspends the
+    // run; with no operator to resume it, execution continues
+    if (tok.kind == TOK_STRING || tok.kind == TOK_NUMBER || is_figurative(tok.kind)) {
+        flag_obsolete(loc.line, loc.column, "STOP literal");
         AstNode *display = ast_new(AST_STATEMENT_DISPLAY, NULL, loc);
-        AstNode *last = NULL, *arg;
-        while (!parser_panic_mode && !(tok.kind == TOK_IDENT && tok_is_word("NO")) &&
-               (arg = parse_value_operand()))
-            list_append(&display->children, &last, arg);
-        if (tok.kind == TOK_UPON) {         // the console is the only device
-            diag_subset(MOD_NC, 2, TOK_LOC, "DISPLAY ... UPON");
-            next();
-            if (tok.kind == TOK_IDENT) next();
-        }
-        if (tok.kind == TOK_WITH || tok_is_word("NO")) {
-            if (tok.kind == TOK_WITH) next();
-            if (tok_is_word("NO")) next();
-            if (tok.kind == TOK_ADVANCING) next();
-            display->is_numeric = true;     // WITH NO ADVANCING
-        }
+        display->children = parse_value_operand();
         return display;
     }
-    else if (tok.kind == TOK_STOP) {
-        next();
-        // STOP literal: shows the literal to the operator and suspends the
-        // run; with no operator to resume it, execution continues
-        if (tok.kind == TOK_STRING || tok.kind == TOK_NUMBER || is_figurative(tok.kind)) {
-            flag_obsolete(loc.line, loc.column, "STOP literal");
-            AstNode *display = ast_new(AST_STATEMENT_DISPLAY, NULL, loc);
-            display->children = parse_value_operand();
-            return display;
-        }
-        expect(TOK_RUN, "RUN");
-        if (parser_panic_mode) return NULL;
-        return ast_new(AST_STATEMENT_STOP, NULL, loc);
-    }
-    // ─── MOVE ────────────────────────────────────────────────────────────────
-    // MOVE source TO identifier+; children: [source, dest1,...]
-    else if (tok.kind == TOK_MOVE) {
-        next();
-        AstNode *move = ast_new(AST_STATEMENT_MOVE, NULL, loc);
-        AstNode *tail = NULL;
-        if (tok.kind == TOK_CORRESPONDING) {
-            diag_subset(MOD_NC, 2, TOK_LOC, "CORRESPONDING");
-            // MOVE CORRESPONDING group TO group; name = "CORR"
-            next();
-            move->name = strdup("CORR");
-            if (tok.kind != TOK_IDENT) { ast_free(move); arith_error("Expected group after CORRESPONDING"); return NULL; }
-        }
-        AstNode *src = parse_value_operand();
-        if (!src) { ast_free(move); arith_error("Expected MOVE source"); return NULL; }
-        list_append(&move->children, &tail, src);
-        if (tok.kind != TOK_TO) { ast_free(move); arith_error("Expected TO"); return NULL; }
-        next();
-        while (tok.kind == TOK_IDENT && !parser_panic_mode)
-            list_append(&move->children, &tail, parse_identifier());
-        if (!src->next) { ast_free(move); arith_error("Expected MOVE receiver"); return NULL; }
-        return move;
-    }
-    // ─── ADD ─────────────────────────────────────────────────────────────────
-    // Format 1: ADD src+ TO dest+ [ROUNDED]
-    // Format 2: ADD src+ [TO src] GIVING dest+ [ROUNDED]
-    // children: [src1,...,srcN, dest1,...]; decimal_places = N
-    // is_numeric = GIVING form
-    else if (tok.kind == TOK_ADD) {
-        next();
-        AstNode *add = ast_new(AST_STATEMENT_ADD, NULL, loc);
-        AstNode *head = NULL, *tail = NULL, *op;
-        int num_src = 0, num_dest = 0;
-        if (tok.kind == TOK_CORRESPONDING) {
-            diag_subset(MOD_NC, 2, TOK_LOC, "CORRESPONDING");
-            // ADD CORRESPONDING group TO group [ROUNDED]; name = "CORR"
-            next();
-            add->name = strdup("CORR");
-        }
+    expect(TOK_RUN, "RUN");
+    if (parser_panic_mode) return NULL;
+    return ast_new(AST_STATEMENT_STOP, NULL, loc);
+}
 
-        while (!parser_panic_mode && (op = parse_arith_operand())) {
-            list_append(&head, &tail, op);
-            num_src++;
+// ─── MOVE ────────────────────────────────────────────────────────────────
+// MOVE source TO identifier+; children: [source, dest1,...]
+static AstNode *parse_move_statement(SourceLocation loc) {
+    next();
+    AstNode *move = ast_new(AST_STATEMENT_MOVE, NULL, loc);
+    AstNode *tail = NULL;
+    if (tok.kind == TOK_CORRESPONDING) {
+        diag_subset(MOD_NC, 2, TOK_LOC, "CORRESPONDING");
+        // MOVE CORRESPONDING group TO group; name = "CORR"
+        next();
+        move->name = strdup("CORR");
+        if (tok.kind != TOK_IDENT) { ast_free(move); arith_error("Expected group after CORRESPONDING"); return NULL; }
+    }
+    AstNode *src = parse_value_operand();
+    if (!src) { ast_free(move); arith_error("Expected MOVE source"); return NULL; }
+    list_append(&move->children, &tail, src);
+    if (tok.kind != TOK_TO) { ast_free(move); arith_error("Expected TO"); return NULL; }
+    next();
+    while (tok.kind == TOK_IDENT && !parser_panic_mode)
+        list_append(&move->children, &tail, parse_identifier());
+    if (!src->next) { ast_free(move); arith_error("Expected MOVE receiver"); return NULL; }
+    return move;
+}
+
+// ─── ADD ─────────────────────────────────────────────────────────────────
+// Format 1: ADD src+ TO dest+ [ROUNDED]
+// Format 2: ADD src+ [TO src] GIVING dest+ [ROUNDED]
+// children: [src1,...,srcN, dest1,...]; decimal_places = N
+// is_numeric = GIVING form
+static AstNode *parse_add_statement(SourceLocation loc) {
+    next();
+    AstNode *add = ast_new(AST_STATEMENT_ADD, NULL, loc);
+    AstNode *head = NULL, *tail = NULL, *op;
+    int num_src = 0, num_dest = 0;
+    if (tok.kind == TOK_CORRESPONDING) {
+        diag_subset(MOD_NC, 2, TOK_LOC, "CORRESPONDING");
+        // ADD CORRESPONDING group TO group [ROUNDED]; name = "CORR"
+        next();
+        add->name = strdup("CORR");
+    }
+
+    while (!parser_panic_mode && (op = parse_arith_operand())) {
+        list_append(&head, &tail, op);
+        num_src++;
+    }
+    if (tok.kind == TOK_TO) {
+        next();
+        bool all_idents;
+        AstNode *to_head = NULL, *to_tail = NULL;
+        int n_to = parse_operands_or_receivers(&to_head, &to_tail, &all_idents);
+        if (to_head) {
+            if (!head) head = to_head;
+            else tail->next = to_head;
+            tail = to_tail;
         }
-        if (tok.kind == TOK_TO) {
-            next();
-            bool all_idents;
-            AstNode *to_head = NULL, *to_tail = NULL;
-            int n_to = parse_operands_or_receivers(&to_head, &to_tail, &all_idents);
-            if (to_head) {
-                if (!head) head = to_head;
-                else tail->next = to_head;
-                tail = to_tail;
-            }
-            if (tok.kind == TOK_GIVING) {
-                next();
-                add->is_numeric = true;
-                num_src += n_to;
-                num_dest = parse_receivers(&head, &tail);
-            } else {
-                if (!all_idents) { ast_free(head); ast_free(add); arith_error("ADD ... TO requires identifiers as receivers"); return NULL; }
-                num_dest = n_to;
-            }
-        } else if (tok.kind == TOK_GIVING) {
+        if (tok.kind == TOK_GIVING) {
             next();
             add->is_numeric = true;
-            num_dest = parse_receivers(&head, &tail);
-        }
-        add->children = head;
-        add->decimal_places = num_src;
-        if (num_src == 0) { ast_free(add); arith_error("Expected an operand after ADD"); return NULL; }
-        if (num_dest == 0) { ast_free(add); arith_error("Expected TO or GIVING in the ADD statement"); return NULL; }
-
-        parse_size_error_phrases(add, TOK_END_ADD);
-        return add;
-    }
-    // ─── SUBTRACT ────────────────────────────────────────────────────────────
-    // Format 1: SUBTRACT src+ FROM dest+ [ROUNDED]
-    // Format 2: SUBTRACT src+ FROM minuend GIVING dest+ [ROUNDED]
-    // children: [src1,...,srcN, dest1,...] or [src1,...,srcN, minuend, dest1,...]
-    // decimal_places = N; is_numeric = GIVING form
-    else if (tok.kind == TOK_SUBTRACT) {
-        next();
-        AstNode *sub = ast_new(AST_STATEMENT_SUBTRACT, NULL, loc);
-        AstNode *head = NULL, *tail = NULL, *op;
-        int num_src = 0, num_dest = 0;
-        if (tok.kind == TOK_CORRESPONDING) {
-            diag_subset(MOD_NC, 2, TOK_LOC, "CORRESPONDING");
-            // SUBTRACT CORRESPONDING group FROM group [ROUNDED]; name = "CORR"
-            next();
-            sub->name = strdup("CORR");
-        }
-
-        while (!parser_panic_mode && (op = parse_arith_operand())) {
-            list_append(&head, &tail, op);
-            num_src++;
-        }
-        sub->children = head;
-        sub->decimal_places = num_src;
-        if (num_src == 0 || tok.kind != TOK_FROM) { ast_free(sub); arith_error("Expected FROM in SUBTRACT statement"); return NULL; }
-        next();
-
-        bool all_idents;
-        AstNode *from_head = NULL, *from_tail = NULL;
-        int n_from = parse_operands_or_receivers(&from_head, &from_tail, &all_idents);
-        if (from_head) {
-            if (!head) sub->children = head = from_head;
-            else tail->next = from_head;
-            tail = from_tail;
-        }
-        if (tok.kind == TOK_GIVING) {
-            next();
-            if (n_from != 1) { ast_free(sub); arith_error("SUBTRACT ... GIVING takes exactly one FROM operand"); return NULL; }
-            sub->is_numeric = true;
+            num_src += n_to;
             num_dest = parse_receivers(&head, &tail);
         } else {
-            if (!all_idents) { ast_free(sub); arith_error("SUBTRACT ... FROM requires identifiers as receivers"); return NULL; }
-            num_dest = n_from;
+            if (!all_idents) { ast_free(head); ast_free(add); arith_error("ADD ... TO requires identifiers as receivers"); return NULL; }
+            num_dest = n_to;
         }
-        if (num_dest == 0) { ast_free(sub); arith_error("Expected receiving identifier in SUBTRACT statement"); return NULL; }
-
-        parse_size_error_phrases(sub, TOK_END_SUBTRACT);
-        return sub;
+    } else if (tok.kind == TOK_GIVING) {
+        next();
+        add->is_numeric = true;
+        num_dest = parse_receivers(&head, &tail);
     }
-    // ─── MULTIPLY ────────────────────────────────────────────────────────────
-    // Format 1: MULTIPLY factor BY dest+ [ROUNDED]
-    // Format 2: MULTIPLY factor BY factor2 GIVING dest+ [ROUNDED]
-    // children: [factor, dest1,...] or [factor, factor2, dest1,...]
-    // is_numeric = GIVING form
-    else if (tok.kind == TOK_MULTIPLY) {
-        next();
-        AstNode *mul = ast_new(AST_STATEMENT_MULTIPLY, NULL, loc);
-        AstNode *head = NULL, *tail = NULL;
+    add->children = head;
+    add->decimal_places = num_src;
+    if (num_src == 0) { ast_free(add); arith_error("Expected an operand after ADD"); return NULL; }
+    if (num_dest == 0) { ast_free(add); arith_error("Expected TO or GIVING in the ADD statement"); return NULL; }
 
-        AstNode *factor = parse_arith_operand();
-        if (!factor) { ast_free(mul); arith_error("Expected operand after MULTIPLY"); return NULL; }
-        list_append(&head, &tail, factor);
-        mul->children = head;
-        mul->decimal_places = 1;
-        if (tok.kind != TOK_BY) { ast_free(mul); arith_error("Expected BY in MULTIPLY statement"); return NULL; }
-        next();
+    parse_size_error_phrases(add, TOK_END_ADD);
+    return add;
+}
 
-        bool all_idents;
-        int n_by = parse_operands_or_receivers(&head, &tail, &all_idents);
-        int num_dest;
-        if (tok.kind == TOK_GIVING) {
+// ─── SUBTRACT ────────────────────────────────────────────────────────────
+// Format 1: SUBTRACT src+ FROM dest+ [ROUNDED]
+// Format 2: SUBTRACT src+ FROM minuend GIVING dest+ [ROUNDED]
+// children: [src1,...,srcN, dest1,...] or [src1,...,srcN, minuend, dest1,...]
+// decimal_places = N; is_numeric = GIVING form
+static AstNode *parse_subtract_statement(SourceLocation loc) {
+    next();
+    AstNode *sub = ast_new(AST_STATEMENT_SUBTRACT, NULL, loc);
+    AstNode *head = NULL, *tail = NULL, *op;
+    int num_src = 0, num_dest = 0;
+    if (tok.kind == TOK_CORRESPONDING) {
+        diag_subset(MOD_NC, 2, TOK_LOC, "CORRESPONDING");
+        // SUBTRACT CORRESPONDING group FROM group [ROUNDED]; name = "CORR"
+        next();
+        sub->name = strdup("CORR");
+    }
+
+    while (!parser_panic_mode && (op = parse_arith_operand())) {
+        list_append(&head, &tail, op);
+        num_src++;
+    }
+    sub->children = head;
+    sub->decimal_places = num_src;
+    if (num_src == 0 || tok.kind != TOK_FROM) { ast_free(sub); arith_error("Expected FROM in SUBTRACT statement"); return NULL; }
+    next();
+
+    bool all_idents;
+    AstNode *from_head = NULL, *from_tail = NULL;
+    int n_from = parse_operands_or_receivers(&from_head, &from_tail, &all_idents);
+    if (from_head) {
+        if (!head) sub->children = head = from_head;
+        else tail->next = from_head;
+        tail = from_tail;
+    }
+    if (tok.kind == TOK_GIVING) {
+        next();
+        if (n_from != 1) { ast_free(sub); arith_error("SUBTRACT ... GIVING takes exactly one FROM operand"); return NULL; }
+        sub->is_numeric = true;
+        num_dest = parse_receivers(&head, &tail);
+    } else {
+        if (!all_idents) { ast_free(sub); arith_error("SUBTRACT ... FROM requires identifiers as receivers"); return NULL; }
+        num_dest = n_from;
+    }
+    if (num_dest == 0) { ast_free(sub); arith_error("Expected receiving identifier in SUBTRACT statement"); return NULL; }
+
+    parse_size_error_phrases(sub, TOK_END_SUBTRACT);
+    return sub;
+}
+
+// ─── MULTIPLY ────────────────────────────────────────────────────────────
+// Format 1: MULTIPLY factor BY dest+ [ROUNDED]
+// Format 2: MULTIPLY factor BY factor2 GIVING dest+ [ROUNDED]
+// children: [factor, dest1,...] or [factor, factor2, dest1,...]
+// is_numeric = GIVING form
+static AstNode *parse_multiply_statement(SourceLocation loc) {
+    next();
+    AstNode *mul = ast_new(AST_STATEMENT_MULTIPLY, NULL, loc);
+    AstNode *head = NULL, *tail = NULL;
+
+    AstNode *factor = parse_arith_operand();
+    if (!factor) { ast_free(mul); arith_error("Expected operand after MULTIPLY"); return NULL; }
+    list_append(&head, &tail, factor);
+    mul->children = head;
+    mul->decimal_places = 1;
+    if (tok.kind != TOK_BY) { ast_free(mul); arith_error("Expected BY in MULTIPLY statement"); return NULL; }
+    next();
+
+    bool all_idents;
+    int n_by = parse_operands_or_receivers(&head, &tail, &all_idents);
+    int num_dest;
+    if (tok.kind == TOK_GIVING) {
+        next();
+        if (n_by != 1) { ast_free(mul); arith_error("MULTIPLY ... GIVING takes exactly one BY operand"); return NULL; }
+        mul->is_numeric = true;
+        num_dest = parse_receivers(&head, &tail);
+    } else {
+        if (!all_idents) { ast_free(mul); arith_error("MULTIPLY ... BY requires identifiers as receivers"); return NULL; }
+        num_dest = n_by;
+    }
+    if (num_dest == 0) { ast_free(mul); arith_error("Expected receiving identifier in MULTIPLY statement"); return NULL; }
+
+    parse_size_error_phrases(mul, TOK_END_MULTIPLY);
+    return mul;
+}
+
+// ─── DIVIDE ──────────────────────────────────────────────────────────────
+// Format 1: DIVIDE divisor INTO dest+ [ROUNDED]
+// Format 2: DIVIDE divisor INTO dividend GIVING dest+ [ROUNDED] [REMAINDER r]
+// Format 3: DIVIDE dividend BY divisor GIVING dest+ [ROUNDED] [REMAINDER r]
+// name = "INTO" or "BY"; is_numeric = GIVING form
+// is_signed = REMAINDER present (last child is the remainder receiver)
+// children (INTO, no GIVING): [divisor, dest1,...]
+// children (INTO, GIVING):    [divisor, dividend, dest1,..., [rem]]
+// children (BY,  GIVING):     [dividend, divisor, dest1,..., [rem]]
+static AstNode *parse_divide_statement(SourceLocation loc) {
+    next();
+    AstNode *div_stmt = ast_new(AST_STATEMENT_DIVIDE, NULL, loc);
+    AstNode *head = NULL, *tail = NULL;
+
+    AstNode *first = parse_arith_operand();
+    if (!first) { ast_free(div_stmt); arith_error("Expected operand after DIVIDE"); return NULL; }
+    list_append(&head, &tail, first);
+    div_stmt->children = head;
+
+    bool is_by = (tok.kind == TOK_BY);
+    if (tok.kind != TOK_INTO && !is_by) { ast_free(div_stmt); arith_error("Expected INTO or BY in DIVIDE statement"); return NULL; }
+    div_stmt->name = strdup(is_by ? "BY" : "INTO");
+    div_stmt->decimal_places = is_by ? 2 : 1;
+    next();
+
+    bool all_idents;
+    int n_second = parse_operands_or_receivers(&head, &tail, &all_idents);
+    int num_dest;
+    if (tok.kind == TOK_GIVING) {
+        next();
+        if (n_second != 1) { ast_free(div_stmt); arith_error("DIVIDE ... GIVING takes exactly one operand before GIVING"); return NULL; }
+        div_stmt->is_numeric = true;
+        num_dest = parse_receivers(&head, &tail);
+        if (tok.kind == TOK_REMAINDER) {
+            diag_subset(MOD_NC, 2, TOK_LOC, "DIVIDE ... REMAINDER");
             next();
-            if (n_by != 1) { ast_free(mul); arith_error("MULTIPLY ... GIVING takes exactly one BY operand"); return NULL; }
-            mul->is_numeric = true;
-            num_dest = parse_receivers(&head, &tail);
+            if (num_dest != 1) { ast_free(div_stmt); arith_error("REMAINDER requires exactly one GIVING receiver"); return NULL; }
+            if (parse_receivers(&head, &tail) != 1) { ast_free(div_stmt); arith_error("Expected one identifier after REMAINDER"); return NULL; }
+            div_stmt->is_signed = true;
+        }
+    } else {
+        if (is_by) { ast_free(div_stmt); arith_error("DIVIDE ... BY requires GIVING"); return NULL; }
+        if (!all_idents) { ast_free(div_stmt); arith_error("DIVIDE ... INTO requires identifiers as receivers"); return NULL; }
+        num_dest = n_second;
+    }
+    if (num_dest == 0) { ast_free(div_stmt); arith_error("Expected receiving identifier in DIVIDE statement"); return NULL; }
+
+    parse_size_error_phrases(div_stmt, TOK_END_DIVIDE);
+    return div_stmt;
+}
+
+// ─── IF ──────────────────────────────────────────────────────────────────
+// IF condition [THEN] {statements | NEXT SENTENCE}
+//    [ELSE {statements | NEXT SENTENCE}] [END-IF]
+// A period ends every open IF; ELSE pairs with the nearest open IF.
+// children: [condition, THEN-BLOCK, [ELSE-BLOCK]]
+static AstNode *parse_if_statement(SourceLocation loc) {
+    if (if_depth > 0) diag_subset(MOD_NC, 2, loc, "A nested IF statement");
+    next();
+    AstNode *if_stmt = ast_new(AST_STATEMENT_IF, NULL, loc);
+    AstNode *cond = parse_condition();
+    if (!cond) { ast_free(if_stmt); return NULL; }
+    if_stmt->children = cond;
+
+    if (tok.kind == TOK_THEN) next();
+    AstNode *then_node = ast_new(AST_THEN_BLOCK, NULL, loc);
+    if_depth++;
+    then_node->children = parse_block();
+    cond->next = then_node;
+
+    if (tok.kind == TOK_ELSE) {
+        next();
+        AstNode *else_node = ast_new(AST_ELSE_BLOCK, NULL, loc);
+        else_node->children = parse_block();
+        then_node->next = else_node;
+    }
+    if_depth--;
+    if (tok.kind == TOK_END_IF) next();
+    return if_stmt;
+}
+
+// ─── PERFORM ─────────────────────────────────────────────────────────────
+// Out-of-line: PERFORM proc [THRU proc] [loop]
+// Inline:      PERFORM [loop] statements END-PERFORM
+// loop: n TIMES | [WITH TEST BEFORE|AFTER] UNTIL condition
+//     | [WITH TEST BEFORE|AFTER] VARYING id FROM x BY y UNTIL condition
+//       {AFTER id FROM x BY y UNTIL condition}...
+// name: ONCE, TIMES, UNTIL or VARYING; extra: procedure range (first, then
+// THRU procedure); loop: count operand, condition, or VARYING clauses;
+// is_signed: WITH TEST AFTER; children: inline statements
+static AstNode *parse_perform_statement(SourceLocation loc) {
+    next();
+    AstNode *perf = ast_new(AST_STATEMENT_PERFORM, NULL, loc);
+    const char *form = "ONCE";
+
+    if (tok.kind == TOK_IDENT ||
+        (is_procedure_name_token() && peek_token().kind != TOK_TIMES)) {
+        AstNode *first = parse_procedure_name();
+        if (tok.kind == TOK_TIMES && first->name && !isdigit((unsigned char)first->name[0])) {
+            // Inline PERFORM identifier TIMES: the name is a data item
+            if (!symtab_resolve_symbol(current_symtab, first->name))
+                undefined_name(first->loc, first->name);
+            next();
+            perf->loop = first;
+            form = "TIMES";
         } else {
-            if (!all_idents) { ast_free(mul); arith_error("MULTIPLY ... BY requires identifiers as receivers"); return NULL; }
-            num_dest = n_by;
-        }
-        if (num_dest == 0) { ast_free(mul); arith_error("Expected receiving identifier in MULTIPLY statement"); return NULL; }
-
-        parse_size_error_phrases(mul, TOK_END_MULTIPLY);
-        return mul;
-    }
-    // ─── DIVIDE ──────────────────────────────────────────────────────────────
-    // Format 1: DIVIDE divisor INTO dest+ [ROUNDED]
-    // Format 2: DIVIDE divisor INTO dividend GIVING dest+ [ROUNDED] [REMAINDER r]
-    // Format 3: DIVIDE dividend BY divisor GIVING dest+ [ROUNDED] [REMAINDER r]
-    // name = "INTO" or "BY"; is_numeric = GIVING form
-    // is_signed = REMAINDER present (last child is the remainder receiver)
-    // children (INTO, no GIVING): [divisor, dest1,...]
-    // children (INTO, GIVING):    [divisor, dividend, dest1,..., [rem]]
-    // children (BY,  GIVING):     [dividend, divisor, dest1,..., [rem]]
-    else if (tok.kind == TOK_DIVIDE) {
-        next();
-        AstNode *div_stmt = ast_new(AST_STATEMENT_DIVIDE, NULL, loc);
-        AstNode *head = NULL, *tail = NULL;
-
-        AstNode *first = parse_arith_operand();
-        if (!first) { ast_free(div_stmt); arith_error("Expected operand after DIVIDE"); return NULL; }
-        list_append(&head, &tail, first);
-        div_stmt->children = head;
-
-        bool is_by = (tok.kind == TOK_BY);
-        if (tok.kind != TOK_INTO && !is_by) { ast_free(div_stmt); arith_error("Expected INTO or BY in DIVIDE statement"); return NULL; }
-        div_stmt->name = strdup(is_by ? "BY" : "INTO");
-        div_stmt->decimal_places = is_by ? 2 : 1;
-        next();
-
-        bool all_idents;
-        int n_second = parse_operands_or_receivers(&head, &tail, &all_idents);
-        int num_dest;
-        if (tok.kind == TOK_GIVING) {
-            next();
-            if (n_second != 1) { ast_free(div_stmt); arith_error("DIVIDE ... GIVING takes exactly one operand before GIVING"); return NULL; }
-            div_stmt->is_numeric = true;
-            num_dest = parse_receivers(&head, &tail);
-            if (tok.kind == TOK_REMAINDER) {
-                diag_subset(MOD_NC, 2, TOK_LOC, "DIVIDE ... REMAINDER");
+            perf->extra = first;
+            if (tok.kind == TOK_THROUGH) {
                 next();
-                if (num_dest != 1) { ast_free(div_stmt); arith_error("REMAINDER requires exactly one GIVING receiver"); return NULL; }
-                if (parse_receivers(&head, &tail) != 1) { ast_free(div_stmt); arith_error("Expected one identifier after REMAINDER"); return NULL; }
-                div_stmt->is_signed = true;
+                if (!is_procedure_name_token()) { ast_free(perf); arith_error("Expected procedure name after THRU"); return NULL; }
+                first->next = parse_procedure_name();
             }
-        } else {
-            if (is_by) { ast_free(div_stmt); arith_error("DIVIDE ... BY requires GIVING"); return NULL; }
-            if (!all_idents) { ast_free(div_stmt); arith_error("DIVIDE ... INTO requires identifiers as receivers"); return NULL; }
-            num_dest = n_second;
         }
-        if (num_dest == 0) { ast_free(div_stmt); arith_error("Expected receiving identifier in DIVIDE statement"); return NULL; }
-
-        parse_size_error_phrases(div_stmt, TOK_END_DIVIDE);
-        return div_stmt;
     }
-    // ─── IF ──────────────────────────────────────────────────────────────────
-    // IF condition [THEN] {statements | NEXT SENTENCE}
-    //    [ELSE {statements | NEXT SENTENCE}] [END-IF]
-    // A period ends every open IF; ELSE pairs with the nearest open IF.
-    // children: [condition, THEN-BLOCK, [ELSE-BLOCK]]
-    else if (tok.kind == TOK_IF) {
-        if (if_depth > 0) diag_subset(MOD_NC, 2, loc, "A nested IF statement");
-        next();
-        AstNode *if_stmt = ast_new(AST_STATEMENT_IF, NULL, loc);
-        AstNode *cond = parse_condition();
-        if (!cond) { ast_free(if_stmt); return NULL; }
-        if_stmt->children = cond;
 
-        if (tok.kind == TOK_THEN) next();
-        AstNode *then_node = ast_new(AST_THEN_BLOCK, NULL, loc);
-        if_depth++;
-        then_node->children = parse_block();
-        cond->next = then_node;
-
-        if (tok.kind == TOK_ELSE) {
+    if (strcmp(form, "ONCE") == 0) {
+        if (tok.kind == TOK_NUMBER || tok.kind == TOK_IDENT) {
+            perf->loop = parse_arith_operand();
+            if (tok.kind != TOK_TIMES) { ast_free(perf); arith_error("Expected TIMES"); return NULL; }
             next();
-            AstNode *else_node = ast_new(AST_ELSE_BLOCK, NULL, loc);
-            else_node->children = parse_block();
-            then_node->next = else_node;
-        }
-        if_depth--;
-        if (tok.kind == TOK_END_IF) next();
-        return if_stmt;
-    }
-    // ─── PERFORM ─────────────────────────────────────────────────────────────
-    // Out-of-line: PERFORM proc [THRU proc] [loop]
-    // Inline:      PERFORM [loop] statements END-PERFORM
-    // loop: n TIMES | [WITH TEST BEFORE|AFTER] UNTIL condition
-    //     | [WITH TEST BEFORE|AFTER] VARYING id FROM x BY y UNTIL condition
-    //       {AFTER id FROM x BY y UNTIL condition}...
-    // name: ONCE, TIMES, UNTIL or VARYING; extra: procedure range (first, then
-    // THRU procedure); loop: count operand, condition, or VARYING clauses;
-    // is_signed: WITH TEST AFTER; children: inline statements
-    else if (tok.kind == TOK_PERFORM) {
-        next();
-        AstNode *perf = ast_new(AST_STATEMENT_PERFORM, NULL, loc);
-        const char *form = "ONCE";
-
-        if (tok.kind == TOK_IDENT ||
-            (is_procedure_name_token() && peek_token().kind != TOK_TIMES)) {
-            AstNode *first = parse_procedure_name();
-            if (tok.kind == TOK_TIMES && first->name && !isdigit((unsigned char)first->name[0])) {
-                // Inline PERFORM identifier TIMES: the name is a data item
-                if (!symtab_resolve_symbol(current_symtab, first->name))
-                    undefined_name(first->loc, first->name);
+            form = "TIMES";
+        } else if (tok.kind == TOK_WITH || tok.kind == TOK_TEST || tok.kind == TOK_UNTIL ||
+                   tok.kind == TOK_VARYING) {
+            if (tok.kind == TOK_WITH) next();
+            if (tok.kind == TOK_TEST) {
+                diag_subset(MOD_NC, 2, TOK_LOC, "PERFORM ... WITH TEST");
                 next();
-                perf->loop = first;
-                form = "TIMES";
+                if (tok.kind == TOK_AFTER) perf->is_signed = true;
+                else if (tok.kind != TOK_BEFORE) { ast_free(perf); arith_error("Expected BEFORE or AFTER"); return NULL; }
+                next();
+            }
+            if (tok.kind == TOK_UNTIL) {
+                next();
+                perf->loop = parse_condition();
+                if (!perf->loop) { ast_free(perf); return NULL; }
+                form = "UNTIL";
+            } else if (tok.kind == TOK_VARYING) {
+                diag_subset(MOD_NC, 2, TOK_LOC, "PERFORM ... VARYING");
+                AstNode *tail = NULL;
+                while (tok.kind == TOK_VARYING || (perf->loop && tok.kind == TOK_AFTER)) {
+                    SourceLocation vloc = {tok.filename, tok.line, tok.column};
+                    next();
+                    AstNode *var = parse_arith_operand();
+                    if (!var || var->kind != AST_IDENTIFIER || tok.kind != TOK_FROM) { ast_free(var); ast_free(perf); arith_error("Expected identifier FROM in VARYING"); return NULL; }
+                    next();
+                    AstNode *from = parse_arith_operand();
+                    if (!from || tok.kind != TOK_BY) { ast_free(var); ast_free(from); ast_free(perf); arith_error("Expected BY in VARYING"); return NULL; }
+                    next();
+                    AstNode *by = parse_arith_operand();
+                    if (!by || tok.kind != TOK_UNTIL) { ast_free(var); ast_free(from); ast_free(by); ast_free(perf); arith_error("Expected UNTIL in VARYING"); return NULL; }
+                    next();
+                    AstNode *cond = parse_condition();
+                    if (!cond) { ast_free(var); ast_free(from); ast_free(by); ast_free(perf); return NULL; }
+                    AstNode *clause = ast_new(AST_VARYING, NULL, vloc);
+                    clause->children = var;
+                    var->next = from;
+                    from->next = by;
+                    by->next = cond;
+                    list_append(&perf->loop, &tail, clause);
+                }
+                form = "VARYING";
             } else {
-                perf->extra = first;
-                if (tok.kind == TOK_THROUGH) {
-                    next();
-                    if (!is_procedure_name_token()) { ast_free(perf); arith_error("Expected procedure name after THRU"); return NULL; }
-                    first->next = parse_procedure_name();
-                }
+                ast_free(perf);
+                arith_error("Expected UNTIL or VARYING");
+                return NULL;
             }
         }
-
-        if (strcmp(form, "ONCE") == 0) {
-            if (tok.kind == TOK_NUMBER || tok.kind == TOK_IDENT) {
-                perf->loop = parse_arith_operand();
-                if (tok.kind != TOK_TIMES) { ast_free(perf); arith_error("Expected TIMES"); return NULL; }
-                next();
-                form = "TIMES";
-            } else if (tok.kind == TOK_WITH || tok.kind == TOK_TEST || tok.kind == TOK_UNTIL ||
-                       tok.kind == TOK_VARYING) {
-                if (tok.kind == TOK_WITH) next();
-                if (tok.kind == TOK_TEST) {
-                    diag_subset(MOD_NC, 2, TOK_LOC, "PERFORM ... WITH TEST");
-                    next();
-                    if (tok.kind == TOK_AFTER) perf->is_signed = true;
-                    else if (tok.kind != TOK_BEFORE) { ast_free(perf); arith_error("Expected BEFORE or AFTER"); return NULL; }
-                    next();
-                }
-                if (tok.kind == TOK_UNTIL) {
-                    next();
-                    perf->loop = parse_condition();
-                    if (!perf->loop) { ast_free(perf); return NULL; }
-                    form = "UNTIL";
-                } else if (tok.kind == TOK_VARYING) {
-                    diag_subset(MOD_NC, 2, TOK_LOC, "PERFORM ... VARYING");
-                    AstNode *tail = NULL;
-                    while (tok.kind == TOK_VARYING || (perf->loop && tok.kind == TOK_AFTER)) {
-                        SourceLocation vloc = {tok.filename, tok.line, tok.column};
-                        next();
-                        AstNode *var = parse_arith_operand();
-                        if (!var || var->kind != AST_IDENTIFIER || tok.kind != TOK_FROM) { ast_free(var); ast_free(perf); arith_error("Expected identifier FROM in VARYING"); return NULL; }
-                        next();
-                        AstNode *from = parse_arith_operand();
-                        if (!from || tok.kind != TOK_BY) { ast_free(var); ast_free(from); ast_free(perf); arith_error("Expected BY in VARYING"); return NULL; }
-                        next();
-                        AstNode *by = parse_arith_operand();
-                        if (!by || tok.kind != TOK_UNTIL) { ast_free(var); ast_free(from); ast_free(by); ast_free(perf); arith_error("Expected UNTIL in VARYING"); return NULL; }
-                        next();
-                        AstNode *cond = parse_condition();
-                        if (!cond) { ast_free(var); ast_free(from); ast_free(by); ast_free(perf); return NULL; }
-                        AstNode *clause = ast_new(AST_VARYING, NULL, vloc);
-                        clause->children = var;
-                        var->next = from;
-                        from->next = by;
-                        by->next = cond;
-                        list_append(&perf->loop, &tail, clause);
-                    }
-                    form = "VARYING";
-                } else {
-                    ast_free(perf);
-                    arith_error("Expected UNTIL or VARYING");
-                    return NULL;
-                }
-            }
-        }
-        perf->name = strdup(form);
-
-        if (!perf->extra) {
-            perf->children = parse_block();
-            if (tok.kind != TOK_END_PERFORM) { ast_free(perf); arith_error("Expected END-PERFORM"); return NULL; }
-            next();
-        }
-        return perf;
     }
-    // ─── GO TO ───────────────────────────────────────────────────────────────
-    // GO [TO] proc  |  GO [TO] proc+ DEPENDING [ON] identifier
-    // children: procedure names; extra: DEPENDING ON identifier
-    else if (tok.kind == TOK_GO) {
+    perf->name = strdup(form);
+
+    if (!perf->extra) {
+        perf->children = parse_block();
+        if (tok.kind != TOK_END_PERFORM) { ast_free(perf); arith_error("Expected END-PERFORM"); return NULL; }
         next();
-        if (tok.kind == TOK_TO) next();
-        AstNode *go = ast_new(AST_STATEMENT_GOTO, NULL, loc);
-        AstNode *tail = NULL;
-        while (is_procedure_name_token()) list_append(&go->children, &tail, parse_procedure_name());
-        // GO TO without a procedure: its target is set by an ALTER statement
-        if (!go->children && tok.kind == TOK_PERIOD) {
-            flag_obsolete(loc.line, loc.column, "GO TO without a procedure-name");
-            diag_subset(MOD_NC, 2, loc, "GO TO without a procedure-name");
-            return go;
-        }
-        if (!go->children) { ast_free(go); arith_error("Expected procedure name after GO TO"); return NULL; }
-        if (tok.kind == TOK_DEPENDING) {
-            next();
-            if (tok.kind == TOK_ON) next();
-            go->extra = parse_arith_operand();
-            if (!go->extra) { ast_free(go); arith_error("Expected identifier after DEPENDING ON"); return NULL; }
-        } else if (go->children->next) {
-            ast_free(go);
-            arith_error("GO TO with several procedures requires DEPENDING ON");
-            return NULL;
-        }
+    }
+    return perf;
+}
+
+// ─── GO TO ───────────────────────────────────────────────────────────────
+// GO [TO] proc  |  GO [TO] proc+ DEPENDING [ON] identifier
+// children: procedure names; extra: DEPENDING ON identifier
+static AstNode *parse_go_statement(SourceLocation loc) {
+    next();
+    if (tok.kind == TOK_TO) next();
+    AstNode *go = ast_new(AST_STATEMENT_GOTO, NULL, loc);
+    AstNode *tail = NULL;
+    while (is_procedure_name_token()) list_append(&go->children, &tail, parse_procedure_name());
+    // GO TO without a procedure: its target is set by an ALTER statement
+    if (!go->children && tok.kind == TOK_PERIOD) {
+        flag_obsolete(loc.line, loc.column, "GO TO without a procedure-name");
+        diag_subset(MOD_NC, 2, loc, "GO TO without a procedure-name");
         return go;
     }
-    // ─── STRING ──────────────────────────────────────────────────────────────
-    // STRING {source+ DELIMITED BY {delimiter | SIZE}}+ INTO identifier
-    //     [WITH POINTER identifier] [[ON] OVERFLOW ...] [NOT [ON] OVERFLOW ...]
-    //     [END-STRING]
-    else if (tok.kind == TOK_STRING_KW) {
+    if (!go->children) { ast_free(go); arith_error("Expected procedure name after GO TO"); return NULL; }
+    if (tok.kind == TOK_DEPENDING) {
         next();
-        AstNode *st = ast_new(AST_STATEMENT_STRING, NULL, loc);
-        AstNode *tail = NULL;
-        while (inspect_operand_start() && !parser_panic_mode) {
-            AstNode *group = NULL;
-            while (inspect_operand_start() && !parser_panic_mode) {
-                AstNode *src = tok.kind == TOK_IDENT ? parse_identifier() : parse_rel_operand();
-                if (!src) { ast_free(st); return NULL; }
-                list_append(&st->children, &tail, src);
-                if (!group) group = src;
-            }
-            if (tok.kind != TOK_DELIMITED) { ast_free(st); arith_error("Expected DELIMITED BY"); return NULL; }
-            next();
-            if (tok.kind == TOK_BY) next();
-            AstNode *delim = NULL;
-            if (tok.kind == TOK_SIZE) next();
-            else {
-                delim = tok.kind == TOK_IDENT ? parse_identifier() : parse_rel_operand();
-                if (!delim) { ast_free(st); arith_error("Expected a delimiter"); return NULL; }
-            }
-            // Each source holds its own copy of its group's delimiter
-            for (AstNode *s = group; s; s = s->next) s->on_error = s == group ? delim : (delim ? ast_clone(delim) : NULL);
-        }
-        if (!st->children) { ast_free(st); arith_error("Expected a sending item after STRING"); return NULL; }
-        if (tok.kind != TOK_INTO) { ast_free(st); arith_error("Expected INTO"); return NULL; }
-        next();
-        if (tok.kind != TOK_IDENT) { ast_free(st); arith_error("Expected the receiving item"); return NULL; }
-        st->extra = parse_identifier();
-        if (tok.kind == TOK_WITH) next();
-        if (tok.kind == TOK_POINTER) {
-            next();
-            if (tok.kind != TOK_IDENT) { ast_free(st); arith_error("Expected the pointer item"); return NULL; }
-            st->loop = parse_identifier();
-        }
-        parse_overflow_phrases(st, TOK_END_STRING);
-        return st;
+        if (tok.kind == TOK_ON) next();
+        go->extra = parse_arith_operand();
+        if (!go->extra) { ast_free(go); arith_error("Expected identifier after DEPENDING ON"); return NULL; }
+    } else if (go->children->next) {
+        ast_free(go);
+        arith_error("GO TO with several procedures requires DEPENDING ON");
+        return NULL;
     }
-    // ─── UNSTRING ────────────────────────────────────────────────────────────
-    // UNSTRING identifier [DELIMITED BY [ALL] delimiter {OR [ALL] delimiter}...]
-    //     INTO {identifier [DELIMITER IN identifier] [COUNT IN identifier]}+
-    //     [WITH POINTER identifier] [TALLYING IN identifier]
-    //     [[ON] OVERFLOW ...] [NOT [ON] OVERFLOW ...] [END-UNSTRING]
-    else if (tok.kind == TOK_UNSTRING) {
+    return go;
+}
+
+// ─── STRING ──────────────────────────────────────────────────────────────
+// STRING {source+ DELIMITED BY {delimiter | SIZE}}+ INTO identifier
+//     [WITH POINTER identifier] [[ON] OVERFLOW ...] [NOT [ON] OVERFLOW ...]
+//     [END-STRING]
+static AstNode *parse_string_statement(SourceLocation loc) {
+    next();
+    AstNode *st = ast_new(AST_STATEMENT_STRING, NULL, loc);
+    AstNode *tail = NULL;
+    while (inspect_operand_start() && !parser_panic_mode) {
+        AstNode *group = NULL;
+        while (inspect_operand_start() && !parser_panic_mode) {
+            AstNode *src = tok.kind == TOK_IDENT ? parse_identifier() : parse_rel_operand();
+            if (!src) { ast_free(st); return NULL; }
+            list_append(&st->children, &tail, src);
+            if (!group) group = src;
+        }
+        if (tok.kind != TOK_DELIMITED) { ast_free(st); arith_error("Expected DELIMITED BY"); return NULL; }
         next();
-        AstNode *un = ast_new(AST_STATEMENT_UNSTRING, NULL, loc);
-        AstNode *spec = ast_new(AST_UNSTRING_SPEC, NULL, loc);
-        un->extra = spec;
-        if (tok.kind != TOK_IDENT) { ast_free(un); arith_error("Expected the sending item"); return NULL; }
-        spec->extra = parse_identifier();
-        if (tok.kind == TOK_DELIMITED) {
-            next();
-            if (tok.kind == TOK_BY) next();
-            AstNode *dtail = NULL;
-            for (;;) {
-                bool all = false;
-                if (tok.kind == TOK_ALL) { all = true; next(); }
-                AstNode *d = tok.kind == TOK_IDENT ? parse_identifier() : parse_rel_operand();
-                if (!d) { ast_free(un); arith_error("Expected a delimiter"); return NULL; }
-                d->is_signed = all;
-                list_append(&spec->children, &dtail, d);
-                if (tok.kind != TOK_OR) break;
-                next();
-            }
+        if (tok.kind == TOK_BY) next();
+        AstNode *delim = NULL;
+        if (tok.kind == TOK_SIZE) next();
+        else {
+            delim = tok.kind == TOK_IDENT ? parse_identifier() : parse_rel_operand();
+            if (!delim) { ast_free(st); arith_error("Expected a delimiter"); return NULL; }
         }
-        if (tok.kind != TOK_INTO) { ast_free(un); arith_error("Expected INTO"); return NULL; }
+        // Each source holds its own copy of its group's delimiter
+        for (AstNode *s = group; s; s = s->next) s->on_error = s == group ? delim : (delim ? ast_clone(delim) : NULL);
+    }
+    if (!st->children) { ast_free(st); arith_error("Expected a sending item after STRING"); return NULL; }
+    if (tok.kind != TOK_INTO) { ast_free(st); arith_error("Expected INTO"); return NULL; }
+    next();
+    if (tok.kind != TOK_IDENT) { ast_free(st); arith_error("Expected the receiving item"); return NULL; }
+    st->extra = parse_identifier();
+    if (tok.kind == TOK_WITH) next();
+    if (tok.kind == TOK_POINTER) {
         next();
-        AstNode *rtail = NULL;
-        while (tok.kind == TOK_IDENT && !parser_panic_mode) {
-            AstNode *r = parse_identifier();
-            list_append(&un->children, &rtail, r);
-            if (tok.kind == TOK_DELIMITER) {
-                next();
-                if (tok.kind == TOK_IN) next();
-                if (tok.kind != TOK_IDENT) { ast_free(un); arith_error("Expected the DELIMITER IN item"); return NULL; }
-                r->on_error = parse_identifier();
-            }
-            if (tok.kind == TOK_COUNT) {
-                next();
-                if (tok.kind == TOK_IN) next();
-                if (tok.kind != TOK_IDENT) { ast_free(un); arith_error("Expected the COUNT IN item"); return NULL; }
-                r->not_on_error = parse_identifier();
-            }
-        }
-        if (!un->children) { ast_free(un); arith_error("Expected a receiving item after INTO"); return NULL; }
-        if (tok.kind == TOK_WITH) next();
-        if (tok.kind == TOK_POINTER) {
+        if (tok.kind != TOK_IDENT) { ast_free(st); arith_error("Expected the pointer item"); return NULL; }
+        st->loop = parse_identifier();
+    }
+    parse_overflow_phrases(st, TOK_END_STRING);
+    return st;
+}
+
+// ─── UNSTRING ────────────────────────────────────────────────────────────
+// UNSTRING identifier [DELIMITED BY [ALL] delimiter {OR [ALL] delimiter}...]
+//     INTO {identifier [DELIMITER IN identifier] [COUNT IN identifier]}+
+//     [WITH POINTER identifier] [TALLYING IN identifier]
+//     [[ON] OVERFLOW ...] [NOT [ON] OVERFLOW ...] [END-UNSTRING]
+static AstNode *parse_unstring_statement(SourceLocation loc) {
+    next();
+    AstNode *un = ast_new(AST_STATEMENT_UNSTRING, NULL, loc);
+    AstNode *spec = ast_new(AST_UNSTRING_SPEC, NULL, loc);
+    un->extra = spec;
+    if (tok.kind != TOK_IDENT) { ast_free(un); arith_error("Expected the sending item"); return NULL; }
+    spec->extra = parse_identifier();
+    if (tok.kind == TOK_DELIMITED) {
+        next();
+        if (tok.kind == TOK_BY) next();
+        AstNode *dtail = NULL;
+        for (;;) {
+            bool all = false;
+            if (tok.kind == TOK_ALL) { all = true; next(); }
+            AstNode *d = tok.kind == TOK_IDENT ? parse_identifier() : parse_rel_operand();
+            if (!d) { ast_free(un); arith_error("Expected a delimiter"); return NULL; }
+            d->is_signed = all;
+            list_append(&spec->children, &dtail, d);
+            if (tok.kind != TOK_OR) break;
             next();
-            if (tok.kind != TOK_IDENT) { ast_free(un); arith_error("Expected the pointer item"); return NULL; }
-            spec->loop = parse_identifier();
         }
-        if (tok.kind == TOK_TALLYING) {
+    }
+    if (tok.kind != TOK_INTO) { ast_free(un); arith_error("Expected INTO"); return NULL; }
+    next();
+    AstNode *rtail = NULL;
+    while (tok.kind == TOK_IDENT && !parser_panic_mode) {
+        AstNode *r = parse_identifier();
+        list_append(&un->children, &rtail, r);
+        if (tok.kind == TOK_DELIMITER) {
             next();
             if (tok.kind == TOK_IN) next();
-            if (tok.kind != TOK_IDENT) { ast_free(un); arith_error("Expected the TALLYING IN item"); return NULL; }
-            spec->on_error = parse_identifier();
+            if (tok.kind != TOK_IDENT) { ast_free(un); arith_error("Expected the DELIMITER IN item"); return NULL; }
+            r->on_error = parse_identifier();
         }
-        parse_overflow_phrases(un, TOK_END_UNSTRING);
-        return un;
+        if (tok.kind == TOK_COUNT) {
+            next();
+            if (tok.kind == TOK_IN) next();
+            if (tok.kind != TOK_IDENT) { ast_free(un); arith_error("Expected the COUNT IN item"); return NULL; }
+            r->not_on_error = parse_identifier();
+        }
     }
-    // ─── ALTER ───────────────────────────────────────────────────────────────
-    // ALTER {paragraph TO [PROCEED TO] procedure}+
-    else if (tok.kind == TOK_ALTER) {
-        flag_obsolete(loc.line, loc.column, "ALTER");
+    if (!un->children) { ast_free(un); arith_error("Expected a receiving item after INTO"); return NULL; }
+    if (tok.kind == TOK_WITH) next();
+    if (tok.kind == TOK_POINTER) {
         next();
-        AstNode *alter = ast_new(AST_STATEMENT_ALTER, NULL, loc);
-        AstNode *tail = NULL;
-        while (is_procedure_name_token() && !parser_panic_mode) {
-            if (alter->children) diag_subset(MOD_NC, 2, TOK_LOC, "ALTER with more than one procedure");
-            AstNode *para = parse_procedure_name();
+        if (tok.kind != TOK_IDENT) { ast_free(un); arith_error("Expected the pointer item"); return NULL; }
+        spec->loop = parse_identifier();
+    }
+    if (tok.kind == TOK_TALLYING) {
+        next();
+        if (tok.kind == TOK_IN) next();
+        if (tok.kind != TOK_IDENT) { ast_free(un); arith_error("Expected the TALLYING IN item"); return NULL; }
+        spec->on_error = parse_identifier();
+    }
+    parse_overflow_phrases(un, TOK_END_UNSTRING);
+    return un;
+}
+
+// ─── ALTER ───────────────────────────────────────────────────────────────
+// ALTER {paragraph TO [PROCEED TO] procedure}+
+static AstNode *parse_alter_statement(SourceLocation loc) {
+    flag_obsolete(loc.line, loc.column, "ALTER");
+    next();
+    AstNode *alter = ast_new(AST_STATEMENT_ALTER, NULL, loc);
+    AstNode *tail = NULL;
+    while (is_procedure_name_token() && !parser_panic_mode) {
+        if (alter->children) diag_subset(MOD_NC, 2, TOK_LOC, "ALTER with more than one procedure");
+        AstNode *para = parse_procedure_name();
+        if (tok.kind != TOK_TO) { ast_free(para); ast_free(alter); arith_error("Expected TO"); return NULL; }
+        next();
+        if (tok_is_word("PROCEED")) {
+            next();
             if (tok.kind != TOK_TO) { ast_free(para); ast_free(alter); arith_error("Expected TO"); return NULL; }
             next();
-            if (tok_is_word("PROCEED")) {
-                next();
-                if (tok.kind != TOK_TO) { ast_free(para); ast_free(alter); arith_error("Expected TO"); return NULL; }
-                next();
-            }
-            if (!is_procedure_name_token()) { ast_free(para); ast_free(alter); arith_error("Expected a procedure name"); return NULL; }
-            para->children = parse_procedure_name();
-            list_append(&alter->children, &tail, para);
         }
-        if (!alter->children) { ast_free(alter); arith_error("Expected a paragraph name after ALTER"); return NULL; }
-        return alter;
+        if (!is_procedure_name_token()) { ast_free(para); ast_free(alter); arith_error("Expected a procedure name"); return NULL; }
+        para->children = parse_procedure_name();
+        list_append(&alter->children, &tail, para);
     }
-    else if (tok.kind == TOK_NEXT) {
-        next();
-        expect(TOK_SENTENCE, "SENTENCE");
-        return ast_new(AST_STATEMENT_NEXT_SENTENCE, NULL, loc);
-    }
-    else if (at_goback()) {
-        // GOBACK: EXIT PROGRAM in a called program, STOP RUN in the main one
-        diag_feature(F_GOBACK, loc, NULL);
-        next();
-        AstNode *exit_stmt = ast_new(AST_STATEMENT_EXIT, NULL, loc);
-        exit_stmt->name = strdup("GOBACK");
-        return exit_stmt;
-    }
-    else if (tok.kind == TOK_EXIT) {
-        next();
-        AstNode *exit_stmt = ast_new(AST_STATEMENT_EXIT, NULL, loc);
-        if (tok.kind == TOK_IDENT && tok.length == 7 && strncasecmp(tok.lexeme, "PROGRAM", 7) == 0) {
-            exit_stmt->name = strdup("PROGRAM");
-            next();
-        } else if (tok.kind == TOK_PERFORM) {
-            // EXIT PERFORM [CYCLE] (COBOL 2002, IBM): leave the inline
-            // PERFORM, or end its iteration
-            next();
-            if (tok.kind == TOK_IDENT && tok.length == 5 && strncasecmp(tok.lexeme, "CYCLE", 5) == 0) {
-                diag_feature(F_EXIT_PERFORM_CYCLE, loc, NULL);
-                exit_stmt->name = strdup("CYCLE");
-                next();
-            } else {
-                diag_feature(F_EXIT_PERFORM, loc, NULL);
-                exit_stmt->name = strdup("PERFORM");
-            }
-        } else if (tok.kind == TOK_SECTION ||
-                   (tok.kind == TOK_IDENT && tok.length == 9 && strncasecmp(tok.lexeme, "PARAGRAPH", 9) == 0)) {
-            // EXIT PARAGRAPH / EXIT SECTION (COBOL 2002, IBM): to the end of
-            // the paragraph or section
-            bool section = tok.kind == TOK_SECTION;
-            diag_feature(section ? F_EXIT_SECTION : F_EXIT_PARAGRAPH, loc, NULL);
-            exit_stmt->name = strdup(section ? "SECTION" : "PARAGRAPH");
-            next();
-        }
-        return exit_stmt;
-    }
-    // ─── EVALUATE ────────────────────────────────────────────────────────────
-    // EVALUATE subject {ALSO subject}...
-    //   {WHEN object {ALSO object}...}... statements ... [WHEN OTHER statements]
-    // [END-EVALUATE]
-    // Each WHEN group is turned into one condition here (WHEN lines of a group
-    // are ORed, ALSO objects ANDed), so lowering is a chain of IFs.
-    // children: AST_WHEN nodes (extra = condition, NULL for OTHER)
-    else if (tok.kind == TOK_EVALUATE) {
-        next();
-        AstNode *eval = ast_new(AST_STATEMENT_EVALUATE, NULL, loc);
-        AstNode *subjects[16];
-        int nsub = 0;
-        do {
-            if (nsub > 0) next(); // ALSO
-            if (nsub == 16) { ast_free(eval); arith_error("Too many EVALUATE subjects"); return NULL; }
-            subjects[nsub] = parse_evaluate_subject();
-            if (!subjects[nsub]) { ast_free(eval); free_subjects(subjects, nsub); return NULL; }
-            nsub++;
-        } while (tok.kind == TOK_ALSO);
+    if (!alter->children) { ast_free(alter); arith_error("Expected a paragraph name after ALTER"); return NULL; }
+    return alter;
+}
 
-        AstNode *when_tail = NULL;
-        bool seen_other = false;
-        while (tok.kind == TOK_WHEN && !seen_other) {
-            SourceLocation wloc = {tok.filename, tok.line, tok.column};
-            AstNode *group = NULL;
-            while (tok.kind == TOK_WHEN) {
-                next();
-                if (tok.kind == TOK_OTHER) {
-                    next();
-                    seen_other = true;
-                    break;
-                }
-                AstNode *alt = NULL;
-                for (int k = 0; k < nsub; k++) {
-                    if (k > 0) {
-                        if (tok.kind != TOK_ALSO) { ast_free(alt); ast_free(group); ast_free(eval); free_subjects(subjects, nsub); arith_error("Expected ALSO"); return NULL; }
-                        next();
-                    }
-                    AstNode *obj = parse_when_object(subjects[k]);
-                    if (!obj) { ast_free(alt); ast_free(group); ast_free(eval); free_subjects(subjects, nsub); return NULL; }
-                    alt = alt ? make_cond(AST_COND_AND, alt, obj, alt->loc) : obj;
-                }
-                group = group ? make_cond(AST_COND_OR, group, alt, group->loc) : alt;
-            }
-            AstNode *when = ast_new(AST_WHEN, NULL, wloc);
-            when->extra = seen_other ? (ast_free(group), NULL) : group;
-            when->children = parse_block();
-            list_append(&eval->children, &when_tail, when);
-        }
-        free_subjects(subjects, nsub);
-        if (!eval->children) { ast_free(eval); arith_error("Expected WHEN"); return NULL; }
-        if (tok.kind == TOK_END_EVALUATE) next();
-        return eval;
-    }
-    // ─── SET ─────────────────────────────────────────────────────────────────
-    // SET condition-name+ TO TRUE          (name TRUE)
-    // SET identifier+ TO operand           (name TO)
-    // SET index-name+ UP|DOWN BY operand   (name UP / DOWN)
-    // {SET mnemonic-name+ TO ON|OFF}+      (name SWITCH; each receiver's text ON / OFF)
-    // children: receivers; extra: sending operand
-    else if (tok.kind == TOK_SET) {
+static AstNode *parse_next_statement(SourceLocation loc) {
+    next();
+    expect(TOK_SENTENCE, "SENTENCE");
+    return ast_new(AST_STATEMENT_NEXT_SENTENCE, NULL, loc);
+}
+
+static AstNode *parse_goback_statement(SourceLocation loc) {
+    // GOBACK: EXIT PROGRAM in a called program, STOP RUN in the main one
+    diag_feature(F_GOBACK, loc, NULL);
+    next();
+    AstNode *exit_stmt = ast_new(AST_STATEMENT_EXIT, NULL, loc);
+    exit_stmt->name = strdup("GOBACK");
+    return exit_stmt;
+}
+
+static AstNode *parse_exit_statement(SourceLocation loc) {
+    next();
+    AstNode *exit_stmt = ast_new(AST_STATEMENT_EXIT, NULL, loc);
+    if (tok.kind == TOK_IDENT && tok.length == 7 && strncasecmp(tok.lexeme, "PROGRAM", 7) == 0) {
+        exit_stmt->name = strdup("PROGRAM");
         next();
-        AstNode *set = ast_new(AST_STATEMENT_SET, NULL, loc);
-        AstNode *tail = NULL;
-        while (tok.kind == TOK_IDENT && !parser_panic_mode)
-            list_append(&set->children, &tail, parse_identifier());
-        if (!set->children) { ast_free(set); arith_error("Expected identifier after SET"); return NULL; }
-        if (tok.kind == TOK_TO) {
-            next();
-            if (tok.kind == TOK_TRUE) {
-                diag_subset(MOD_NC, 2, loc, "SET ... TO TRUE");
-                next();
-                set->name = strdup("TRUE");
-                for (AstNode *c = set->children; c; c = c->next) {
-                    if (!is_condition_name(c))
-                        diag_error(c->loc, "'%s' is not a condition-name", c->name);
-                }
-                return set;
-            }
-            if (tok.kind == TOK_ON || tok_is_word("OFF")) {
-                set->name = strdup("SWITCH");
-                AstNode *group = set->children;
-                for (;;) {
-                    const char *state = tok.kind == TOK_ON ? "ON" : "OFF";
-                    for (; group; group = group->next) group->text = strdup(state);
-                    next();
-                    // another group: mnemonic-name+ TO ON|OFF
-                    if (tok.kind != TOK_IDENT || !is_mnemonic_name()) break;
-                    while (tok.kind == TOK_IDENT && !parser_panic_mode) {
-                        AstNode *r = parse_identifier();
-                        if (!group) group = r;
-                        list_append(&set->children, &tail, r);
-                    }
-                    if (tok.kind != TOK_TO) { arith_error("Expected TO"); break; }
-                    next();
-                    if (tok.kind != TOK_ON && !tok_is_word("OFF")) { arith_error("Expected ON or OFF"); break; }
-                }
-                return set;
-            }
-            set->name = strdup("TO");
-        } else if (tok.kind == TOK_UP || tok.kind == TOK_DOWN) {
-            set->name = strdup(tok.kind == TOK_UP ? "UP" : "DOWN");
-            next();
-            if (tok.kind != TOK_BY) { ast_free(set); arith_error("Expected BY"); return NULL; }
+    } else if (tok.kind == TOK_PERFORM) {
+        // EXIT PERFORM [CYCLE] (COBOL 2002, IBM): leave the inline
+        // PERFORM, or end its iteration
+        next();
+        if (tok.kind == TOK_IDENT && tok.length == 5 && strncasecmp(tok.lexeme, "CYCLE", 5) == 0) {
+            diag_feature(F_EXIT_PERFORM_CYCLE, loc, NULL);
+            exit_stmt->name = strdup("CYCLE");
             next();
         } else {
-            ast_free(set);
-            arith_error("Expected TO, UP BY or DOWN BY");
-            return NULL;
+            diag_feature(F_EXIT_PERFORM, loc, NULL);
+            exit_stmt->name = strdup("PERFORM");
         }
-        set->extra = parse_arith_operand();
-        if (!set->extra) { ast_free(set); arith_error("Expected SET operand"); return NULL; }
-        return set;
-    }
-    // ─── INITIALIZE ──────────────────────────────────────────────────────────
-    // INITIALIZE identifier+ (numeric items to zero, others to spaces)
-    //     [REPLACING {category [DATA] BY operand}+]
-    // children: receivers; extra: one node per REPLACING phrase (name: the
-    // category, children: the operand)
-    else if (tok.kind == TOK_INITIALIZE) {
+    } else if (tok.kind == TOK_SECTION ||
+               (tok.kind == TOK_IDENT && tok.length == 9 && strncasecmp(tok.lexeme, "PARAGRAPH", 9) == 0)) {
+        // EXIT PARAGRAPH / EXIT SECTION (COBOL 2002, IBM): to the end of
+        // the paragraph or section
+        bool section = tok.kind == TOK_SECTION;
+        diag_feature(section ? F_EXIT_SECTION : F_EXIT_PARAGRAPH, loc, NULL);
+        exit_stmt->name = strdup(section ? "SECTION" : "PARAGRAPH");
         next();
-        AstNode *init = ast_new(AST_STATEMENT_INITIALIZE, NULL, loc);
-        AstNode *tail = NULL;
-        while (tok.kind == TOK_IDENT && !parser_panic_mode)
-            list_append(&init->children, &tail, parse_identifier());
-        if (!init->children) { ast_free(init); arith_error("Expected identifier after INITIALIZE"); return NULL; }
-        if (tok.kind == TOK_REPLACING) {
+    }
+    return exit_stmt;
+}
+
+// ─── EVALUATE ────────────────────────────────────────────────────────────
+// EVALUATE subject {ALSO subject}...
+//   {WHEN object {ALSO object}...}... statements ... [WHEN OTHER statements]
+// [END-EVALUATE]
+// Each WHEN group is turned into one condition here (WHEN lines of a group
+// are ORed, ALSO objects ANDed), so lowering is a chain of IFs.
+// children: AST_WHEN nodes (extra = condition, NULL for OTHER)
+static AstNode *parse_evaluate_statement(SourceLocation loc) {
+    next();
+    AstNode *eval = ast_new(AST_STATEMENT_EVALUATE, NULL, loc);
+    AstNode *subjects[16];
+    int nsub = 0;
+    do {
+        if (nsub > 0) next(); // ALSO
+        if (nsub == 16) { ast_free(eval); arith_error("Too many EVALUATE subjects"); return NULL; }
+        subjects[nsub] = parse_evaluate_subject();
+        if (!subjects[nsub]) { ast_free(eval); free_subjects(subjects, nsub); return NULL; }
+        nsub++;
+    } while (tok.kind == TOK_ALSO);
+
+    AstNode *when_tail = NULL;
+    bool seen_other = false;
+    while (tok.kind == TOK_WHEN && !seen_other) {
+        SourceLocation wloc = {tok.filename, tok.line, tok.column};
+        AstNode *group = NULL;
+        while (tok.kind == TOK_WHEN) {
             next();
-            AstNode *rtail = NULL;
-            for (;;) {
-                const char *category = tok.kind == TOK_ALPHABETIC ? "ALPHABETIC" :
-                                       tok.kind == TOK_NUMERIC ? "NUMERIC" :
-                                       tok_is_word("ALPHANUMERIC") ? "ALPHANUMERIC" :
-                                       tok_is_word("ALPHANUMERIC-EDITED") ? "ALPHANUMERIC-EDITED" :
-                                       tok_is_word("NUMERIC-EDITED") ? "NUMERIC-EDITED" : NULL;
-                if (!category) break;
-                SourceLocation rloc = {tok.filename, tok.line, tok.column};
+            if (tok.kind == TOK_OTHER) {
                 next();
-                if (tok.kind == TOK_DATA) next();
-                if (tok.kind != TOK_BY) { ast_free(init); arith_error("Expected BY"); return NULL; }
-                next();
-                AstNode *phrase = ast_new(AST_IDENTIFIER, category, rloc);
-                phrase->children = parse_rel_operand();
-                if (!phrase->children) { ast_free(phrase); ast_free(init); return NULL; }
-                list_append(&init->extra, &rtail, phrase);
+                seen_other = true;
+                break;
             }
-            if (!init->extra) { ast_free(init); arith_error("Expected a category after REPLACING"); return NULL; }
-        }
-        return init;
-    }
-    // ─── SEARCH ──────────────────────────────────────────────────────────────
-    // SEARCH table [VARYING identifier] [AT END statements]
-    //     {WHEN condition statements}... [END-SEARCH]
-    // SEARCH ALL table [AT END statements] WHEN condition statements [END-SEARCH]
-    else if (tok.kind == TOK_SEARCH) {
-        next();
-        AstNode *search = ast_new(AST_STATEMENT_SEARCH, NULL, loc);
-        if (tok.kind == TOK_ALL) {
-            next();
-            search->name = strdup("ALL");
-        }
-        if (tok.kind != TOK_IDENT) { ast_free(search); arith_error("Expected table name after SEARCH"); return NULL; }
-        search->extra = parse_identifier();
-        if (tok.kind == TOK_VARYING) {
-            next();
-            search->loop = parse_arith_operand();
-        }
-        if (tok.kind == TOK_AT || tok.kind == TOK_END) {
-            if (tok.kind == TOK_AT) next();
-            if (tok.kind != TOK_END) { ast_free(search); arith_error("Expected END after AT"); return NULL; }
-            next();
-            search->on_error = parse_block();
-            if (!search->on_error) search->on_error = ast_new(AST_STATEMENT_CONTINUE, NULL, loc);
-        }
-        AstNode *tail = NULL;
-        while (tok.kind == TOK_WHEN && !parser_panic_mode) {
-            SourceLocation wloc = {tok.filename, tok.line, tok.column};
-            next();
-            AstNode *when = ast_new(AST_WHEN, NULL, wloc);
-            when->extra = parse_condition();
-            if (!when->extra) { ast_free(when); ast_free(search); return NULL; }
-            when->children = parse_block();
-            list_append(&search->children, &tail, when);
-        }
-        if (!search->children) { ast_free(search); arith_error("Expected WHEN in SEARCH"); return NULL; }
-        if (tok.kind == TOK_END_SEARCH) next();
-        return search;
-    }
-    // ─── INSPECT ─────────────────────────────────────────────────────────────
-    // INSPECT id [TALLYING {counter FOR {CHARACTERS [phrases] |
-    //                                    {ALL|LEADING} {operand [phrases]}...}...}...]
-    //            [REPLACING {CHARACTERS BY operand [phrases] |
-    //                        {ALL|LEADING|FIRST} {operand BY operand [phrases]}...}...]
-    // INSPECT id CONVERTING operand TO operand [phrases]
-    // phrases: [{BEFORE|AFTER} [INITIAL] operand]...
-    else if (tok.kind == TOK_INSPECT) {
-        next();
-        AstNode *insp = ast_new(AST_STATEMENT_INSPECT, NULL, loc);
-        if (tok.kind != TOK_IDENT) { ast_free(insp); arith_error("Expected identifier after INSPECT"); return NULL; }
-        insp->extra = parse_identifier();
-        AstNode *tail = NULL;
-        if (tok.kind == TOK_CONVERTING) {
-            diag_subset(MOD_NC, 2, TOK_LOC, "INSPECT ... CONVERTING");
-            next();
-            AstNode *item = ast_new(AST_INSPECT_ITEM, "CONVERT", loc);
-            item->extra = parse_value_operand();
-            if (!item->extra || tok.kind != TOK_TO) { ast_free(item); ast_free(insp); arith_error("Expected CONVERTING operand TO operand"); return NULL; }
-            next();
-            item->on_error = parse_value_operand();
-            if (!item->on_error || !parse_inspect_phrases(item)) { ast_free(item); ast_free(insp); return NULL; }
-            list_append(&insp->children, &tail, item);
-            return insp;
-        }
-        if (tok.kind == TOK_TALLYING) {
-            next();
-            while (tok.kind == TOK_IDENT) {
-                AstNode *counter = parse_identifier();
-                if (tok.kind != TOK_FOR) { ast_free(counter); ast_free(insp); arith_error("Expected FOR"); return NULL; }
-                next();
-                const char *kind = NULL;
-                while (true) {
-                    if (tok.kind == TOK_CHARACTERS) kind = "CHARACTERS";
-                    else if (tok.kind == TOK_ALL) kind = "ALL";
-                    else if (tok.kind == TOK_LEADING) kind = "LEADING";
-                    if (tok.kind == TOK_CHARACTERS || tok.kind == TOK_ALL || tok.kind == TOK_LEADING) next();
-                    else if (!kind) break;
-                    else if (strcmp(kind, "CHARACTERS") == 0 || !inspect_operand_start()) break;
-                    AstNode *item = ast_new(AST_INSPECT_ITEM, kind, loc);
-                    item->loop = ast_clone(counter);
-                    if (strcmp(kind, "CHARACTERS") != 0) {
-                        item->extra = parse_value_operand();
-                        if (!item->extra) { ast_free(item); ast_free(counter); ast_free(insp); arith_error("Expected TALLYING operand"); return NULL; }
-                    }
-                    if (!parse_inspect_phrases(item)) { ast_free(item); ast_free(counter); ast_free(insp); return NULL; }
-                    list_append(&insp->children, &tail, item);
-                    if (strcmp(kind, "CHARACTERS") == 0) kind = NULL;
-                    if (!inspect_operand_start() && tok.kind != TOK_CHARACTERS &&
-                        tok.kind != TOK_ALL && tok.kind != TOK_LEADING) break;
-                    if (tok.kind == TOK_IDENT && peek_token().kind == TOK_FOR) break;  // next counter
+            AstNode *alt = NULL;
+            for (int k = 0; k < nsub; k++) {
+                if (k > 0) {
+                    if (tok.kind != TOK_ALSO) { ast_free(alt); ast_free(group); ast_free(eval); free_subjects(subjects, nsub); arith_error("Expected ALSO"); return NULL; }
+                    next();
                 }
-                ast_free(counter);
+                AstNode *obj = parse_when_object(subjects[k]);
+                if (!obj) { ast_free(alt); ast_free(group); ast_free(eval); free_subjects(subjects, nsub); return NULL; }
+                alt = alt ? make_cond(AST_COND_AND, alt, obj, alt->loc) : obj;
             }
+            group = group ? make_cond(AST_COND_OR, group, alt, group->loc) : alt;
         }
-        if (tok.kind == TOK_REPLACING) {
+        AstNode *when = ast_new(AST_WHEN, NULL, wloc);
+        when->extra = seen_other ? (ast_free(group), NULL) : group;
+        when->children = parse_block();
+        list_append(&eval->children, &when_tail, when);
+    }
+    free_subjects(subjects, nsub);
+    if (!eval->children) { ast_free(eval); arith_error("Expected WHEN"); return NULL; }
+    if (tok.kind == TOK_END_EVALUATE) next();
+    return eval;
+}
+
+// ─── SET ─────────────────────────────────────────────────────────────────
+// SET condition-name+ TO TRUE          (name TRUE)
+// SET identifier+ TO operand           (name TO)
+// SET index-name+ UP|DOWN BY operand   (name UP / DOWN)
+// {SET mnemonic-name+ TO ON|OFF}+      (name SWITCH; each receiver's text ON / OFF)
+// children: receivers; extra: sending operand
+static AstNode *parse_set_statement(SourceLocation loc) {
+    next();
+    AstNode *set = ast_new(AST_STATEMENT_SET, NULL, loc);
+    AstNode *tail = NULL;
+    while (tok.kind == TOK_IDENT && !parser_panic_mode)
+        list_append(&set->children, &tail, parse_identifier());
+    if (!set->children) { ast_free(set); arith_error("Expected identifier after SET"); return NULL; }
+    if (tok.kind == TOK_TO) {
+        next();
+        if (tok.kind == TOK_TRUE) {
+            diag_subset(MOD_NC, 2, loc, "SET ... TO TRUE");
+            next();
+            set->name = strdup("TRUE");
+            for (AstNode *c = set->children; c; c = c->next) {
+                if (!is_condition_name(c))
+                    diag_error(c->loc, "'%s' is not a condition-name", c->name);
+            }
+            return set;
+        }
+        if (tok.kind == TOK_ON || tok_is_word("OFF")) {
+            set->name = strdup("SWITCH");
+            AstNode *group = set->children;
+            for (;;) {
+                const char *state = tok.kind == TOK_ON ? "ON" : "OFF";
+                for (; group; group = group->next) group->text = strdup(state);
+                next();
+                // another group: mnemonic-name+ TO ON|OFF
+                if (tok.kind != TOK_IDENT || !is_mnemonic_name()) break;
+                while (tok.kind == TOK_IDENT && !parser_panic_mode) {
+                    AstNode *r = parse_identifier();
+                    if (!group) group = r;
+                    list_append(&set->children, &tail, r);
+                }
+                if (tok.kind != TOK_TO) { arith_error("Expected TO"); break; }
+                next();
+                if (tok.kind != TOK_ON && !tok_is_word("OFF")) { arith_error("Expected ON or OFF"); break; }
+            }
+            return set;
+        }
+        set->name = strdup("TO");
+    } else if (tok.kind == TOK_UP || tok.kind == TOK_DOWN) {
+        set->name = strdup(tok.kind == TOK_UP ? "UP" : "DOWN");
+        next();
+        if (tok.kind != TOK_BY) { ast_free(set); arith_error("Expected BY"); return NULL; }
+        next();
+    } else {
+        ast_free(set);
+        arith_error("Expected TO, UP BY or DOWN BY");
+        return NULL;
+    }
+    set->extra = parse_arith_operand();
+    if (!set->extra) { ast_free(set); arith_error("Expected SET operand"); return NULL; }
+    return set;
+}
+
+// ─── INITIALIZE ──────────────────────────────────────────────────────────
+// INITIALIZE identifier+ (numeric items to zero, others to spaces)
+//     [REPLACING {category [DATA] BY operand}+]
+// children: receivers; extra: one node per REPLACING phrase (name: the
+// category, children: the operand)
+static AstNode *parse_initialize_statement(SourceLocation loc) {
+    next();
+    AstNode *init = ast_new(AST_STATEMENT_INITIALIZE, NULL, loc);
+    AstNode *tail = NULL;
+    while (tok.kind == TOK_IDENT && !parser_panic_mode)
+        list_append(&init->children, &tail, parse_identifier());
+    if (!init->children) { ast_free(init); arith_error("Expected identifier after INITIALIZE"); return NULL; }
+    if (tok.kind == TOK_REPLACING) {
+        next();
+        AstNode *rtail = NULL;
+        for (;;) {
+            const char *category = tok.kind == TOK_ALPHABETIC ? "ALPHABETIC" :
+                                   tok.kind == TOK_NUMERIC ? "NUMERIC" :
+                                   tok_is_word("ALPHANUMERIC") ? "ALPHANUMERIC" :
+                                   tok_is_word("ALPHANUMERIC-EDITED") ? "ALPHANUMERIC-EDITED" :
+                                   tok_is_word("NUMERIC-EDITED") ? "NUMERIC-EDITED" : NULL;
+            if (!category) break;
+            SourceLocation rloc = {tok.filename, tok.line, tok.column};
+            next();
+            if (tok.kind == TOK_DATA) next();
+            if (tok.kind != TOK_BY) { ast_free(init); arith_error("Expected BY"); return NULL; }
+            next();
+            AstNode *phrase = ast_new(AST_IDENTIFIER, category, rloc);
+            phrase->children = parse_rel_operand();
+            if (!phrase->children) { ast_free(phrase); ast_free(init); return NULL; }
+            list_append(&init->extra, &rtail, phrase);
+        }
+        if (!init->extra) { ast_free(init); arith_error("Expected a category after REPLACING"); return NULL; }
+    }
+    return init;
+}
+
+// ─── SEARCH ──────────────────────────────────────────────────────────────
+// SEARCH table [VARYING identifier] [AT END statements]
+//     {WHEN condition statements}... [END-SEARCH]
+// SEARCH ALL table [AT END statements] WHEN condition statements [END-SEARCH]
+static AstNode *parse_search_statement(SourceLocation loc) {
+    next();
+    AstNode *search = ast_new(AST_STATEMENT_SEARCH, NULL, loc);
+    if (tok.kind == TOK_ALL) {
+        next();
+        search->name = strdup("ALL");
+    }
+    if (tok.kind != TOK_IDENT) { ast_free(search); arith_error("Expected table name after SEARCH"); return NULL; }
+    search->extra = parse_identifier();
+    if (tok.kind == TOK_VARYING) {
+        next();
+        search->loop = parse_arith_operand();
+    }
+    if (tok.kind == TOK_AT || tok.kind == TOK_END) {
+        if (tok.kind == TOK_AT) next();
+        if (tok.kind != TOK_END) { ast_free(search); arith_error("Expected END after AT"); return NULL; }
+        next();
+        search->on_error = parse_block();
+        if (!search->on_error) search->on_error = ast_new(AST_STATEMENT_CONTINUE, NULL, loc);
+    }
+    AstNode *tail = NULL;
+    while (tok.kind == TOK_WHEN && !parser_panic_mode) {
+        SourceLocation wloc = {tok.filename, tok.line, tok.column};
+        next();
+        AstNode *when = ast_new(AST_WHEN, NULL, wloc);
+        when->extra = parse_condition();
+        if (!when->extra) { ast_free(when); ast_free(search); return NULL; }
+        when->children = parse_block();
+        list_append(&search->children, &tail, when);
+    }
+    if (!search->children) { ast_free(search); arith_error("Expected WHEN in SEARCH"); return NULL; }
+    if (tok.kind == TOK_END_SEARCH) next();
+    return search;
+}
+
+// ─── INSPECT ─────────────────────────────────────────────────────────────
+// INSPECT id [TALLYING {counter FOR {CHARACTERS [phrases] |
+//                                    {ALL|LEADING} {operand [phrases]}...}...}...]
+//            [REPLACING {CHARACTERS BY operand [phrases] |
+//                        {ALL|LEADING|FIRST} {operand BY operand [phrases]}...}...]
+// INSPECT id CONVERTING operand TO operand [phrases]
+// phrases: [{BEFORE|AFTER} [INITIAL] operand]...
+static AstNode *parse_inspect_statement(SourceLocation loc) {
+    next();
+    AstNode *insp = ast_new(AST_STATEMENT_INSPECT, NULL, loc);
+    if (tok.kind != TOK_IDENT) { ast_free(insp); arith_error("Expected identifier after INSPECT"); return NULL; }
+    insp->extra = parse_identifier();
+    AstNode *tail = NULL;
+    if (tok.kind == TOK_CONVERTING) {
+        diag_subset(MOD_NC, 2, TOK_LOC, "INSPECT ... CONVERTING");
+        next();
+        AstNode *item = ast_new(AST_INSPECT_ITEM, "CONVERT", loc);
+        item->extra = parse_value_operand();
+        if (!item->extra || tok.kind != TOK_TO) { ast_free(item); ast_free(insp); arith_error("Expected CONVERTING operand TO operand"); return NULL; }
+        next();
+        item->on_error = parse_value_operand();
+        if (!item->on_error || !parse_inspect_phrases(item)) { ast_free(item); ast_free(insp); return NULL; }
+        list_append(&insp->children, &tail, item);
+        return insp;
+    }
+    if (tok.kind == TOK_TALLYING) {
+        next();
+        while (tok.kind == TOK_IDENT) {
+            AstNode *counter = parse_identifier();
+            if (tok.kind != TOK_FOR) { ast_free(counter); ast_free(insp); arith_error("Expected FOR"); return NULL; }
             next();
             const char *kind = NULL;
             while (true) {
                 if (tok.kind == TOK_CHARACTERS) kind = "CHARACTERS";
                 else if (tok.kind == TOK_ALL) kind = "ALL";
                 else if (tok.kind == TOK_LEADING) kind = "LEADING";
-                else if (tok.kind == TOK_FIRST) kind = "FIRST";
-                if (tok.kind == TOK_CHARACTERS || tok.kind == TOK_ALL || tok.kind == TOK_LEADING || tok.kind == TOK_FIRST) next();
-                else if (!kind || strcmp(kind, "CHARACTERS") == 0 || !inspect_operand_start()) break;
+                if (tok.kind == TOK_CHARACTERS || tok.kind == TOK_ALL || tok.kind == TOK_LEADING) next();
+                else if (!kind) break;
+                else if (strcmp(kind, "CHARACTERS") == 0 || !inspect_operand_start()) break;
                 AstNode *item = ast_new(AST_INSPECT_ITEM, kind, loc);
+                item->loop = ast_clone(counter);
                 if (strcmp(kind, "CHARACTERS") != 0) {
                     item->extra = parse_value_operand();
-                    if (!item->extra) { ast_free(item); ast_free(insp); arith_error("Expected REPLACING operand"); return NULL; }
+                    if (!item->extra) { ast_free(item); ast_free(counter); ast_free(insp); arith_error("Expected TALLYING operand"); return NULL; }
                 }
-                if (tok.kind != TOK_BY) { ast_free(item); ast_free(insp); arith_error("Expected BY"); return NULL; }
-                next();
-                item->on_error = parse_value_operand();
-                if (!item->on_error || !parse_inspect_phrases(item)) { ast_free(item); ast_free(insp); arith_error("Expected replacement operand"); return NULL; }
+                if (!parse_inspect_phrases(item)) { ast_free(item); ast_free(counter); ast_free(insp); return NULL; }
                 list_append(&insp->children, &tail, item);
                 if (strcmp(kind, "CHARACTERS") == 0) kind = NULL;
+                if (!inspect_operand_start() && tok.kind != TOK_CHARACTERS &&
+                    tok.kind != TOK_ALL && tok.kind != TOK_LEADING) break;
+                if (tok.kind == TOK_IDENT && peek_token().kind == TOK_FOR) break;  // next counter
             }
+            ast_free(counter);
         }
-        if (!insp->children) { ast_free(insp); arith_error("Expected TALLYING, REPLACING or CONVERTING"); return NULL; }
-        return insp;
     }
-    // ─── OPEN {INPUT|OUTPUT|I-O|EXTEND} file... ...  CLOSE file... ──────────
-    else if (tok.kind == TOK_OPEN || tok.kind == TOK_CLOSE) {
-        bool is_open = tok.kind == TOK_OPEN;
+    if (tok.kind == TOK_REPLACING) {
         next();
-        AstNode *stmt = ast_new(is_open ? AST_STATEMENT_OPEN : AST_STATEMENT_CLOSE, NULL, loc);
-        AstNode *tail = NULL;
-        int mode = 0;
-        SourceLocation mode_loc = loc;
-        while (!parser_panic_mode) {
-            if (is_open && (tok.kind == TOK_INPUT || tok.kind == TOK_OUTPUT ||
-                            tok.kind == TOK_I_O || tok.kind == TOK_EXTEND)) {
-                mode = tok.kind == TOK_INPUT ? 1 : tok.kind == TOK_OUTPUT ? 2 : tok.kind == TOK_I_O ? 3 : 4;
-                mode_loc = TOK_LOC;
-                next();
-            } else if (tok.kind == TOK_IDENT && (!is_open || mode) && !tok_is_word("REVERSED") &&
-                       !tok_is_word("REEL") && !tok_is_word("UNIT") && !tok_is_word("NO") &&
-                       !tok_is_word("LOCK")) {
-                AstNode *file = parse_procedure_name();
-                file->decimal_places = mode;
-                list_append(&stmt->children, &tail, file);
-                CobolModule fmod = org_module(file_org_of(file->name));
-                if (mode == 4) diag_subset(fmod, 2, mode_loc, "OPEN EXTEND");
-                // OPEN options (digits): 1 REVERSED, 2 WITH NO REWIND; CLOSE
-                // options: 1 REEL / UNIT [FOR REMOVAL], 2 WITH NO REWIND, 4 WITH LOCK
-                while (tok_is_word("REEL") || tok_is_word("UNIT") || tok.kind == TOK_WITH ||
-                       tok_is_word("NO") || tok_is_word("REWIND") || tok_is_word("LOCK") ||
-                       tok_is_word("REVERSED") || tok.kind == TOK_FOR || tok_is_word("REMOVAL")) {
-                    if (tok_is_word("REEL") || tok_is_word("UNIT")) {
-                        diag_subset(MOD_SQ, 2, TOK_LOC, "CLOSE REEL / UNIT");
-                        file->digits |= 1;
-                    }
-                    else if (tok_is_word("REVERSED")) {
-                        file->digits |= 1;
-                        flag_obsolete(tok.line, tok.column, "OPEN REVERSED");
-                        diag_subset(MOD_SQ, 2, TOK_LOC, "OPEN REVERSED");
-                    }
-                    else if (tok_is_word("REWIND")) {
-                        diag_subset(MOD_SQ, 2, TOK_LOC, "WITH NO REWIND");
-                        file->digits |= 2;
-                    }
-                    else if (tok_is_word("LOCK")) {
-                        diag_subset(fmod, 2, TOK_LOC, "CLOSE WITH LOCK");
-                        file->digits |= 4;
-                    }
-                    else if (tok_is_word("REMOVAL")) diag_subset(MOD_SQ, 2, TOK_LOC, "FOR REMOVAL");
-                    next();
-                }
-            } else {
-                break;
+        const char *kind = NULL;
+        while (true) {
+            if (tok.kind == TOK_CHARACTERS) kind = "CHARACTERS";
+            else if (tok.kind == TOK_ALL) kind = "ALL";
+            else if (tok.kind == TOK_LEADING) kind = "LEADING";
+            else if (tok.kind == TOK_FIRST) kind = "FIRST";
+            if (tok.kind == TOK_CHARACTERS || tok.kind == TOK_ALL || tok.kind == TOK_LEADING || tok.kind == TOK_FIRST) next();
+            else if (!kind || strcmp(kind, "CHARACTERS") == 0 || !inspect_operand_start()) break;
+            AstNode *item = ast_new(AST_INSPECT_ITEM, kind, loc);
+            if (strcmp(kind, "CHARACTERS") != 0) {
+                item->extra = parse_value_operand();
+                if (!item->extra) { ast_free(item); ast_free(insp); arith_error("Expected REPLACING operand"); return NULL; }
             }
-        }
-        if (!stmt->children) { ast_free(stmt); arith_error(is_open ? "Expected OPEN mode and file" : "Expected file name"); return NULL; }
-        return stmt;
-    }
-    // ─── ENTER language-name [routine-name]: no other language here
-    else if (tok.kind == TOK_ENTER) {
-        flag_obsolete(loc.line, loc.column, "ENTER");
-        next();
-        while (tok.kind == TOK_IDENT) next();
-        return ast_new(AST_STATEMENT_CONTINUE, NULL, loc);
-    }
-    // ─── CALL {identifier | literal} [USING {[BY REFERENCE] id... | BY CONTENT
-    //     id...}...] [ON OVERFLOW s | [ON EXCEPTION s] [NOT ON EXCEPTION s]] [END-CALL]
-    else if (tok.kind == TOK_CALL) {
-        next();
-        AstNode *call = ast_new(AST_STATEMENT_CALL, NULL, loc);
-        if (tok.kind == TOK_STRING) {
-            call->extra = ast_new(AST_STRING_LITERAL, NULL, loc);
-            free(call->extra->name);
-            call->extra->name = tok_value();
+            if (tok.kind != TOK_BY) { ast_free(item); ast_free(insp); arith_error("Expected BY"); return NULL; }
             next();
-        } else if (tok.kind == TOK_IDENT) {
-            call->extra = parse_identifier();
+            item->on_error = parse_value_operand();
+            if (!item->on_error || !parse_inspect_phrases(item)) { ast_free(item); ast_free(insp); arith_error("Expected replacement operand"); return NULL; }
+            list_append(&insp->children, &tail, item);
+            if (strcmp(kind, "CHARACTERS") == 0) kind = NULL;
+        }
+    }
+    if (!insp->children) { ast_free(insp); arith_error("Expected TALLYING, REPLACING or CONVERTING"); return NULL; }
+    return insp;
+}
+
+// ─── OPEN {INPUT|OUTPUT|I-O|EXTEND} file... ...  CLOSE file... ──────────
+static AstNode *parse_open_close_statement(SourceLocation loc) {
+    bool is_open = tok.kind == TOK_OPEN;
+    next();
+    AstNode *stmt = ast_new(is_open ? AST_STATEMENT_OPEN : AST_STATEMENT_CLOSE, NULL, loc);
+    AstNode *tail = NULL;
+    int mode = 0;
+    SourceLocation mode_loc = loc;
+    while (!parser_panic_mode) {
+        if (is_open && (tok.kind == TOK_INPUT || tok.kind == TOK_OUTPUT ||
+                        tok.kind == TOK_I_O || tok.kind == TOK_EXTEND)) {
+            mode = tok.kind == TOK_INPUT ? 1 : tok.kind == TOK_OUTPUT ? 2 : tok.kind == TOK_I_O ? 3 : 4;
+            mode_loc = TOK_LOC;
+            next();
+        } else if (tok.kind == TOK_IDENT && (!is_open || mode) && !tok_is_word("REVERSED") &&
+                   !tok_is_word("REEL") && !tok_is_word("UNIT") && !tok_is_word("NO") &&
+                   !tok_is_word("LOCK")) {
+            AstNode *file = parse_procedure_name();
+            file->decimal_places = mode;
+            list_append(&stmt->children, &tail, file);
+            CobolModule fmod = org_module(file_org_of(file->name));
+            if (mode == 4) diag_subset(fmod, 2, mode_loc, "OPEN EXTEND");
+            // OPEN options (digits): 1 REVERSED, 2 WITH NO REWIND; CLOSE
+            // options: 1 REEL / UNIT [FOR REMOVAL], 2 WITH NO REWIND, 4 WITH LOCK
+            while (tok_is_word("REEL") || tok_is_word("UNIT") || tok.kind == TOK_WITH ||
+                   tok_is_word("NO") || tok_is_word("REWIND") || tok_is_word("LOCK") ||
+                   tok_is_word("REVERSED") || tok.kind == TOK_FOR || tok_is_word("REMOVAL")) {
+                if (tok_is_word("REEL") || tok_is_word("UNIT")) {
+                    diag_subset(MOD_SQ, 2, TOK_LOC, "CLOSE REEL / UNIT");
+                    file->digits |= 1;
+                }
+                else if (tok_is_word("REVERSED")) {
+                    file->digits |= 1;
+                    flag_obsolete(tok.line, tok.column, "OPEN REVERSED");
+                    diag_subset(MOD_SQ, 2, TOK_LOC, "OPEN REVERSED");
+                }
+                else if (tok_is_word("REWIND")) {
+                    diag_subset(MOD_SQ, 2, TOK_LOC, "WITH NO REWIND");
+                    file->digits |= 2;
+                }
+                else if (tok_is_word("LOCK")) {
+                    diag_subset(fmod, 2, TOK_LOC, "CLOSE WITH LOCK");
+                    file->digits |= 4;
+                }
+                else if (tok_is_word("REMOVAL")) diag_subset(MOD_SQ, 2, TOK_LOC, "FOR REMOVAL");
+                next();
+            }
         } else {
-            ast_free(call);
-            arith_error("Expected the program name after CALL");
+            break;
+        }
+    }
+    if (!stmt->children) { ast_free(stmt); arith_error(is_open ? "Expected OPEN mode and file" : "Expected file name"); return NULL; }
+    return stmt;
+}
+
+// ─── ENTER language-name [routine-name]: no other language here
+static AstNode *parse_enter_statement(SourceLocation loc) {
+    flag_obsolete(loc.line, loc.column, "ENTER");
+    next();
+    while (tok.kind == TOK_IDENT) next();
+    return ast_new(AST_STATEMENT_CONTINUE, NULL, loc);
+}
+
+// ─── CALL {identifier | literal} [USING {[BY REFERENCE] id... | BY CONTENT
+//     id...}...] [ON OVERFLOW s | [ON EXCEPTION s] [NOT ON EXCEPTION s]] [END-CALL]
+static AstNode *parse_call_statement(SourceLocation loc) {
+    next();
+    AstNode *call = ast_new(AST_STATEMENT_CALL, NULL, loc);
+    if (tok.kind == TOK_STRING) {
+        call->extra = ast_new(AST_STRING_LITERAL, NULL, loc);
+        free(call->extra->name);
+        call->extra->name = tok_value();
+        next();
+    } else if (tok.kind == TOK_IDENT) {
+        call->extra = parse_identifier();
+    } else {
+        ast_free(call);
+        arith_error("Expected the program name after CALL");
+        return NULL;
+    }
+    AstNode *tail = NULL;
+    if (tok.kind == TOK_USING) {
+        next();
+        bool content = false;
+        for (;;) {
+            if (tok.kind == TOK_BY) next();
+            if (tok_is_word("REFERENCE")) { diag_subset(MOD_IC, 2, TOK_LOC, "CALL ... BY REFERENCE"); content = false; next(); continue; }
+            if (tok_is_word("CONTENT")) { diag_subset(MOD_IC, 2, TOK_LOC, "CALL ... BY CONTENT"); content = true; next(); continue; }
+            if (tok.kind != TOK_IDENT) break;
+            AstNode *arg = parse_identifier();
+            arg->is_signed = content;
+            list_append(&call->children, &tail, arg);
+        }
+    }
+    for (;;) {
+        if (tok.kind == TOK_ON && (peek_token().kind == TOK_OVERFLOW || peek_token().kind == TOK_EXCEPTION))
+            next();
+        if (tok.kind == TOK_OVERFLOW || tok.kind == TOK_EXCEPTION) {
+            next();
+            call->on_error = parse_imperative_block();
+        } else if (tok.kind == TOK_NOT && (peek_token().kind == TOK_ON || peek_token().kind == TOK_EXCEPTION ||
+                                           peek_token().kind == TOK_OVERFLOW)) {
+            next();
+            if (tok.kind == TOK_ON) next();
+            next();
+            call->not_on_error = parse_imperative_block();
+        } else {
+            break;
+        }
+    }
+    if (tok.kind == TOK_END_CALL) next();
+    return call;
+}
+
+static AstNode *parse_cancel_statement(SourceLocation loc) {
+    next();
+    AstNode *cancel = ast_new(AST_STATEMENT_CANCEL, NULL, loc);
+    AstNode *tail = NULL;
+    while (tok.kind == TOK_STRING || tok.kind == TOK_IDENT) {
+        AstNode *n;
+        if (tok.kind == TOK_STRING) {
+            n = ast_new(AST_STRING_LITERAL, NULL, loc);
+            free(n->name);
+            n->name = tok_value();
+            next();
+        } else {
+            n = parse_identifier();
+        }
+        list_append(&cancel->children, &tail, n);
+    }
+    if (!cancel->children) { ast_free(cancel); arith_error("Expected a program name after CANCEL"); return NULL; }
+    return cancel;
+}
+
+// ─── SORT file {ON {ASCENDING|DESCENDING} KEY data-name...}...
+//       [WITH DUPLICATES IN ORDER] [COLLATING SEQUENCE IS alphabet]
+//       {INPUT PROCEDURE IS p [THRU p] | USING file...}
+//       {OUTPUT PROCEDURE IS p [THRU p] | GIVING file...}
+//     MERGE file {ON ... KEY ...}... [COLLATING SEQUENCE IS alphabet]
+//       USING file file... {OUTPUT PROCEDURE ... | GIVING file...}
+static AstNode *parse_sort_merge_statement(SourceLocation loc) {
+    bool merge = tok.kind == TOK_MERGE;
+    next();
+    AstNode *st = ast_new(AST_STATEMENT_SORT, merge ? "MERGE" : "SORT", loc);
+    if (tok.kind != TOK_IDENT) { ast_free(st); arith_error("Expected the sort file"); return NULL; }
+    st->extra = parse_procedure_name();
+    AstNode *key_tail = NULL, *loop_tail = NULL;
+    for (;;) {
+        if (tok.kind == TOK_ON) next();
+        if (tok.kind != TOK_ASCENDING && tok.kind != TOK_DESCENDING) break;
+        bool desc = tok.kind == TOK_DESCENDING;
+        next();
+        if (tok.kind == TOK_KEY) next();
+        if (tok.kind == TOK_IS) next();
+        while (tok.kind == TOK_IDENT && !tok_is_word("COLLATING") && !tok_is_word("DUPLICATES") &&
+               !tok_is_word("SEQUENCE")) {
+            AstNode *k = parse_forward_identifier();
+            k->is_signed = desc;
+            list_append(&st->children, &key_tail, k);
+        }
+    }
+    if (!st->children) { ast_free(st); arith_error("Expected ASCENDING or DESCENDING KEY"); return NULL; }
+    if (tok.kind == TOK_WITH) next();
+    if (tok_is_word("DUPLICATES")) {
+        next();
+        if (tok.kind == TOK_IN) next();
+        if (tok_is_word("ORDER")) next();
+    }
+    if (tok_is_word("COLLATING") || tok_is_word("SEQUENCE")) {
+        if (tok_is_word("COLLATING")) next();
+        if (tok_is_word("SEQUENCE")) next();
+        if (tok.kind == TOK_IS) next();
+        if (tok.kind == TOK_IDENT) { st->text = tok_to_str(); next(); }
+    }
+    for (int part = 0; part < 2; part++) {
+        bool input = part == 0;
+        if ((input && tok.kind == TOK_INPUT) || (!input && tok.kind == TOK_OUTPUT)) {
+            next();
+            if (tok.kind == TOK_PROCEDURE) next();
+            if (tok.kind == TOK_IS) next();
+            if (!is_procedure_name_token()) { ast_free(st); arith_error("Expected a procedure name"); return NULL; }
+            AstNode *proc = parse_procedure_name();
+            if (tok.kind == TOK_THROUGH) {
+                next();
+                proc->loop = parse_procedure_name();
+            }
+            if (input) st->on_error = proc;
+            else st->not_on_error = proc;
+        } else if ((input && tok.kind == TOK_USING) || (!input && tok.kind == TOK_GIVING)) {
+            AstNode *files = ast_new(AST_SPECIAL, input ? "USING" : "GIVING", loc);
+            AstNode *ftail = NULL;
+            next();
+            while (tok.kind == TOK_IDENT) list_append(&files->children, &ftail, parse_procedure_name());
+            list_append(&st->loop, &loop_tail, files);
+        } else {
+            ast_free(st);
+            arith_error(input ? "Expected INPUT PROCEDURE or USING" : "Expected OUTPUT PROCEDURE or GIVING");
             return NULL;
         }
-        AstNode *tail = NULL;
-        if (tok.kind == TOK_USING) {
-            next();
-            bool content = false;
-            for (;;) {
-                if (tok.kind == TOK_BY) next();
-                if (tok_is_word("REFERENCE")) { diag_subset(MOD_IC, 2, TOK_LOC, "CALL ... BY REFERENCE"); content = false; next(); continue; }
-                if (tok_is_word("CONTENT")) { diag_subset(MOD_IC, 2, TOK_LOC, "CALL ... BY CONTENT"); content = true; next(); continue; }
-                if (tok.kind != TOK_IDENT) break;
-                AstNode *arg = parse_identifier();
-                arg->is_signed = content;
-                list_append(&call->children, &tail, arg);
-            }
-        }
-        for (;;) {
-            if (tok.kind == TOK_ON && (peek_token().kind == TOK_OVERFLOW || peek_token().kind == TOK_EXCEPTION))
-                next();
-            if (tok.kind == TOK_OVERFLOW || tok.kind == TOK_EXCEPTION) {
-                next();
-                call->on_error = parse_imperative_block();
-            } else if (tok.kind == TOK_NOT && (peek_token().kind == TOK_ON || peek_token().kind == TOK_EXCEPTION ||
-                                               peek_token().kind == TOK_OVERFLOW)) {
-                next();
-                if (tok.kind == TOK_ON) next();
-                next();
-                call->not_on_error = parse_imperative_block();
-            } else {
-                break;
-            }
-        }
-        if (tok.kind == TOK_END_CALL) next();
-        return call;
     }
-    else if (tok.kind == TOK_CANCEL) {
-        next();
-        AstNode *cancel = ast_new(AST_STATEMENT_CANCEL, NULL, loc);
-        AstNode *tail = NULL;
-        while (tok.kind == TOK_STRING || tok.kind == TOK_IDENT) {
-            AstNode *n;
-            if (tok.kind == TOK_STRING) {
-                n = ast_new(AST_STRING_LITERAL, NULL, loc);
-                free(n->name);
-                n->name = tok_value();
-                next();
-            } else {
-                n = parse_identifier();
-            }
-            list_append(&cancel->children, &tail, n);
-        }
-        if (!cancel->children) { ast_free(cancel); arith_error("Expected a program name after CANCEL"); return NULL; }
-        return cancel;
-    }
-    // ─── SORT file {ON {ASCENDING|DESCENDING} KEY data-name...}...
-    //       [WITH DUPLICATES IN ORDER] [COLLATING SEQUENCE IS alphabet]
-    //       {INPUT PROCEDURE IS p [THRU p] | USING file...}
-    //       {OUTPUT PROCEDURE IS p [THRU p] | GIVING file...}
-    //     MERGE file {ON ... KEY ...}... [COLLATING SEQUENCE IS alphabet]
-    //       USING file file... {OUTPUT PROCEDURE ... | GIVING file...}
-    else if (tok.kind == TOK_SORT || tok.kind == TOK_MERGE) {
-        bool merge = tok.kind == TOK_MERGE;
-        next();
-        AstNode *st = ast_new(AST_STATEMENT_SORT, merge ? "MERGE" : "SORT", loc);
-        if (tok.kind != TOK_IDENT) { ast_free(st); arith_error("Expected the sort file"); return NULL; }
-        st->extra = parse_procedure_name();
-        AstNode *key_tail = NULL, *loop_tail = NULL;
-        for (;;) {
-            if (tok.kind == TOK_ON) next();
-            if (tok.kind != TOK_ASCENDING && tok.kind != TOK_DESCENDING) break;
-            bool desc = tok.kind == TOK_DESCENDING;
-            next();
-            if (tok.kind == TOK_KEY) next();
-            if (tok.kind == TOK_IS) next();
-            while (tok.kind == TOK_IDENT && !tok_is_word("COLLATING") && !tok_is_word("DUPLICATES") &&
-                   !tok_is_word("SEQUENCE")) {
-                AstNode *k = parse_forward_identifier();
-                k->is_signed = desc;
-                list_append(&st->children, &key_tail, k);
-            }
-        }
-        if (!st->children) { ast_free(st); arith_error("Expected ASCENDING or DESCENDING KEY"); return NULL; }
-        if (tok.kind == TOK_WITH) next();
-        if (tok_is_word("DUPLICATES")) {
-            next();
-            if (tok.kind == TOK_IN) next();
-            if (tok_is_word("ORDER")) next();
-        }
-        if (tok_is_word("COLLATING") || tok_is_word("SEQUENCE")) {
-            if (tok_is_word("COLLATING")) next();
-            if (tok_is_word("SEQUENCE")) next();
-            if (tok.kind == TOK_IS) next();
-            if (tok.kind == TOK_IDENT) { st->text = tok_to_str(); next(); }
-        }
-        for (int part = 0; part < 2; part++) {
-            bool input = part == 0;
-            if ((input && tok.kind == TOK_INPUT) || (!input && tok.kind == TOK_OUTPUT)) {
-                next();
-                if (tok.kind == TOK_PROCEDURE) next();
-                if (tok.kind == TOK_IS) next();
-                if (!is_procedure_name_token()) { ast_free(st); arith_error("Expected a procedure name"); return NULL; }
-                AstNode *proc = parse_procedure_name();
-                if (tok.kind == TOK_THROUGH) {
-                    next();
-                    proc->loop = parse_procedure_name();
-                }
-                if (input) st->on_error = proc;
-                else st->not_on_error = proc;
-            } else if ((input && tok.kind == TOK_USING) || (!input && tok.kind == TOK_GIVING)) {
-                AstNode *files = ast_new(AST_SPECIAL, input ? "USING" : "GIVING", loc);
-                AstNode *ftail = NULL;
-                next();
-                while (tok.kind == TOK_IDENT) list_append(&files->children, &ftail, parse_procedure_name());
-                list_append(&st->loop, &loop_tail, files);
-            } else {
-                ast_free(st);
-                arith_error(input ? "Expected INPUT PROCEDURE or USING" : "Expected OUTPUT PROCEDURE or GIVING");
-                return NULL;
-            }
-        }
-        return st;
-    }
-    // ─── RELEASE record [FROM identifier]
-    else if (tok.kind == TOK_RELEASE) {
-        next();
-        AstNode *rel = ast_new(AST_STATEMENT_RELEASE, NULL, loc);
-        if (tok.kind != TOK_IDENT) { ast_free(rel); arith_error("Expected a sort record"); return NULL; }
-        rel->extra = parse_identifier();
-        if (tok.kind == TOK_FROM) {
-            next();
-            rel->loop = parse_value_operand();
-            if (!rel->loop) { ast_free(rel); arith_error("Expected identifier after FROM"); return NULL; }
-        }
-        return rel;
-    }
-    // ─── RETURN file [RECORD] [INTO identifier] [AT] END s [NOT [AT] END s] [END-RETURN]
-    else if (tok.kind == TOK_RETURN) {
-        next();
-        AstNode *ret = ast_new(AST_STATEMENT_RETURN, NULL, loc);
-        if (tok.kind != TOK_IDENT) { ast_free(ret); arith_error("Expected a sort file"); return NULL; }
-        ret->extra = parse_procedure_name();
-        if (tok.kind == TOK_RECORD) next();
-        if (tok.kind == TOK_INTO) {
-            next();
-            if (tok.kind != TOK_IDENT) { ast_free(ret); arith_error("Expected identifier after INTO"); return NULL; }
-            ret->loop = parse_identifier();
-        }
-        if (!parse_io_phrases(ret)) { ast_free(ret); return NULL; }
-        if (tok.kind == TOK_END_RETURN) next();
-        return ret;
-    }
-    // ─── DELETE file [RECORD] [INVALID [KEY] s] [NOT INVALID [KEY] s] [END-DELETE]
-    else if (tok.kind == TOK_DELETE) {
-        next();
-        AstNode *del = ast_new(AST_STATEMENT_DELETE, NULL, loc);
-        if (tok.kind != TOK_IDENT) { ast_free(del); arith_error("Expected file name after DELETE"); return NULL; }
-        del->extra = parse_procedure_name();
-        diag_subset(stmt_module(del), 1, loc, "DELETE");
-        if (tok.kind == TOK_RECORD) next();
-        if (!parse_io_phrases(del)) { ast_free(del); return NULL; }
-        if (tok.kind == TOK_END_DELETE) next();
-        return del;
-    }
-    // ─── START file [KEY {IS = | EQUAL TO | > | GREATER THAN | NOT < | NOT LESS
-    //     THAN | >= ...} data-name] [INVALID [KEY] s] [NOT INVALID [KEY] s] [END-START]
-    //     text: the relation (=, > or >=); children: the data-name
-    else if (tok.kind == TOK_START) {
-        next();
-        AstNode *st = ast_new(AST_STATEMENT_START, NULL, loc);
-        if (tok.kind != TOK_IDENT) { ast_free(st); arith_error("Expected file name after START"); return NULL; }
-        st->extra = parse_procedure_name();
-        diag_subset(stmt_module(st), 2, loc, "START");
-        st->text = strdup("=");
-        if (tok.kind == TOK_KEY) {
-            next();
-            if (tok.kind == TOK_IS) next();
-            bool negated = tok.kind == TOK_NOT;
-            if (negated) next();
-            const char *op = parse_relop();
-            if (!op) { ast_free(st); arith_error("Expected a relation after KEY"); return NULL; }
-            if (negated) op = negate_relop(op);
-            free(st->text);
-            if (strcmp(op, "<") == 0 || strcmp(op, "<=") == 0 || strcmp(op, "<>") == 0) {
-                // NOT < is >=; NOT > and NOT = are not START relations
-                if (strcmp(op, ">=") != 0)
-                    diag_error(loc, "START KEY allows =, >, NOT < and >= only");
-            }
-            st->text = strdup(op);
-            if (tok.kind != TOK_IDENT) { ast_free(st); arith_error("Expected the key data item"); return NULL; }
-            st->children = parse_identifier();
-        }
-        if (!parse_io_phrases(st)) { ast_free(st); return NULL; }
-        if (tok.kind == TOK_END_START) next();
-        return st;
-    }
-    // ─── READ file [NEXT] [RECORD] [INTO id] [KEY IS data-name]
-    //     {[AT] END s | INVALID [KEY] s} {NOT [AT] END s | NOT INVALID [KEY] s} [END-READ]
-    //     is_numeric: NEXT; children: the KEY IS data-name; is_signed: INVALID KEY
-    else if (tok.kind == TOK_READ) {
-        next();
-        AstNode *read = ast_new(AST_STATEMENT_READ, NULL, loc);
-        if (tok.kind != TOK_IDENT) { ast_free(read); arith_error("Expected file name after READ"); return NULL; }
-        read->extra = parse_procedure_name();
-        if (tok.kind == TOK_NEXT) { diag_subset(stmt_module(read), 2, TOK_LOC, "READ ... NEXT"); read->is_numeric = true; next(); }
-        if (tok.kind == TOK_RECORD) next();
-        if (tok.kind == TOK_INTO) {
-            next();
-            if (tok.kind != TOK_IDENT) { ast_free(read); arith_error("Expected identifier after INTO"); return NULL; }
-            read->loop = parse_identifier();
-        }
-        if (tok.kind == TOK_KEY) {
-            diag_subset(MOD_IX, 2, TOK_LOC, "READ ... KEY IS");
-            next();
-            if (tok.kind == TOK_IS) next();
-            if (tok.kind != TOK_IDENT) { ast_free(read); arith_error("Expected the key data item"); return NULL; }
-            read->children = parse_identifier();
-        }
-        if (!parse_io_phrases(read)) { ast_free(read); return NULL; }
-        if (tok.kind == TOK_END_READ) next();
-        return read;
-    }
-    // ─── WRITE record [FROM id] [{BEFORE|AFTER} [ADVANCING] {n [LINES] | PAGE}]
-    //     [[AT] END-OF-PAGE s] [NOT [AT] END-OF-PAGE s] [END-WRITE]
-    // ─── REWRITE record [FROM id] [END-REWRITE]
-    else if (tok.kind == TOK_WRITE || tok.kind == TOK_REWRITE) {
-        bool is_write = tok.kind == TOK_WRITE;
-        next();
-        AstNode *w = ast_new(is_write ? AST_STATEMENT_WRITE : AST_STATEMENT_REWRITE, NULL, loc);
-        if (tok.kind != TOK_IDENT) { ast_free(w); arith_error("Expected record name"); return NULL; }
-        w->extra = parse_identifier();
-        if (tok.kind == TOK_FROM) {
-            next();
-            w->loop = parse_value_operand();
-            if (!w->loop) { ast_free(w); arith_error("Expected identifier after FROM"); return NULL; }
-        }
-        if (is_write && (tok.kind == TOK_BEFORE || tok.kind == TOK_AFTER)) {
-            w->name = strdup(tok.kind == TOK_BEFORE ? "BEFORE" : "AFTER");
-            next();
-            if (tok.kind == TOK_ADVANCING) next();
-            Symbol *mn = tok.kind == TOK_IDENT ? symtab_resolve_symbol(current_symtab, tok_value_tmp()) : NULL;
-            if (tok.kind == TOK_PAGE || (mn && mn->level == -1)) {
-                // PAGE, or a mnemonic-name of a channel (C01, TOP): to the next page
-                if (mn) symtab_mark_symbol_as_used(mn);
-                w->children = ast_new(AST_BOOL_LITERAL, "PAGE", loc);
-                next();
-            } else {
-                w->children = parse_arith_operand();
-                if (!w->children) { ast_free(w); arith_error("Expected line count or PAGE"); return NULL; }
-                if (tok.kind == TOK_LINE || tok.kind == TOK_LINES) next();
-            }
-        }
-        if (is_write && (tok.kind == TOK_AT || tok.kind == TOK_END_OF_PAGE)) {
-            diag_subset(MOD_SQ, 2, TOK_LOC, "WRITE ... AT END-OF-PAGE");
-            if (tok.kind == TOK_AT) next();
-            next();
-            w->on_error = parse_imperative_block();     // the end-of-page condition (LINAGE)
-        }
-        if (is_write && tok.kind == TOK_NOT && peek_token().kind != TOK_INVALID) {
-            next();
-            if (tok.kind == TOK_AT) next();
-            next();
-            w->not_on_error = parse_imperative_block();
-        }
-        if (!w->on_error && !w->not_on_error && !parse_io_phrases(w)) { ast_free(w); return NULL; }
-        if (tok.kind == TOK_END_WRITE || tok.kind == TOK_END_REWRITE) next();
-        return w;
-    }
-    else if (tok.kind == TOK_ACCEPT) {
-        next(); 
-        AstNode *accept_stmt = ast_new(AST_STATEMENT_ACCEPT, NULL, loc);
+    return st;
+}
 
-        if (tok.kind == TOK_IDENT) {
-            Token p = peek_token();
-            if (p.kind == TOK_IDENT && p.length == 7 && strncasecmp(p.lexeme, "MESSAGE", 7) == 0) {
-                communication_unsupported(loc, "ACCEPT MESSAGE COUNT");
+// ─── RELEASE record [FROM identifier]
+static AstNode *parse_release_statement(SourceLocation loc) {
+    next();
+    AstNode *rel = ast_new(AST_STATEMENT_RELEASE, NULL, loc);
+    if (tok.kind != TOK_IDENT) { ast_free(rel); arith_error("Expected a sort record"); return NULL; }
+    rel->extra = parse_identifier();
+    if (tok.kind == TOK_FROM) {
+        next();
+        rel->loop = parse_value_operand();
+        if (!rel->loop) { ast_free(rel); arith_error("Expected identifier after FROM"); return NULL; }
+    }
+    return rel;
+}
+
+// ─── RETURN file [RECORD] [INTO identifier] [AT] END s [NOT [AT] END s] [END-RETURN]
+static AstNode *parse_return_statement(SourceLocation loc) {
+    next();
+    AstNode *ret = ast_new(AST_STATEMENT_RETURN, NULL, loc);
+    if (tok.kind != TOK_IDENT) { ast_free(ret); arith_error("Expected a sort file"); return NULL; }
+    ret->extra = parse_procedure_name();
+    if (tok.kind == TOK_RECORD) next();
+    if (tok.kind == TOK_INTO) {
+        next();
+        if (tok.kind != TOK_IDENT) { ast_free(ret); arith_error("Expected identifier after INTO"); return NULL; }
+        ret->loop = parse_identifier();
+    }
+    if (!parse_io_phrases(ret)) { ast_free(ret); return NULL; }
+    if (tok.kind == TOK_END_RETURN) next();
+    return ret;
+}
+
+// ─── DELETE file [RECORD] [INVALID [KEY] s] [NOT INVALID [KEY] s] [END-DELETE]
+static AstNode *parse_delete_statement(SourceLocation loc) {
+    next();
+    AstNode *del = ast_new(AST_STATEMENT_DELETE, NULL, loc);
+    if (tok.kind != TOK_IDENT) { ast_free(del); arith_error("Expected file name after DELETE"); return NULL; }
+    del->extra = parse_procedure_name();
+    diag_subset(stmt_module(del), 1, loc, "DELETE");
+    if (tok.kind == TOK_RECORD) next();
+    if (!parse_io_phrases(del)) { ast_free(del); return NULL; }
+    if (tok.kind == TOK_END_DELETE) next();
+    return del;
+}
+
+// ─── START file [KEY {IS = | EQUAL TO | > | GREATER THAN | NOT < | NOT LESS
+//     THAN | >= ...} data-name] [INVALID [KEY] s] [NOT INVALID [KEY] s] [END-START]
+//     text: the relation (=, > or >=); children: the data-name
+static AstNode *parse_start_statement(SourceLocation loc) {
+    next();
+    AstNode *st = ast_new(AST_STATEMENT_START, NULL, loc);
+    if (tok.kind != TOK_IDENT) { ast_free(st); arith_error("Expected file name after START"); return NULL; }
+    st->extra = parse_procedure_name();
+    diag_subset(stmt_module(st), 2, loc, "START");
+    st->text = strdup("=");
+    if (tok.kind == TOK_KEY) {
+        next();
+        if (tok.kind == TOK_IS) next();
+        bool negated = tok.kind == TOK_NOT;
+        if (negated) next();
+        const char *op = parse_relop();
+        if (!op) { ast_free(st); arith_error("Expected a relation after KEY"); return NULL; }
+        if (negated) op = negate_relop(op);
+        free(st->text);
+        if (strcmp(op, "<") == 0 || strcmp(op, "<=") == 0 || strcmp(op, "<>") == 0) {
+            // NOT < is >=; NOT > and NOT = are not START relations
+            if (strcmp(op, ">=") != 0)
+                diag_error(loc, "START KEY allows =, >, NOT < and >= only");
+        }
+        st->text = strdup(op);
+        if (tok.kind != TOK_IDENT) { ast_free(st); arith_error("Expected the key data item"); return NULL; }
+        st->children = parse_identifier();
+    }
+    if (!parse_io_phrases(st)) { ast_free(st); return NULL; }
+    if (tok.kind == TOK_END_START) next();
+    return st;
+}
+
+// ─── READ file [NEXT] [RECORD] [INTO id] [KEY IS data-name]
+//     {[AT] END s | INVALID [KEY] s} {NOT [AT] END s | NOT INVALID [KEY] s} [END-READ]
+//     is_numeric: NEXT; children: the KEY IS data-name; is_signed: INVALID KEY
+static AstNode *parse_read_statement(SourceLocation loc) {
+    next();
+    AstNode *read = ast_new(AST_STATEMENT_READ, NULL, loc);
+    if (tok.kind != TOK_IDENT) { ast_free(read); arith_error("Expected file name after READ"); return NULL; }
+    read->extra = parse_procedure_name();
+    if (tok.kind == TOK_NEXT) { diag_subset(stmt_module(read), 2, TOK_LOC, "READ ... NEXT"); read->is_numeric = true; next(); }
+    if (tok.kind == TOK_RECORD) next();
+    if (tok.kind == TOK_INTO) {
+        next();
+        if (tok.kind != TOK_IDENT) { ast_free(read); arith_error("Expected identifier after INTO"); return NULL; }
+        read->loop = parse_identifier();
+    }
+    if (tok.kind == TOK_KEY) {
+        diag_subset(MOD_IX, 2, TOK_LOC, "READ ... KEY IS");
+        next();
+        if (tok.kind == TOK_IS) next();
+        if (tok.kind != TOK_IDENT) { ast_free(read); arith_error("Expected the key data item"); return NULL; }
+        read->children = parse_identifier();
+    }
+    if (!parse_io_phrases(read)) { ast_free(read); return NULL; }
+    if (tok.kind == TOK_END_READ) next();
+    return read;
+}
+
+// ─── WRITE record [FROM id] [{BEFORE|AFTER} [ADVANCING] {n [LINES] | PAGE}]
+//     [[AT] END-OF-PAGE s] [NOT [AT] END-OF-PAGE s] [END-WRITE]
+// ─── REWRITE record [FROM id] [END-REWRITE]
+static AstNode *parse_write_rewrite_statement(SourceLocation loc) {
+    bool is_write = tok.kind == TOK_WRITE;
+    next();
+    AstNode *w = ast_new(is_write ? AST_STATEMENT_WRITE : AST_STATEMENT_REWRITE, NULL, loc);
+    if (tok.kind != TOK_IDENT) { ast_free(w); arith_error("Expected record name"); return NULL; }
+    w->extra = parse_identifier();
+    if (tok.kind == TOK_FROM) {
+        next();
+        w->loop = parse_value_operand();
+        if (!w->loop) { ast_free(w); arith_error("Expected identifier after FROM"); return NULL; }
+    }
+    if (is_write && (tok.kind == TOK_BEFORE || tok.kind == TOK_AFTER)) {
+        w->name = strdup(tok.kind == TOK_BEFORE ? "BEFORE" : "AFTER");
+        next();
+        if (tok.kind == TOK_ADVANCING) next();
+        Symbol *mn = tok.kind == TOK_IDENT ? symtab_resolve_symbol(current_symtab, tok_value_tmp()) : NULL;
+        if (tok.kind == TOK_PAGE || (mn && mn->level == -1)) {
+            // PAGE, or a mnemonic-name of a channel (C01, TOP): to the next page
+            if (mn) symtab_mark_symbol_as_used(mn);
+            w->children = ast_new(AST_BOOL_LITERAL, "PAGE", loc);
+            next();
+        } else {
+            w->children = parse_arith_operand();
+            if (!w->children) { ast_free(w); arith_error("Expected line count or PAGE"); return NULL; }
+            if (tok.kind == TOK_LINE || tok.kind == TOK_LINES) next();
+        }
+    }
+    if (is_write && (tok.kind == TOK_AT || tok.kind == TOK_END_OF_PAGE)) {
+        diag_subset(MOD_SQ, 2, TOK_LOC, "WRITE ... AT END-OF-PAGE");
+        if (tok.kind == TOK_AT) next();
+        next();
+        w->on_error = parse_imperative_block();     // the end-of-page condition (LINAGE)
+    }
+    if (is_write && tok.kind == TOK_NOT && peek_token().kind != TOK_INVALID) {
+        next();
+        if (tok.kind == TOK_AT) next();
+        next();
+        w->not_on_error = parse_imperative_block();
+    }
+    if (!w->on_error && !w->not_on_error && !parse_io_phrases(w)) { ast_free(w); return NULL; }
+    if (tok.kind == TOK_END_WRITE || tok.kind == TOK_END_REWRITE) next();
+    return w;
+}
+
+static AstNode *parse_accept_statement(SourceLocation loc) {
+    next(); 
+    AstNode *accept_stmt = ast_new(AST_STATEMENT_ACCEPT, NULL, loc);
+
+    if (tok.kind == TOK_IDENT) {
+        Token p = peek_token();
+        if (p.kind == TOK_IDENT && p.length == 7 && strncasecmp(p.lexeme, "MESSAGE", 7) == 0) {
+            communication_unsupported(loc, "ACCEPT MESSAGE COUNT");
+            ast_free(accept_stmt);
+            synchronize();
+            return NULL;
+        }
+    }
+    if (tok.kind == TOK_IDENT) {
+        accept_stmt->children = parse_identifier();
+        if (tok.kind == TOK_FROM) {
+            // FROM DATE | DAY | DAY-OF-WEEK | TIME, or a device (the console)
+            next();
+            if (tok.kind == TOK_DATE) accept_stmt->name = strdup("DATE");
+            else if (tok.kind == TOK_DAY) accept_stmt->name = strdup("DAY");
+            else if (tok.kind == TOK_DAY_OF_WEEK) {
+                diag_subset(MOD_NC, 2, TOK_LOC, "ACCEPT ... FROM DAY-OF-WEEK");
+                accept_stmt->name = strdup("DAY-OF-WEEK");
+            }
+            else if (tok.kind == TOK_TIME) accept_stmt->name = strdup("TIME");
+            else if (diag_later_element(TOK_LOC, LATER_PHRASE, tok.lexeme, tok.length)) {
                 ast_free(accept_stmt);
+                next();             // (ENVIRONMENT would stop the recovery)
                 synchronize();
                 return NULL;
             }
-        }
-        if (tok.kind == TOK_IDENT) {
-            accept_stmt->children = parse_identifier();
-            if (tok.kind == TOK_FROM) {
-                // FROM DATE | DAY | DAY-OF-WEEK | TIME, or a device (the console)
-                next();
-                if (tok.kind == TOK_DATE) accept_stmt->name = strdup("DATE");
-                else if (tok.kind == TOK_DAY) accept_stmt->name = strdup("DAY");
-                else if (tok.kind == TOK_DAY_OF_WEEK) {
-                    diag_subset(MOD_NC, 2, TOK_LOC, "ACCEPT ... FROM DAY-OF-WEEK");
-                    accept_stmt->name = strdup("DAY-OF-WEEK");
-                }
-                else if (tok.kind == TOK_TIME) accept_stmt->name = strdup("TIME");
-                else if (diag_later_element(TOK_LOC, LATER_PHRASE, tok.lexeme, tok.length)) {
-                    ast_free(accept_stmt);
-                    next();             // (ENVIRONMENT would stop the recovery)
-                    synchronize();
-                    return NULL;
-                }
-                else if (tok.kind != TOK_IDENT) { ast_free(accept_stmt); arith_error("Expected DATE, DAY, DAY-OF-WEEK, TIME or a device"); return NULL; }
-                next();
-                // DATE YYYYMMDD, DAY YYYYDDD: the year in four digits (an
-                // extension, flagged by the lexer)
-                if (accept_stmt->name && strcmp(accept_stmt->name, "DATE") == 0 && tok.kind == TOK_YYYYMMDD) {
-                    free(accept_stmt->name);
-                    accept_stmt->name = strdup("DATE YYYYMMDD");
-                    next();
-                } else if (accept_stmt->name && strcmp(accept_stmt->name, "DAY") == 0 && tok_spelled("YYYYDDD")) {
-                    diag_feature(F_ACCEPT_DAY_YYYYDDD, TOK_LOC, NULL);
-                    free(accept_stmt->name);
-                    accept_stmt->name = strdup("DAY YYYYDDD");
-                    next();
-                }
-            }
-        } else {
-            diag_error(TOK_LOC, "ACCEPT statement requires a variable name");
-            synchronize(); // Error, enter panic mode
-            return NULL;
-        }
-
-        return accept_stmt;
-    }
-    else if (tok.kind == TOK_CONTINUE) {
-        next();
-        return ast_new(AST_STATEMENT_CONTINUE, NULL, loc);
-    }
-    // ─── Report Writer: INITIATE report..., GENERATE name, TERMINATE report...,
-    //     SUPPRESS PRINTING. Report and report group names are resolved in IR
-    //     lowering.
-    else if (tok.kind == TOK_INITIATE || tok.kind == TOK_TERMINATE) {
-        AstNode *st = ast_new(tok.kind == TOK_INITIATE ? AST_STATEMENT_INITIATE : AST_STATEMENT_TERMINATE, NULL, loc);
-        const char *verb = tok.kind == TOK_INITIATE ? "INITIATE" : "TERMINATE";
-        next();
-        AstNode *tail = NULL;
-        while (tok.kind == TOK_IDENT) {
-            char *name = tok_to_str();
-            list_append(&st->children, &tail, ast_new(AST_IDENTIFIER, name, TOK_LOC));
-            free(name);
+            else if (tok.kind != TOK_IDENT) { ast_free(accept_stmt); arith_error("Expected DATE, DAY, DAY-OF-WEEK, TIME or a device"); return NULL; }
             next();
+            // DATE YYYYMMDD, DAY YYYYDDD: the year in four digits (an
+            // extension, flagged by the lexer)
+            if (accept_stmt->name && strcmp(accept_stmt->name, "DATE") == 0 && tok.kind == TOK_YYYYMMDD) {
+                free(accept_stmt->name);
+                accept_stmt->name = strdup("DATE YYYYMMDD");
+                next();
+            } else if (accept_stmt->name && strcmp(accept_stmt->name, "DAY") == 0 && tok_spelled("YYYYDDD")) {
+                diag_feature(F_ACCEPT_DAY_YYYYDDD, TOK_LOC, NULL);
+                free(accept_stmt->name);
+                accept_stmt->name = strdup("DAY YYYYDDD");
+                next();
+            }
         }
-        if (!st->children) {
-            ast_free(st);
-            char msg[64];
-            snprintf(msg, sizeof(msg), "Expected a report name after %s", verb);
-            arith_error(msg);
-            return NULL;
-        }
-        return st;
+    } else {
+        diag_error(TOK_LOC, "ACCEPT statement requires a variable name");
+        synchronize(); // Error, enter panic mode
+        return NULL;
     }
-    else if (tok.kind == TOK_GENERATE) {
-        next();
-        if (tok.kind != TOK_IDENT) { arith_error("Expected a detail report group or a report name after GENERATE"); return NULL; }
-        AstNode *st = ast_new(AST_STATEMENT_GENERATE, NULL, loc);
+
+    return accept_stmt;
+}
+
+static AstNode *parse_continue_statement(SourceLocation loc) {
+    next();
+    return ast_new(AST_STATEMENT_CONTINUE, NULL, loc);
+}
+
+// ─── Report Writer: INITIATE report..., GENERATE name, TERMINATE report...,
+//     SUPPRESS PRINTING. Report and report group names are resolved in IR
+//     lowering.
+static AstNode *parse_initiate_terminate_statement(SourceLocation loc) {
+    AstNode *st = ast_new(tok.kind == TOK_INITIATE ? AST_STATEMENT_INITIATE : AST_STATEMENT_TERMINATE, NULL, loc);
+    const char *verb = tok.kind == TOK_INITIATE ? "INITIATE" : "TERMINATE";
+    next();
+    AstNode *tail = NULL;
+    while (tok.kind == TOK_IDENT) {
         char *name = tok_to_str();
-        st->extra = ast_new(AST_IDENTIFIER, name, TOK_LOC);
+        list_append(&st->children, &tail, ast_new(AST_IDENTIFIER, name, TOK_LOC));
         free(name);
         next();
-        return st;
     }
-    else if (tok.kind == TOK_SUPPRESS) {
-        next();
-        if (tok_spelled("PRINTING")) next();
-        return ast_new(AST_STATEMENT_SUPPRESS, NULL, loc);
+    if (!st->children) {
+        ast_free(st);
+        char msg[64];
+        snprintf(msg, sizeof(msg), "Expected a report name after %s", verb);
+        arith_error(msg);
+        return NULL;
     }
-    // ─── COMPUTE ─────────────────────────────────────────────────────────────
-    // COMPUTE dest+ [ROUNDED] = expression
-    // children: [expression, dest1,...]
-    else if (tok.kind == TOK_COMPUTE) {
-        next();
-        AstNode *compute = ast_new(AST_STATEMENT_COMPUTE, NULL, loc);
-        AstNode *dest_head = NULL, *dest_tail = NULL;
+    return st;
+}
 
-        if (parse_receivers(&dest_head, &dest_tail) == 0) {
-            ast_free(compute);
-            arith_error("COMPUTE: expected receiving identifier");
-            return NULL;
-        }
-        if (tok.kind != TOK_EQ) {
-            ast_free(dest_head);
-            ast_free(compute);
-            arith_error("COMPUTE: expected '='");
-            return NULL;
-        }
-        next();
+static AstNode *parse_generate_statement(SourceLocation loc) {
+    next();
+    if (tok.kind != TOK_IDENT) { arith_error("Expected a detail report group or a report name after GENERATE"); return NULL; }
+    AstNode *st = ast_new(AST_STATEMENT_GENERATE, NULL, loc);
+    char *name = tok_to_str();
+    st->extra = ast_new(AST_IDENTIFIER, name, TOK_LOC);
+    free(name);
+    next();
+    return st;
+}
 
-        AstNode *expr = parse_expr();
-        if (!expr) {
-            ast_free(dest_head);
-            ast_free(compute);
-            arith_error("COMPUTE: expected arithmetic expression");
-            return NULL;
-        }
-        expr->next = dest_head;
-        compute->children = expr;
+static AstNode *parse_suppress_statement(SourceLocation loc) {
+    next();
+    if (tok_spelled("PRINTING")) next();
+    return ast_new(AST_STATEMENT_SUPPRESS, NULL, loc);
+}
 
-        parse_size_error_phrases(compute, TOK_END_COMPUTE);
-        return compute;
+// ─── COMPUTE ─────────────────────────────────────────────────────────────
+// COMPUTE dest+ [ROUNDED] = expression
+// children: [expression, dest1,...]
+static AstNode *parse_compute_statement(SourceLocation loc) {
+    next();
+    AstNode *compute = ast_new(AST_STATEMENT_COMPUTE, NULL, loc);
+    AstNode *dest_head = NULL, *dest_tail = NULL;
+
+    if (parse_receivers(&dest_head, &dest_tail) == 0) {
+        ast_free(compute);
+        arith_error("COMPUTE: expected receiving identifier");
+        return NULL;
     }
+    if (tok.kind != TOK_EQ) {
+        ast_free(dest_head);
+        ast_free(compute);
+        arith_error("COMPUTE: expected '='");
+        return NULL;
+    }
+    next();
+
+    AstNode *expr = parse_expr();
+    if (!expr) {
+        ast_free(dest_head);
+        ast_free(compute);
+        arith_error("COMPUTE: expected arithmetic expression");
+        return NULL;
+    }
+    expr->next = dest_head;
+    compute->children = expr;
+
+    parse_size_error_phrases(compute, TOK_END_COMPUTE);
+    return compute;
+}
+
+typedef AstNode *StatementParser(SourceLocation loc);
+
+// The parser of each statement, by its first word
+static StatementParser *const statement_parsers[TOK_KIND_COUNT] = {
+    [TOK_DISPLAY] = parse_display_statement,
+    [TOK_STOP] = parse_stop_statement,
+    [TOK_MOVE] = parse_move_statement,
+    [TOK_ADD] = parse_add_statement,
+    [TOK_SUBTRACT] = parse_subtract_statement,
+    [TOK_MULTIPLY] = parse_multiply_statement,
+    [TOK_DIVIDE] = parse_divide_statement,
+    [TOK_IF] = parse_if_statement,
+    [TOK_PERFORM] = parse_perform_statement,
+    [TOK_GO] = parse_go_statement,
+    [TOK_STRING_KW] = parse_string_statement,
+    [TOK_UNSTRING] = parse_unstring_statement,
+    [TOK_ALTER] = parse_alter_statement,
+    [TOK_NEXT] = parse_next_statement,
+    [TOK_EXIT] = parse_exit_statement,
+    [TOK_EVALUATE] = parse_evaluate_statement,
+    [TOK_SET] = parse_set_statement,
+    [TOK_INITIALIZE] = parse_initialize_statement,
+    [TOK_SEARCH] = parse_search_statement,
+    [TOK_INSPECT] = parse_inspect_statement,
+    [TOK_OPEN] = parse_open_close_statement,
+    [TOK_CLOSE] = parse_open_close_statement,
+    [TOK_ENTER] = parse_enter_statement,
+    [TOK_CALL] = parse_call_statement,
+    [TOK_CANCEL] = parse_cancel_statement,
+    [TOK_SORT] = parse_sort_merge_statement,
+    [TOK_MERGE] = parse_sort_merge_statement,
+    [TOK_RELEASE] = parse_release_statement,
+    [TOK_RETURN] = parse_return_statement,
+    [TOK_DELETE] = parse_delete_statement,
+    [TOK_START] = parse_start_statement,
+    [TOK_READ] = parse_read_statement,
+    [TOK_WRITE] = parse_write_rewrite_statement,
+    [TOK_REWRITE] = parse_write_rewrite_statement,
+    [TOK_ACCEPT] = parse_accept_statement,
+    [TOK_CONTINUE] = parse_continue_statement,
+    [TOK_INITIATE] = parse_initiate_terminate_statement,
+    [TOK_TERMINATE] = parse_initiate_terminate_statement,
+    [TOK_GENERATE] = parse_generate_statement,
+    [TOK_SUPPRESS] = parse_suppress_statement,
+    [TOK_COMPUTE] = parse_compute_statement,
+};
+
+static AstNode *parse_statement(void) {
+    if (parser_panic_mode) return NULL; // Don't try to parse statements if in panic mode
+
+    SourceLocation loc = {tok.filename, tok.line, tok.column};
+    subset_statement();
+
+    StatementParser *parse = statement_parsers[tok.kind];
+    if (parse) return parse(loc);
+    if (at_goback()) return parse_goback_statement(loc);
 
     if (tok.kind == TOK_SEND || tok.kind == TOK_RECEIVE || tok.kind == TOK_ENABLE || tok.kind == TOK_DISABLE ||
         tok.kind == TOK_PURGE) {

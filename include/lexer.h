@@ -257,7 +257,7 @@ typedef enum {
     TOK_POW,        // **
     TOK_COLON,      // : (reference modification)
 
-    // Add more as needed...
+    TOK_KIND_COUNT  // the number of token kinds (not a token)
 } TokenKind;
 
 typedef struct {
