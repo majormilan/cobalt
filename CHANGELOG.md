@@ -19,6 +19,11 @@
 
 ### Fixed
 
+- INITIALIZE no longer changes USAGE INDEX data items inside the group.
+- INSPECT TALLYING accepts a subscripted or qualified counter after the
+  first one.
+- DIVIDE ... REMAINDER ... ON SIZE ERROR leaves the remainder unchanged
+  when the quotient has the size error.
 - `sudo make install` could rebuild the compiler as root, leaving the build
   directories owned by root.
 

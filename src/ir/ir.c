@@ -34,6 +34,7 @@ typedef struct {
     bool is_group;
     bool is_filler;
     bool is_index;          // index-name
+    bool index_data;        // USAGE INDEX data item
     bool justified;         // JUSTIFIED RIGHT
     int decimal_places;     // scale: digits after the implied point
     int digits;             // digit positions (numeric items)
@@ -939,6 +940,8 @@ static void item_from_decl(VarInfo *v, AstNode *decl, int level) {
     v->is_filler = strcasecmp(decl->name, "FILLER") == 0;
     v->is_group = !has_clause(decl, AST_PIC_CLAUSE) && !decl->is_numeric;
     v->justified = has_clause(decl, AST_JUSTIFIED);
+    AstNode *usage = find_clause(decl, AST_USAGE_CLAUSE);
+    v->index_data = usage && usage->name && strcasecmp(usage->name, "INDEX") == 0 && !v->is_group;
     v->size = (int)decl->data_size;
     v->decimal_places = decl->decimal_places;
     v->digits = decl->digits;
@@ -2650,7 +2653,19 @@ static void lower_arith_node(IrProgram *ir, AstNode *node) {
                                       mk_bin(AST_EXPR_MUL, q, ast_clone(divisor)));
                 VarInfo *rv = find_item(ops[n - 1], false);
                 if (rv) rv->assigned = true;
+                // ON SIZE ERROR: a size error on the quotient leaves the
+                // remainder unchanged too
+                char rem_lbl[32], done_lbl[32];
+                bool phrase = node->on_error || node->not_on_error;
+                if (phrase) {
+                    new_label(rem_lbl, sizeof(rem_lbl), "rem");
+                    new_label(done_lbl, sizeof(done_lbl), "rem_done");
+                    emit_jump(ir, IR_JUMP_IF_NO_SIZE_ERR, rem_lbl);
+                    emit_jump(ir, IR_JUMP, done_lbl);
+                    emit_label(ir, rem_lbl);
+                }
                 lower_assign(ir, rem, ops[n - 1], keep);
+                if (phrase) emit_label(ir, done_lbl);
                 ast_free(rem);
             }
             break;
@@ -3842,7 +3857,8 @@ static void init_contents(IrProgram *ir, const char *base, int base_offset, int 
 
 static void init_item(IrProgram *ir, const char *base, int base_offset, int idx, bool whole) {
     VarInfo *v = &vars[idx];
-    if (!whole && (v->is_filler || v->redefines >= 0)) return;
+    // (index data items and FILLER keep their contents)
+    if (!whole && (v->is_filler || v->redefines >= 0 || v->index_data)) return;
     init_contents(ir, base, base_offset, idx);
     if (v->occurs > 1 && !whole) {
         IrInstr *r = emit(ir, IR_CALL_REPLICATE);

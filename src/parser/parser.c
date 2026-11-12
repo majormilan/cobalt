@@ -230,6 +230,35 @@ static Token peek_token(void) {
     return lexer_next(&copy);
 }
 
+// The current identifier (with its qualifiers, subscripts and reference
+// modifier) is followed by the word given: INSPECT ... TALLYING counter FOR
+static bool identifier_then(TokenKind kind) {
+    if (tok.kind != TOK_IDENT) return false;
+    Lexer copy = *current_lexer;
+    copy.quiet = true;
+    copy.prev = NULL;
+    Token t = lexer_next(&copy);
+    for (int guard = 0; guard < 256; guard++) {
+        if (t.kind == TOK_OF || t.kind == TOK_IN) {
+            t = lexer_next(&copy);
+            if (t.kind != TOK_IDENT) return false;
+            t = lexer_next(&copy);
+        } else if (t.kind == TOK_LPAREN) {
+            int depth = 1;
+            while (depth > 0 && t.kind != TOK_EOF && t.kind != TOK_PERIOD) {
+                t = lexer_next(&copy);
+                if (t.kind == TOK_LPAREN) depth++;
+                else if (t.kind == TOK_RPAREN) depth--;
+            }
+            if (depth > 0) return false;
+            t = lexer_next(&copy);
+        } else {
+            return t.kind == kind;
+        }
+    }
+    return false;
+}
+
 static AstNode *parse_identification_paragraph(void) {
     if (tok.kind != TOK_IDENT) return NULL;
     if (parser_panic_mode) return NULL; // Don't parse if in panic mode
@@ -2547,7 +2576,7 @@ static AstNode *parse_inspect_statement(SourceLocation loc) {
                 if (strcmp(kind, "CHARACTERS") == 0) kind = NULL;
                 if (!inspect_operand_start() && tok.kind != TOK_CHARACTERS &&
                     tok.kind != TOK_ALL && tok.kind != TOK_LEADING) break;
-                if (tok.kind == TOK_IDENT && peek_token().kind == TOK_FOR) break;  // next counter
+                if (identifier_then(TOK_FOR)) break;    // the next counter
             }
             ast_free(counter);
         }
