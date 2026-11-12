@@ -23,6 +23,9 @@
 
 ### Fixed
 
+- No false size error when a quotient or product of up to 18 digits is
+  stored with no room for extra decimal places (DIVIDE and COMPUTE with
+  18-digit operands, DIVIDE ... REMAINDER).
 - INITIALIZE no longer changes USAGE INDEX data items inside the group.
 - INSPECT TALLYING accepts a subscripted or qualified counter after the
   first one.
