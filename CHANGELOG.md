@@ -23,6 +23,9 @@
 
 ### Fixed
 
+- Debugging lines are compiled only with WITH DEBUGGING MODE in the
+  SOURCE-COMPUTER paragraph; the words elsewhere (in a literal, a comment
+  line or USE FOR DEBUGGING) no longer turn them on.
 - COPY REPLACING and REPLACE no longer put spaces around the
   replacement, so a replaced word inside a PICTURE string (`X(LEN)`) or
   part of a word (`:P:-REC`) gives one character-string.

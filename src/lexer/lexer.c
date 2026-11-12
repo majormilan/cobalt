@@ -47,22 +47,59 @@ static char open_literal(const char *text) {
 // debugging lines (D in the indicator area) are compiled
 static bool debugging_lines = false;
 
+static bool word_eq(const char *w, size_t n, const char *s) {
+    return n == strlen(s) && strncasecmp(w, s, n) == 0;
+}
+
+// Looking for WITH DEBUGGING MODE in a SOURCE-COMPUTER paragraph, one word
+// at a time; true once found
+typedef struct {
+    bool in_paragraph;          // after SOURCE-COMPUTER, before the next paragraph
+    bool debugging;             // the previous word was DEBUGGING
+} DebugScan;
+
+static bool debug_scan_word(DebugScan *d, const char *w, size_t n) {
+    static const char *const ends[] = { "OBJECT-COMPUTER", "SPECIAL-NAMES", "INPUT-OUTPUT", "FILE-CONTROL",
+                                        "I-O-CONTROL", "DATA", "PROCEDURE", "IDENTIFICATION", "ID", NULL };
+    if (word_eq(w, n, "SOURCE-COMPUTER")) {
+        *d = (DebugScan){ .in_paragraph = true };
+        return false;
+    }
+    if (!d->in_paragraph) return false;
+    for (int k = 0; ends[k]; k++)
+        if (word_eq(w, n, ends[k])) { d->in_paragraph = false; return false; }
+    if (d->debugging && word_eq(w, n, "MODE")) return true;
+    d->debugging = word_eq(w, n, "DEBUGGING");
+    return false;
+}
+
+// WITH DEBUGGING MODE in the SOURCE-COMPUTER paragraph of a program of the
+// source (fixed format: the words of columns 8 to 72, outside comment
+// lines, debugging lines and literals)
 bool lexer_debugging_mode(const char *src) {
-    const char *line = src;
-    while (*line) {
-        const char *end = strchr(line, '\n');
-        size_t len = end ? (size_t)(end - line) : strlen(line);
-        if (len > 7 && line[6] != '*' && line[6] != '/') {
-            size_t n = len > 72 ? 72 : len;
-            for (size_t k = 7; k + 9 <= n; k++) {
-                if (strncasecmp(line + k, "DEBUGGING", 9) != 0) continue;
-                size_t m = k + 9;
-                while (m < n && line[m] == ' ') m++;
-                if (m == n || strncasecmp(line + m, "MODE", 4) == 0) return true;
+    DebugScan d = {0};
+    for (const char *line = src; *line;) {
+        const char *eol = strchr(line, '\n');
+        size_t len = eol ? (size_t)(eol - line) : strlen(line);
+        char ind = len > 6 ? line[6] : ' ';
+        bool skip = ind == '*' || ind == '/' || ind == 'D' || ind == 'd';
+        size_t end = len > 72 ? 72 : len;
+        for (size_t k = 7; !skip && k < end;) {
+            char c = line[k];
+            if (c == '"' || c == '\'') {               // a literal: to its end on this line
+                k++;
+                while (k < end && line[k] != c) k++;
+                k++;
+            } else if (isalnum((unsigned char)c) || c == '-') {
+                size_t start = k;
+                while (k < end && (isalnum((unsigned char)line[k]) || line[k] == '-')) k++;
+                if (debug_scan_word(&d, line + start, k - start)) return true;
+            } else {
+                k++;
             }
         }
-        if (!end) break;
-        line = end + 1;
+        if (!eol) break;
+        line = eol + 1;
     }
     return false;
 }
