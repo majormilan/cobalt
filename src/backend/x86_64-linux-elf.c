@@ -1491,7 +1491,7 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
         char *seen[512];
         int nseen = 0;
         for (IrInstr *x = ir->head; x; x = x->next) {
-            const char *ops[3] = { x->var_name, x->lit_name, x->op == IR_STORE_QWORD ? NULL : NULL };
+            const char *ops[2] = { x->var_name, x->lit_name };
             for (int k = 0; k < 2; k++) {
                 const char *o = ops[k];
                 if (!o || o[0] != '@') continue;
@@ -2521,12 +2521,12 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                 }
                 if (pk >= 0 && !promo_in_slot(pk)) vs_unalias(f, VS_PROMO0 + pk);
                 int L = store_counter++;
-                bool known = tgt_zero;      // no error while computing the value
+                bool no_err = tgt_zero;     // no error while computing the value
                 bool ovf = ovf_store == L;  // an addition jumps to L_store_ovf on overflow
                 ovf_store = -1;
-                const char *err = known ? "cobrt_stmt_err" : "cobrt_tgt_err";
+                const char *err = no_err ? "cobrt_stmt_err" : "cobrt_tgt_err";
                 // An error while computing the value: leave the receiver unchanged
-                if (!known) {
+                if (!no_err) {
                     fprintf(f, "    cmp byte [rel cobrt_tgt_err], 0\n");
                     fprintf(f, "    jne L_store_%d\n", L);
                 }
@@ -2557,9 +2557,9 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                         emit_num_store_call(f, i, &v);
                     }
                     // (no ON SIZE ERROR reads the statement's byte: not needed)
-                    if (!known || !ir_size_err_dead_after(flow, pos))
+                    if (!no_err || !ir_size_err_dead_after(flow, pos))
                         fprintf(f, "    or [rel %s], al\n", err);
-                    if (!known) {
+                    if (!no_err) {
                         fprintf(f, "L_store_%d:\n", L);
                         fprintf(f, "    mov al, [rel cobrt_tgt_err]\n");
                         fprintf(f, "    or [rel cobrt_stmt_err], al\n");
@@ -2649,7 +2649,7 @@ int x86_64_linux_emit(IrProgram *ir, FILE *f, const TargetInfo *target) {
                         }
                     }
                 }
-                if (known) {
+                if (no_err) {
                     if (slow_used) fprintf(cold, "    jmp L_store_done_%d\n", L);
                 } else {
                     fprintf(cold, "L_store_%d:\n", L);

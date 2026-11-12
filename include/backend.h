@@ -21,4 +21,7 @@ int backend_emit_assembly(IrProgram *ir, FILE *out, const TargetInfo *target);
 // Per-target emitters (one per src/backend/<target>.c)
 int x86_64_linux_emit(IrProgram *ir, FILE *out, const TargetInfo *target);
 
+// x86-64 peephole pass over the emitted text (src/backend/peephole.c)
+char *x86_reuse_loaded_values(const char *text, size_t len, size_t *out_len);
+
 #endif

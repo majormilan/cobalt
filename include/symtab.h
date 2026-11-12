@@ -67,7 +67,7 @@ struct SymbolTable {
 
 
 // Function declarations for symbol table operations
-SymbolTable *symtab_init();
+SymbolTable *symtab_init(void);
 void symtab_free(SymbolTable *table); // Frees all scopes and symbols
 void symtab_push_scope(SymbolTable *table);
 void symtab_pop_scope(SymbolTable *table);

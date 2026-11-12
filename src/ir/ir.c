@@ -2944,9 +2944,9 @@ static void emit_class_jump(IrProgram *ir, AstNode *c, const char *target, bool 
         }
         if (numeric && v->usage_type == USAGE_COMP3) code = 5;
         else if (numeric && v->is_signed) {
-            int f = var_flags(v);
-            code = (f & IR_NUM_SIGN_SEPARATE) ? ((f & IR_NUM_SIGN_LEADING) ? 8 : 7)
-                                              : ((f & IR_NUM_SIGN_LEADING) ? 6 : 1);
+            int vf = var_flags(v);
+            code = (vf & IR_NUM_SIGN_SEPARATE) ? ((vf & IR_NUM_SIGN_LEADING) ? 8 : 7)
+                                              : ((vf & IR_NUM_SIGN_LEADING) ? 6 : 1);
         } else {
             code = 0;
         }
@@ -6836,7 +6836,7 @@ static void check_flow(AstNode *program, bool subprogram) {
             if (n->kind != AST_SECTION && n->kind != AST_PARAGRAPH) continue;
             int proc = index++;
             if (proc >= MAX_PROCS) return;
-            proc_ends[proc] = body_ends(n->kind == AST_SECTION ? n->children : n->children, subprogram);
+            proc_ends[proc] = body_ends(n->children, subprogram);
             if (n->kind == AST_SECTION)
                 for (AstNode *c = n->children; c; c = c->next)
                     if (c->kind == AST_PARAGRAPH && index < MAX_PROCS) proc_ends[index++] = body_ends(c->children, subprogram);
@@ -7047,9 +7047,9 @@ IrProgram *lower_to_ir(AstNode *program, const Dialect *program_dialect, const I
             }
             int proc = index++;
             current_proc = proc;
-            IrInstr *entry = emit(ir, IR_PROC_ENTRY);
-            entry->imm = proc;
-            entry->var_name = strdup(n->name);
+            IrInstr *pe = emit(ir, IR_PROC_ENTRY);
+            pe->imm = proc;
+            pe->var_name = strdup(n->name);
             current_section = (n->kind == AST_SECTION) ? n->name : NULL;
             exit_sec = n->kind == AST_SECTION ? proc : -1;
             exit_para = n->kind == AST_PARAGRAPH ? proc : -1;
@@ -7159,8 +7159,8 @@ void ir_free(IrProgram *ir) {
     free(ir->program_name);
     free(ir->entry_symbol);
     free(ir->info_symbol);
-    for (int i = 0; i < num_vars; i++) {
-        free(vars[i].name);
+    for (int k = 0; k < num_vars; k++) {
+        free(vars[k].name);
     }
     free(ir);
 }

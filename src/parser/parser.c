@@ -39,7 +39,7 @@ static bool later_statement(const char *name, SourceLocation loc);
 static void skip_exec_block(void);
 
 // Function to synchronize parser after an error
-static void synchronize() {
+static void synchronize(void) {
     parser_panic_mode = true;
     while (tok.kind != TOK_EOF) {
         // We've already advanced past the error, now look for a safe point
@@ -4589,13 +4589,13 @@ static AstNode *parse_division(void) {
             }
             if (tok_is_word("PROGRAM") && peek_token().kind == TOK_IDENT) {
                 // OBJECT-COMPUTER: PROGRAM COLLATING SEQUENCE IS alphabet-name
-                SourceLocation loc = {tok.filename, tok.line, tok.column};
+                SourceLocation cloc = {tok.filename, tok.line, tok.column};
                 next();
                 if (tok_is_word("COLLATING")) next();
                 if (tok_is_word("SEQUENCE")) next();
                 if (tok.kind == TOK_IS) next();
                 if (tok.kind == TOK_IDENT) {
-                    AstNode *coll = ast_new(AST_SPECIAL, "COLLATING", loc);
+                    AstNode *coll = ast_new(AST_SPECIAL, "COLLATING", cloc);
                     coll->text = tok_to_str();
                     list_append(&div->children, &sel_tail, coll);
                     next();

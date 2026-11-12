@@ -573,7 +573,7 @@ int x86_encode(const Stmt *st, uint8_t *out, Fixup *fixups, int *nfixups, const 
             NEED(1);
             if (!is_mem(a) || (a->size != 8 && a->size != 4)) { fail(&e, "invalid operands"); break; }
             if (a->size == 8) op1(&e, 4, m == M_X87_FISTTP ? 0xDD : 0xDF, m == M_X87_FILD ? 5 : m == M_X87_FISTP ? 7 : 1, NULL, a, 0);
-            else op1(&e, 4, m == M_X87_FISTTP ? 0xDB : 0xDB, m == M_X87_FILD ? 0 : m == M_X87_FISTP ? 3 : 1, NULL, a, 0);
+            else op1(&e, 4, 0xDB, m == M_X87_FILD ? 0 : m == M_X87_FISTP ? 3 : 1, NULL, a, 0);
             break;
         case M_X87_FLDCW:
         case M_X87_FNSTCW:

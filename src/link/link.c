@@ -667,7 +667,7 @@ laid_out:
                 if (off + (uint64_t)width > t->size) { link_error(&lk, "%s: relocation outside its section", o->in->name); continue; }
                 uint64_t S;
                 if (!symbol_address(&lk, o, sym, &S)) continue;
-                uint64_t P = t->addr + off;
+                uint64_t place = t->addr + off;
                 uint8_t *at = img.data + L.file_off[t->cls] + t->out_off + off;
                 int64_t v = (int64_t)(S + (uint64_t)addend);
                 switch (type) {
@@ -676,7 +676,7 @@ laid_out:
                         break;
                     case R_X86_64_PC32:
                     case R_X86_64_PLT32:
-                        v -= (int64_t)P;
+                        v -= (int64_t)place;
                         if (v < INT32_MIN || v > INT32_MAX) link_error(&lk, "%s: PC-relative relocation out of range", o->in->name);
                         wr32(at, (uint32_t)v);
                         break;

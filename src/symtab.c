@@ -16,7 +16,7 @@ static unsigned int hash_string(const char *str) {
 
 // --- SymbolTable operations ---
 
-SymbolTable *symtab_init() {
+SymbolTable *symtab_init(void) {
     SymbolTable *table = malloc(sizeof(SymbolTable));
     if (!table) {
         cobalt_error("Failed to allocate memory for SymbolTable.");

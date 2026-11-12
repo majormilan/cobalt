@@ -824,8 +824,8 @@ static void parse_line(Asm *as, const char *p, const char *end) {
             const char *a = skip_ws(starts[k]), *ae = a;
             while (ae < ends[k] && ident_char(*ae)) ae++;     // drops :function and similar
             if (a == ae) { error_at(as, "expected a symbol name"); continue; }
-            int k = symbol_index(as, a, (size_t)(ae - a));     // may move the symbol array
-            Symbol *sym = &as->obj->symbols[k];
+            int si = symbol_index(as, a, (size_t)(ae - a));     // may move the symbol array
+            Symbol *sym = &as->obj->symbols[si];
             if (global) sym->global = true;
             else if (!sym->defined) sym->external = true;
         }
