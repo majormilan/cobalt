@@ -23,6 +23,9 @@
 
 ### Fixed
 
+- `0 ** 0` is a size error also when the exponent is a literal.
+- INITIALIZE ... REPLACING ... BY a figurative constant (SPACES, QUOTE,
+  ALL literal) fills the items with it instead of storing its name.
 - No false size error when a quotient or product of up to 18 digits is
   stored with no room for extra decimal places (DIVIDE and COMPUTE with
   18-digit operands, DIVIDE ... REMAINDER).

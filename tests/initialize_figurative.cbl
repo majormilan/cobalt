@@ -1,0 +1,19 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. INITIALIZE-FIGURATIVE.
+      * INITIALIZE ... REPLACING ... BY a figurative constant
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 G.
+          05 GA PIC XX VALUE "AB".
+          05 GN PIC 99 VALUE 12.
+          05 GE PIC ZZ9 VALUE "  7".
+          05 GX PIC XXX VALUE "CDE".
+       PROCEDURE DIVISION.
+           INITIALIZE G REPLACING ALPHANUMERIC DATA BY SPACES
+                                  NUMERIC DATA BY ZERO.
+           DISPLAY "[" G "]".
+           INITIALIZE G REPLACING ALPHANUMERIC DATA BY ALL "xy".
+           DISPLAY "[" G "]".
+           INITIALIZE G REPLACING ALPHANUMERIC BY QUOTE.
+           DISPLAY "[" G "]".
+           STOP RUN.

@@ -2278,6 +2278,21 @@ static int num_expr(IrProgram *ir, AstNode *e, int W) {
                 return W;
             }
             if (n == 0) {
+                // x ** 0 is 1, but 0 ** 0 is a size error: a base that may
+                // be zero goes to the run-time routine
+                long long bv;
+                int bs;
+                if (base->kind != AST_LITERAL_NUMBER || !parse_num_literal(base->name, &bv, &bs) || bv == 0) {
+                    int sb = num_expr(ir, base, W);
+                    int se = num_expr(ir, base->next, W);
+                    if (ir) {
+                        IrInstr *p = emit(ir, IR_NUM_POW);
+                        p->imm = W;
+                        p->digits = sb;
+                        p->size = se;
+                    }
+                    return W;
+                }
                 if (ir) emit_num(ir, IR_NUM_CONST, 1, 0);
                 return 0;
             }
@@ -3819,6 +3834,10 @@ static void init_replace(IrProgram *ir, FieldRef *f, AstNode *src) {
             diag_error(src->loc, "A nonnumeric literal cannot replace numeric data");
             return;
         }
+        if (src->kind == AST_FIGURATIVE_CONSTANT && figurative_char(src) != '0') {
+            diag_error(src->loc, "%s cannot replace numeric data; ZERO is the numeric figurative constant", src->name);
+            return;
+        }
         bool ok = true;
         int s;
         if (src->kind == AST_IDENTIFIER) {
@@ -3843,6 +3862,10 @@ static void init_replace(IrProgram *ir, FieldRef *f, AstNode *src) {
         }
         if (is_alnum_edited(v)) emit_edit_alnum(ir, f, sf.label, sf.size);
         else emit_move_alpha(ir, f, sf.label, sf.size);
+        return;
+    }
+    if (src->kind == AST_FIGURATIVE_CONSTANT) {     // SPACES, ALL "x", ...
+        emit_fill_figurative(ir, f, src);
         return;
     }
     char lit[32];
