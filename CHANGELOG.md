@@ -23,6 +23,8 @@
 
 ### Fixed
 
+- Exponentiation takes an exponent with decimals (`9 ** 0.5` is 3); a
+  negative base with such an exponent is a size error.
 - MOVE of HIGH-VALUE, LOW-VALUE, QUOTE or an ALL literal to a numeric item
   is accepted, as the standard allows (only SPACE is not), and moves the
   characters as alphanumeric data (`MOVE ALL "5" TO N` with `N PIC 9(4)`

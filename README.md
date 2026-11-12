@@ -246,7 +246,6 @@ programs and the NIST suite before and after the change.
 - Object files produced with `-c` are linked by Cobalt only.
 - In the Report Writer, the data-name of a SUM entry refers to the printed
   field rather than the sum counter.
-- Exponentiation with a non-integer exponent raises a size error.
 
 See [Limits](docs/guide/09-limits.md) for the complete list.
 

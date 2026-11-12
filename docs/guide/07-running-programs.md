@@ -63,8 +63,9 @@ Arithmetic is decimal and exact:
 - division by zero is a size error: the receiver keeps its value, with or
   without ON SIZE ERROR;
 - an unsigned receiver takes the absolute value of a negative result;
-- exponentiation (`**`) takes an integer exponent, a literal or an item;
-  an exponent with decimals is a size error in this release.
+- exponentiation (`**`) takes an exponent with or without decimals, a
+  literal or an item; zero to a power that is not positive, and a negative
+  number to a power with decimals, are size errors.
 
 A byte that is not a digit in a numeric DISPLAY item counts as 0 when the
 item is used in arithmetic. `IF item IS NUMERIC` tells whether the item

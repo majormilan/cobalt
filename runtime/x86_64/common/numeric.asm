@@ -1332,8 +1332,9 @@ runtime_num_div:
 ; Exponentiation with an exponent known only at run time.
 ; ARG0 = base, ARG1 = base scale, ARG2 = exponent, ARG3 = exponent scale,
 ; ARG4 = result scale W (0..18).
-; Returns RET0 = base ** exponent at scale W; RET1 = 1 on a size error: the
-; exponent is not an integer, 0 ** n with n <= 0, or overflow.
+; Returns RET0 = base ** exponent at scale W; RET1 = 1 on a size error: 0 **
+; n with n <= 0, a negative base with an exponent that is not an integer,
+; or overflow.
 runtime_num_pow:
     push rbx
     push r12
@@ -1358,7 +1359,7 @@ runtime_num_pow:
     cqo
     idiv rcx
     test rdx, rdx
-    jnz .p_err                          ; a fraction: not supported
+    jnz .p_frac                         ; an exponent with a fraction
     mov r14, rax
     jmp .p_exp_int
 .p_exp_up:
@@ -1432,6 +1433,51 @@ runtime_num_pow:
 .p_done:
     xor edx, edx
     jmp .p_ret
+.p_frac:
+    ; base ** exponent = 2 ** (exponent * log2 base), base > 0 (in x87
+    ; extended precision), at scale W, truncated
+    test r12, r12
+    jz .p_frac_zero
+    js .p_err
+    cmp r13, 18
+    ja .p_err
+    sub rsp, 16
+    lea rcx, [rel pow10]
+    mov [rsp], r14
+    fild qword [rsp]
+    fild qword [rcx + r15*8]
+    fdivp                               ; the exponent
+    mov [rsp], r12
+    fild qword [rsp]
+    fild qword [rcx + r13*8]
+    fdivp                               ; the base
+    fyl2x                               ; exponent * log2(base)
+    fld st0
+    frndint
+    fstp qword [rsp + 8]                ; n
+    fld qword [rsp + 8]
+    fsubp                               ; the fraction
+    f2xm1
+    fld1
+    faddp                               ; 2 ** fraction
+    fld qword [rsp + 8]
+    fxch st1
+    fscale                              ; 2 ** fraction * 2 ** n
+    fstp st1
+    fild qword [rcx + rbx*8]
+    fmulp                               ; at scale W
+    fisttp qword [rsp]
+    mov rax, [rsp]
+    add rsp, 16
+    mov rcx, 0x8000000000000000         ; the integer indefinite: out of range
+    cmp rax, rcx
+    je .p_err
+    jmp .p_done
+.p_frac_zero:
+    test r14, r14
+    jle .p_err                          ; 0 ** 0 and 0 ** negative
+    xor eax, eax
+    jmp .p_done
 .p_err:
     xor eax, eax
     mov edx, 1
