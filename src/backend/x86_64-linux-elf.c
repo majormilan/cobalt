@@ -2486,6 +2486,7 @@ static void emit_instr(Emitter *em, FILE *f, IrInstr *i, const char *sanitized_v
             emit_addr(f, "r8", i->var_name);
             fprintf(f, "    mov r9, %d\n", i->lit_len);
             fprintf(f, "    call runtime_function\n");
+            fprintf(f, "    or [rel cobrt_tgt_err], al\n");   // a value that did not fit
             break;
         case IR_EXTERNAL: {
             char *lit = sanitize_label_name(i->lit_name);

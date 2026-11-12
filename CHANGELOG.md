@@ -23,6 +23,11 @@
 
 ### Fixed
 
+- Intrinsic functions of large arguments: MAX, MIN, ORD-MAX, ORD-MIN,
+  MEDIAN, MIDRANGE, RANGE, SUM, MEAN, STANDARD-DEVIATION, VARIANCE,
+  PRESENT-VALUE and NUMVAL / NUMVAL-C of a literal give exact results up to
+  18 digits; a value that cannot be represented raises the size error
+  instead of giving a wrong result.
 - MOVE evaluates the sending item's subscripts and reference modifier
   once, before the first receiver, as the standard requires
   (`MOVE TE(I) TO I J`).

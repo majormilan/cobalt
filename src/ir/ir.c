@@ -1377,6 +1377,40 @@ static int temp_alnum(int size, const AstNode *decl) {
     return (int)(v - vars);
 }
 
+static int int_digits(AstNode *e);
+
+// The integer digits the value of a numeric function may have, from its
+// arguments (0: no bound needed, the result is small)
+static int function_int_digits(const FuncInfo *fi, AstNode **args, int nargs) {
+    if (fi->id == 24 || fi->id == 25) {
+        // NUMVAL, NUMVAL-C: a literal's digits before the decimal point; a
+        // data item's text could put the point anywhere (no bound)
+        if (nargs < 1 || args[0]->kind != AST_STRING_LITERAL || !args[0]->name) return 0;
+        int d = 0;
+        for (const char *c = args[0]->name; *c && *c != (decimal_comma ? ',' : '.'); c++)
+            if (isdigit((unsigned char)*c)) d++;
+        return d;
+    }
+    int most = 0, first = fi->id == 29 ? 1 : 0;       // PRESENT-VALUE: the rate is no amount
+    for (int k = first; k < nargs; k++) {
+        // (a function's value has no bound from a PICTURE)
+        if (args[k]->kind == AST_IDENTIFIER && args[k]->name && args[k]->name[0] == '!') continue;
+        int d = arg_is_alnum(args[k]) ? arg_length(args[k]) : int_digits(args[k]);
+        if (d > most) most = d;
+    }
+    int count = 0;                                      // digits of the number of arguments
+    for (int n = nargs; n > 0; n /= 10) count++;
+    switch (fi->id) {
+        case 18: case 19: case 20: case 21: case 22:    // MAX MEAN MEDIAN MIDRANGE MIN
+            return most;
+        case 31: case 36: return most + 1;              // RANGE, STANDARD-DEVIATION
+        case 29: case 37: return most + count;          // PRESENT-VALUE, SUM
+        case 40: return most;                           // VARIANCE (a larger one: a size error)
+        case 35: return (most + 1) / 2;                 // SQRT
+        default: return 0;
+    }
+}
+
 // The temporary item of function reference f (created on first use)
 static int function_temp(const AstNode *f) {
     for (int k = 0; k < num_fn_temps; k++)
@@ -1412,6 +1446,10 @@ static int function_temp(const AstNode *f) {
                 s = m + (fi->scale == -2 ? 1 : 0);
                 if (s > 17) s = 17;
             }
+            // the largest value must fit 18 digits at the result's scale
+            int need = function_int_digits(fi, args, nargs);
+            if (need > 18) need = 18;
+            if (need > 0 && s > 18 - need) s = 18 - need;
             idx = temp_numeric(s, f);
         }
     }

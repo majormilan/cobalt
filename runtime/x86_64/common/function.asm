@@ -89,6 +89,7 @@ runtime_function:
     mov FSCALE, ARG3
     mov FRES, ARG4
     mov FRLEN, ARG5
+    mov byte [rel fn_err], 0
     mov rax, ARG2
     and eax, 0xFF
     cmp eax, F_VARIANCE
@@ -96,6 +97,7 @@ runtime_function:
     lea rcx, [rel dispatch]
     jmp [rcx + rax*8]
 .done:
+    movzx eax, byte [rel fn_err]        ; 1: a value did not fit (a size error)
     lea rsp, [rbp - 104]                ; (MEDIAN moves rsp)
     pop r15
     pop r14
@@ -124,27 +126,45 @@ fld_arg:
     fdivp
     ret
 
-; Numeric argument ARG0 as an integer at scale ARG1 (truncated) in rax
-arg_at_scale:
+; Numeric argument ARG0 as an integer at scale ARG1 (truncated) in rax;
+; edx 1 if it does not fit 64 bits at that scale (rax is then 0), else 0
+arg_scaled:
     push rbx
     mov rbx, ARG1
     call arg_addr
     mov rcx, [rax]                      ; its scale
     mov rax, [rax + 8]
-    lea rdx, [rel pow10]
+    lea r11, [rel pow10]
     cmp rcx, rbx
-    je .done
+    je .fits
     jb .up
     sub rcx, rbx
-    mov r8, [rdx + rcx*8]
+    mov r8, [r11 + rcx*8]
     cqo
     idiv r8
-    jmp .done
+    jmp .fits
 .up:
     sub rbx, rcx
-    imul rax, [rdx + rbx*8]
-.done:
+    imul rax, [r11 + rbx*8]
+    jo .over
+.fits:
+    xor edx, edx
     pop rbx
+    ret
+.over:
+    xor eax, eax
+    mov edx, 1
+    pop rbx
+    ret
+
+; Numeric argument ARG0 as an integer at scale ARG1 (truncated) in rax; a
+; value that does not fit sets the error flag
+arg_at_scale:
+    call arg_scaled
+    test edx, edx
+    jz .ok
+    mov byte [rel fn_err], 1
+.ok:
     ret
 
 ; Store the FPU top (popped) as the result at the result scale (rounded)
@@ -155,6 +175,12 @@ fstore_result:
     fmulp
     mov rax, FRES
     fistp qword [rax]
+    mov rcx, 0x8000000000000000         ; the integer indefinite: out of range
+    cmp [rax], rcx
+    jne .ok
+    mov byte [rel fn_err], 1
+    mov qword [rax], 0
+.ok:
     ret
 
 ; Store rax (an integer at scale ARG0) as the result at the result scale
@@ -166,6 +192,9 @@ istore_result:
     jb .down
     sub rcx, ARG0
     imul rax, [rdx + rcx*8]
+    jno .store
+    mov byte [rel fn_err], 1
+    xor eax, eax
     jmp .store
 .down:
     mov r8, ARG0
@@ -390,7 +419,7 @@ f_sum:
     xor ecx, ecx
 .scale:
     cmp rcx, FN
-    jae .values
+    jae .fit
     mov rax, rcx
     imul rax, rax, ARG_SIZE
     add rax, FA
@@ -400,6 +429,22 @@ f_sum:
 .next_scale:
     inc rcx
     jmp .scale
+.fit:
+    ; lowered while an argument does not fit 64 bits at it
+    xor ebx, ebx
+.fit_each:
+    cmp rbx, FN
+    jae .values
+    mov ARG0, rbx
+    mov ARG1, r15
+    call arg_scaled
+    inc rbx
+    test edx, edx
+    jz .fit_each
+    test r15, r15
+    jz .values
+    dec r15
+    jmp .fit
 .values:
     xor ARG0, ARG0
     mov ARG1, r15
@@ -409,6 +454,7 @@ f_sum:
     mov r14, rax                        ; sum
     mov qword FTMP, 1                   ; position of max
     mov qword FTMP2, 1                  ; position of min
+    xor r9d, r9d
     mov ebx, 1
 .each:
     cmp rbx, FN
@@ -417,6 +463,9 @@ f_sum:
     mov ARG1, r15
     call arg_at_scale
     add r14, rax
+    jno .summed
+    mov r9d, 1                          ; the sum overflowed (an error for SUM)
+.summed:
     cmp rax, r12
     jle .not_max
     mov r12, rax
@@ -442,14 +491,31 @@ f_sum:
     je .store
     mov rax, r14
     cmp ecx, F_SUM
-    je .store
+    jne .not_sum
+    test r9d, r9d
+    jz .store
+    mov byte [rel fn_err], 1
+    jmp .store
+.not_sum:
     mov rax, r12
     sub rax, r13
+    seto r8b                            ; the range overflowed
     cmp ecx, F_RANGE
-    je .store
-    mov rax, r12
-    add rax, r13
+    jne .midrange
+    test r8b, r8b
+    jz .store
+    mov byte [rel fn_err], 1
+    jmp .store
+.midrange:
+    ; (max + min) / 2, the sum in 128 bits
+    mov rax, r13
     cqo
+    mov r8, rax
+    mov r9, rdx
+    mov rax, r12
+    cqo
+    add rax, r8
+    adc rdx, r9
     mov rcx, 2
     idiv rcx
     mov rcx, FID
@@ -1201,5 +1267,6 @@ month_days:
     dq 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334
 
 section .bss
+fn_err: resb 1                          ; a value did not fit (runtime_function's result)
 random_state: resq 1
 random_seeded: resb 1

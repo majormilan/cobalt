@@ -1,0 +1,33 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. FUNCTION-LARGE.
+      * Intrinsic functions of large arguments: exact where the result
+      * fits 18 digits, a size error where it cannot be represented
+       DATA DIVISION.
+       WORKING-STORAGE SECTION.
+       01 RB  PIC S9(18).
+       01 BIG PIC S9(18) VALUE 999999999999999999.
+       01 H   PIC S9V9 VALUE 0.5.
+       01 A   PIC S9(12) VALUE 123456789012.
+       01 B   PIC S9(12) VALUE 123456789014.
+       01 C   PIC S9(18) VALUE 500000000000000000.
+       01 NV  PIC X(30).
+       01 R   PIC S9(9)V9(6).
+       PROCEDURE DIVISION.
+           COMPUTE RB = FUNCTION MAX(BIG H). DISPLAY "MAX " RB.
+           COMPUTE RB = FUNCTION MIN(BIG H). DISPLAY "MIN " RB.
+           COMPUTE RB = FUNCTION ORD-MAX(BIG H). DISPLAY "ORD-MAX " RB.
+           COMPUTE RB = FUNCTION MEDIAN(BIG 1 2). DISPLAY "MEDIAN " RB.
+           COMPUTE RB = FUNCTION MEAN(A B). DISPLAY "MEAN " RB.
+           COMPUTE RB = FUNCTION MEAN(C C). DISPLAY "MEAN " RB.
+           COMPUTE RB = FUNCTION NUMVAL("12345678901").
+           DISPLAY "NUMVAL " RB.
+           COMPUTE RB = FUNCTION NUMVAL-C("$123,456,789,012,345").
+           DISPLAY "NUMVAL-C " RB.
+           MOVE "12.5" TO NV.
+           COMPUTE R = FUNCTION NUMVAL(NV). DISPLAY "NUMVAL " R.
+           MOVE 7 TO RB.
+           MOVE "123456789012345678" TO NV.
+           COMPUTE RB = FUNCTION NUMVAL(NV)
+               ON SIZE ERROR DISPLAY "SIZE ERROR".
+           DISPLAY "NUMVAL " RB.
+           STOP RUN.
