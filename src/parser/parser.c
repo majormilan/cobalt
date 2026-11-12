@@ -1403,6 +1403,38 @@ static void free_subjects(AstNode **subjects, int n) {
     for (int i = 0; i < n; i++) ast_free(subjects[i]);
 }
 
+// An EVALUATE subject (up to its ALSO or WHEN) is a condition: it has a
+// relational operator, a class or sign test, AND, OR, NOT or IS, or is a
+// condition-name
+static bool word_is_condition_name(const Token *t) {
+    if (t->kind != TOK_IDENT) return false;
+    char name[64];
+    size_t n = t->length < sizeof(name) - 1 ? t->length : sizeof(name) - 1;
+    memcpy(name, t->lexeme, n);
+    name[n] = '\0';
+    Symbol *sym = symtab_resolve_symbol(current_symtab, name);
+    return sym && sym->level == 88;
+}
+
+static bool subject_is_condition(void) {
+    Lexer copy = *current_lexer;
+    copy.quiet = true;
+    copy.prev = NULL;
+    Token t = tok;
+    int depth = 0;
+    for (int guard = 0; guard < 1000; guard++) {
+        if (t.kind == TOK_EOF || t.kind == TOK_PERIOD) return false;
+        if (depth == 0 && (t.kind == TOK_WHEN || t.kind == TOK_ALSO)) return false;
+        if (t.kind == TOK_LPAREN) depth++;
+        else if (t.kind == TOK_RPAREN) depth--;
+        else if (is_relop_start(t.kind) || is_class_or_sign(t.kind) || t.kind == TOK_IS ||
+                 t.kind == TOK_NOT || t.kind == TOK_AND || t.kind == TOK_OR || word_is_condition_name(&t))
+            return true;
+        t = lexer_next(&copy);
+    }
+    return false;
+}
+
 // Subject: TRUE | FALSE | condition | identifier, literal or expression
 static AstNode *parse_evaluate_subject(void) {
     SourceLocation loc = {tok.filename, tok.line, tok.column};
@@ -1411,13 +1443,16 @@ static AstNode *parse_evaluate_subject(void) {
         next();
         return make_bool(value, loc);
     }
+    if (subject_is_condition()) {
+        // any conditional expression: A = 1 AND B = 2, NOT ..., (A = 1)
+        AstNode *cond = parse_condition();
+        if (!cond) arith_error("Expected EVALUATE subject");
+        return cond;
+    }
     abbrev_subject = NULL;
     abbrev_op = NULL;
     AstNode *operand = parse_rel_operand();
     if (!operand) { arith_error("Expected EVALUATE subject"); return NULL; }
-    if (tok.kind == TOK_IS || tok.kind == TOK_NOT || is_relop_start(tok.kind) ||
-        is_class_or_sign(tok.kind))
-        return parse_condition_tail(operand);
     if (is_condition_name(operand)) operand->kind = AST_COND_NAME;
     return operand;
 }

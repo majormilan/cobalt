@@ -23,6 +23,8 @@
 
 ### Fixed
 
+- An EVALUATE subject may be any conditional expression (`A = 3 AND B = 5`,
+  `NOT A = 3`, `(A = 3)`, abbreviated combined relations).
 - A reference modifier without a length on a group with an OCCURS
   DEPENDING ON table runs to the group's current end, not its maximum.
 - A signed numeric literal moved to, or compared with, an alphanumeric
