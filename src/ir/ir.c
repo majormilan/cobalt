@@ -1741,7 +1741,26 @@ static int odo_length(IrProgram *ir, const VarInfo *v, const VarInfo *t) {
 
 static bool eval_function(IrProgram *ir, AstNode *f);
 
+static bool resolve_ref_now(IrProgram *ir, AstNode *ref, FieldRef *out);
+
+// A reference resolved once for a whole statement: MOVE evaluates the
+// sending item's subscripts and reference modifier once, before the first
+// receiver (the receivers may change the subscripts)
+static AstNode *pinned_ref;
+static FieldRef pinned_field;
+static bool pinned_done;
+
 static bool resolve_ref(IrProgram *ir, AstNode *ref, FieldRef *out) {
+    if (ref != pinned_ref || !ref) return resolve_ref_now(ir, ref, out);
+    if (!pinned_done) {
+        if (!resolve_ref_now(ir, ref, &pinned_field)) return false;
+        pinned_done = true;
+    }
+    *out = pinned_field;
+    return true;
+}
+
+static bool resolve_ref_now(IrProgram *ir, AstNode *ref, FieldRef *out) {
     memset(out, 0, sizeof(*out));
     if (ref->name[0] == '!' && !eval_function(ir, ref)) return false;
     VarInfo *v = find_item(ref, true);
@@ -6318,8 +6337,15 @@ static void lower_node_kind(IrProgram *ir, AstNode *node) {
                 if (!dv || dv->is_numeric || is_num_edited(dv) || dv->is_group || dest->loop) numeric_move = true;
             }
             if (numeric_move) emit(ir, IR_SIZE_ERR_CLEAR);
+            // several receivers: the source's subscripts are evaluated once
+            bool pin = src->kind == AST_IDENTIFIER && (src->children || src->loop) && src->next && src->next->next;
+            if (pin) {
+                pinned_ref = src;
+                pinned_done = false;
+            }
             for (AstNode *dest = src->next; dest && dest->kind == AST_IDENTIFIER; dest = dest->next)
                 lower_move(ir, src, dest, lit_name);
+            pinned_ref = NULL;
             break;
         }
         case AST_STATEMENT_ADD:

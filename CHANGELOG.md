@@ -23,6 +23,9 @@
 
 ### Fixed
 
+- MOVE evaluates the sending item's subscripts and reference modifier
+  once, before the first receiver, as the standard requires
+  (`MOVE TE(I) TO I J`).
 - YEAR, YYYYMMDD and YYDDD are no longer reserved words; they can name
   data items (YYYYMMDD keeps its meaning after ACCEPT ... FROM DATE).
 - Debugging lines are compiled only with WITH DEBUGGING MODE in the
