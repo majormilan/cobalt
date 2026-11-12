@@ -31,6 +31,10 @@
 
 ### Fixed
 
+- A REDEFINES entry that does not immediately follow the item it
+  redefines (another entry between them) is an error.
+- `-X pedantic`: MOVE SPACE to a numeric edited item is an error, as in
+  COBOL-85 (accepted at the other levels, where it blanks the field).
 - `-D gnucobol`: DISPLAY of a SIGN TRAILING SEPARATE item shows the sign
   last (`012-`), as GnuCOBOL does.
 - Report Writer: the data-name of a SUM entry names the sum counter, as

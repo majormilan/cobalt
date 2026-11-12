@@ -426,11 +426,16 @@ static int layout_item(int idx, int record, int offset) {
     return v->size * (v->occurs ? v->occurs : 1);
 }
 
-// The REDEFINES target: the previous item at the same level under the same parent
-static int find_redefined(const char *name, int parent, int before) {
+// The REDEFINES target: the previous item at the same level under the same
+// parent. *between: an item between the two that does not redefine the
+// target too (the redefining entries must follow it immediately), or -1
+static int find_redefined(const char *name, int parent, int before, int *between) {
+    *between = -1;
     for (int i = before - 1; i >= 0; i--) {
-        if (vars[i].is_cond || vars[i].is_index) continue;
-        if (vars[i].parent == parent && strcasecmp(vars[i].name, name) == 0) return i;
+        if (vars[i].is_cond || vars[i].is_index || vars[i].parent != parent) continue;
+        if (strcasecmp(vars[i].name, name) == 0) return i;
+        bool also = vars[i].redefines >= 0 && strcasecmp(vars[vars[i].redefines].name, name) == 0;
+        if (!also && *between < 0) *between = i;
     }
     return -1;
 }
@@ -1047,9 +1052,15 @@ static bool add_item(ItemBuilder *b, const DataDecl *dd, int level) {
 
     AstNode *redef = find_clause(decl, AST_REDEFINES);
     if (redef) {
-        v->redefines = find_redefined(redef->name, v->parent, idx);
+        int between;
+        v->redefines = find_redefined(redef->name, v->parent, idx, &between);
         if (v->redefines < 0)
             diag_error(decl->loc, "REDEFINES target '%s' is not the preceding item at this level", redef->name);
+        else if (between >= 0) {
+            diag_error(decl->loc, "'%s' REDEFINES '%s', but '%s' comes between them", v->name, redef->name,
+                       vars[between].name);
+            if (vars[between].decl) diag_note(vars[between].decl->loc, "a redefining entry follows the item it redefines immediately");
+        }
     }
 
     AstNode *occurs = find_clause(decl, AST_OCCURS);
@@ -3484,6 +3495,12 @@ static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const ch
 
     int fig = figurative_char(src);
     if (fig != -1) {
+        if (dest_num_edited && fig == ' ' && diag_strictness() >= STRICT_PEDANTIC) {
+            // (common practice to blank an edited field: accepted below -X pedantic)
+            diag_error(src->loc, "SPACE cannot be moved to the numeric edited item '%s' in COBOL-85", dv->name);
+            note_item(dv);
+            return;
+        }
         if (dest_numeric && fig == ' ') {
             diag_error(src->loc, "%s cannot be moved to the numeric item '%s'", src->name, dv->name);
             note_item(dv);

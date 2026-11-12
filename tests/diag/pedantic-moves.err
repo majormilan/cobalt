@@ -1,0 +1,13 @@
+tests/diag/pedantic-moves.cbl:10:16: error: 'GR' REDEFINES 'GN', but 'GX' comes between them
+    10 |            05  GR REDEFINES GN PIC XX.
+       |                ^~
+tests/diag/pedantic-moves.cbl:9:16: note: a redefining entry follows the item it redefines immediately
+     9 |            05  GX PIC XX.
+       |                ^~
+tests/diag/pedantic-moves.cbl:13:17: error: SPACE cannot be moved to the numeric edited item 'E' in COBOL-85
+    13 |            MOVE SPACES TO E.
+       |                 ^~~~~~
+tests/diag/pedantic-moves.cbl:11:12: note: 'E' is declared here
+    11 |        01  E  PIC ZZ9.99.
+       |            ^
+2 errors generated.
