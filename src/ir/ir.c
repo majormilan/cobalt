@@ -750,15 +750,8 @@ static void build_debug_item(AstNode *program) {
     debug_contents = debug_field("DEBUG-CONTENTS", debug_item, 56, DEBUG_CONTENTS_SIZE, program);
 }
 
-static void build_data(IrProgram *ir, AstNode *program) {
-    int stack[64];
-    int depth = 0;
-    int last_item = -1;     // data item that level-88 entries belong to
-    AstNode *renames[256];  // level-66 entries, resolved after the layout
-    int renames_record[256];
-    int num_renames = 0;
-
-    // Files named in FILE-CONTROL
+// Files named in FILE-CONTROL, and the SAME RECORD AREA groups
+static void collect_files(AstNode *program) {
     num_files = 0;
     for (AstNode *div = program->children; div; div = div->next) {
         if (div->kind != AST_DIVISION || strcasecmp(div->name, "ENVIRONMENT") != 0) continue;
@@ -785,9 +778,11 @@ static void build_data(IrProgram *ir, AstNode *program) {
             }
         }
     }
+}
 
-    // GLOBAL files of the containing programs (a name of the program's own
-    // hides them)
+// GLOBAL files of the containing programs (a name of the program's own
+// hides them)
+static void collect_global_files(void) {
     for (int a = 0; a < current_unit->nancestors; a++) {
         AstNode *anc = current_unit->ancestors[a];
         char owner_entry[160], owner_info[160];
@@ -817,15 +812,25 @@ static void build_data(IrProgram *ir, AstNode *program) {
                 }
         }
     }
+}
 
-    // Record descriptions: WORKING-STORAGE entries, and the entries of every
-    // FD in the FILE SECTION (decl_file tells which file, or -1); first the
-    // GLOBAL entries of the containing programs (decl_owner: their entry
-    // symbol), outermost first
-    AstNode *decls[MAX_VARS];
-    int decl_file[MAX_VARS];
-    const char *decl_owner[MAX_VARS];
-    int ndecls = 0;
+// Record descriptions: WORKING-STORAGE entries, and the entries of every
+// FD in the FILE SECTION (file: which file, or -1; -2: a LINKAGE SECTION
+// entry, without storage of its own); first the GLOBAL entries of the
+// containing programs (owner: their entry symbol), outermost first
+typedef struct {
+    AstNode *node;
+    int file;
+    const char *owner;
+} DataDecl;
+static DataDecl decls[MAX_VARS];
+static int ndecls;
+
+static void add_decl(AstNode *node, int file, const char *owner) {
+    if (ndecls < MAX_VARS) decls[ndecls++] = (DataDecl){ node, file, owner };
+}
+
+static void collect_global_decls(void) {
     for (int a = current_unit->nancestors - 1; a >= 0; a--) {
         AstNode *anc = current_unit->ancestors[a];
         char owner_entry[160], owner_info[160];
@@ -846,24 +851,22 @@ static void build_data(IrProgram *ir, AstNode *program) {
                         if (f < 0) continue;
                         files[f].fd = entry;
                         files[f].is_sort = entry->is_numeric;
-                        for (AstNode *d = entry->children; d && ndecls < MAX_VARS; d = d->next) {
-                            decls[ndecls] = d;
-                            decl_owner[ndecls] = owner;
-                            decl_file[ndecls++] = f;
-                        }
+                        for (AstNode *d = entry->children; d; d = d->next) add_decl(d, f, owner);
                         continue;
                     }
                     if (entry->kind != AST_VAR_DECL) continue;
                     int level = entry->text ? atoi(entry->text) : 1;
                     if (level == 1 || level == 77) in_global = entry->is_global;
-                    if (!in_global || ndecls >= MAX_VARS) continue;
-                    decls[ndecls] = entry;
-                    decl_owner[ndecls] = owner;
-                    decl_file[ndecls++] = -1;
+                    if (in_global) add_decl(entry, -1, owner);
                 }
             }
         }
     }
+}
+
+static void collect_decls(AstNode *program) {
+    ndecls = 0;
+    collect_global_decls();
     for (AstNode *div = program->children; div; div = div->next) {
         if (div->kind != AST_DIVISION || strcasecmp(div->name, "DATA") != 0) continue;
         for (AstNode *sec = div->children; sec; sec = sec->next) {
@@ -882,165 +885,188 @@ static void build_data(IrProgram *ir, AstNode *program) {
                         files[f].is_sort = entry->is_numeric;
                         files[f].external = entry->is_external;
                     }
-                    for (AstNode *d = entry->children; d && ndecls < MAX_VARS; d = d->next) {
-                        decls[ndecls] = d;
-                        decl_owner[ndecls] = NULL;
-                        decl_file[ndecls++] = f;
-                    }
-                } else if (ndecls < MAX_VARS) {
-                    decls[ndecls] = entry;
-                    decl_owner[ndecls] = NULL;
-                    // -2: LINKAGE SECTION (no storage of its own)
-                    decl_file[ndecls++] = sec->name && strcmp(sec->name, "LINKAGE") == 0 ? -2 : -1;
-                }
-            }
-        }
-    }
-
-    {
-        {
-            for (int di = 0; di < ndecls; di++) {
-                AstNode *decl = decls[di];
-                int file = decl_file[di];
-                bool linkage = file == -2;
-                if (linkage) file = -1;
-                if (decl->kind != AST_VAR_DECL) continue;
-                int level = decl->text ? atoi(decl->text) : 1;
-
-                if (level == 88) {
-                    if (last_item < 0) {
-                        diag_error(decl->loc, "Condition-name '%s' has no data item", decl->name);
-                        continue;
-                    }
-                    VarInfo *cv = new_var(decl->name);
-                    if (!cv) return;
-                    cv->is_cond = true;
-                    cv->parent = last_item;
-                    cv->cond_values = decl->children;
-                    cv->decl = decl;
-                    continue;
-                }
-                if (level == 66) {
-                    // belongs to the record being described
-                    int record = depth > 0 ? stack[0] : -1;
-                    if (record < 0 || vars[record].level == 77) {
-                        diag_error(decl->loc, "RENAMES entry '%s' does not follow a record", decl->name);
-                    } else if (num_renames < 256) {
-                        renames_record[num_renames] = record;
-                        renames[num_renames++] = decl;
-                    }
-                    continue;
-                }
-                if (level != 1 && level != 77 && (level < 2 || level > 49)) {
-                    if (level != 78 || !diag_later_element(decl->loc, LATER_SECTION, "78", 2))
-                        diag_error(decl->loc, "Level %d is not supported", level);
-                    continue;
-                }
-
-                VarInfo *v = new_var(decl->name);
-                if (!v) return;
-                int idx = (int)(v - vars);
-                last_item = idx;
-                v->level = level;
-                v->decl = decl;
-                v->linkage = linkage;
-                v->owner = decl_owner[di];
-                v->is_filler = strcasecmp(decl->name, "FILLER") == 0;
-                v->is_group = !has_clause(decl, AST_PIC_CLAUSE) && !decl->is_numeric;
-                v->justified = has_clause(decl, AST_JUSTIFIED);
-                // sema.c has already populated the semantic fields
-                v->size = (int)decl->data_size;
-                v->decimal_places = decl->decimal_places;
-                v->digits = decl->digits;
-                v->is_numeric = decl->is_numeric;
-                v->is_signed = decl->is_signed;
-                v->usage_type = decl->usage_type;
-                v->mask = decl->mask;
-                v->num_edited = decl->mask && !strchr(decl->mask, 'X');
-                v->float_char = decl->float_char;
-                v->blank_zero = decl->blank_when_zero;
-                v->sign_mode = decl->sign_mode;
-                for (AstNode *c = decl->children; c; c = c->next) {
-                    if (c->kind == AST_STRING_LITERAL || c->kind == AST_LITERAL_NUMBER ||
-                        c->kind == AST_FIGURATIVE_CONSTANT) v->value = c;
-                }
-
-                if (level == 1 || level == 77) {
-                    depth = 0;
-                    if (file >= 0) {
-                        // Every record description of a file shares its record area
-                        v->file = file;
-                        if (level == 77)
-                            diag_error(decl->loc, "Level 77 is not allowed in an FD");
-                            // SAME RECORD AREA: the record area of the group's first file
-                        int area_file = file;
-                        for (int g = 0; g < num_files; g++)
-                            if (files[g].same_group == files[file].same_group && files[file].same_group >= 0 &&
-                                files[g].first_record >= 0) { area_file = g; break; }
-                        if (files[area_file].first_record < 0) files[area_file].first_record = idx;
-                        else v->redefines = files[area_file].first_record;
-                        if (files[file].first_record < 0) files[file].first_record = idx;
-                    }
+                    for (AstNode *d = entry->children; d; d = d->next) add_decl(d, f, NULL);
                 } else {
-                    while (depth > 0 && vars[stack[depth - 1]].level >= level) depth--;
-                    if (depth == 0) {
-                        diag_error(decl->loc, "Level %02d item '%s' is not inside a group", level, decl->name);
-                        continue;
-                    }
-                    v->parent = stack[depth - 1];
-                    if (!vars[v->parent].is_group) {
-                        diag_error(decl->loc, "'%s' has a PICTURE, so it cannot contain '%s'",
-                                         vars[v->parent].name, decl->name);
-                    }
-                    add_child(v->parent, idx);
-                }
-                if (depth < 64) stack[depth++] = idx;
-
-                AstNode *redef = find_clause(decl, AST_REDEFINES);
-                if (redef) {
-                    v->redefines = find_redefined(redef->name, v->parent, idx);
-                    if (v->redefines < 0)
-                        diag_error(decl->loc, "REDEFINES target '%s' is not the preceding item at this level", redef->name);
-                }
-
-                AstNode *occurs = find_clause(decl, AST_OCCURS);
-                if (occurs) {
-                    v->occurs = atoi(occurs->name);
-                    v->depending = occurs->extra;
-                    v->occurs_min = occurs->digits > 0 ? occurs->digits : 0;
-                    if (v->depending && (occurs->digits < 0 || occurs->digits >= v->occurs))
-                        diag_error(decl->loc, "OCCURS %d TO %d is not a valid range", occurs->digits, v->occurs);
-                    if (v->occurs < 1 || level == 1 || level == 77) {
-                        diag_error(decl->loc, "Invalid OCCURS on '%s'", decl->name);
-                        v->occurs = 0;
-                    }
-                    int dims = 0;
-                    for (const VarInfo *a = v; a; a = a->parent >= 0 ? &vars[a->parent] : NULL)
-                        if (a->occurs) dims++;
-                    if (dims > 16) {
-                        diag_error(decl->loc, "'%s' is a table of %d dimensions (16 limit)", decl->name, dims);
-                        v->occurs = 0;
-                    }
-                    for (AstNode *ix = occurs->children; ix; ix = ix->next) {
-                        VarInfo *xv = new_var(ix->name);
-                        if (!xv) return;
-                        v = &vars[idx];     // vars[] does not move, but keep v explicit
-                        xv->is_index = true;
-                        xv->is_numeric = true;
-                        xv->is_signed = true;
-                        xv->usage_type = USAGE_COMP5;
-                        xv->size = 8;
-                        xv->digits = 18;
-                        xv->decl = decl;
-                        if (v->first_index < 0) v->first_index = (int)(xv - vars);
-                    }
+                    add_decl(entry, sec->name && strcmp(sec->name, "LINKAGE") == 0 ? -2 : -1, NULL);
                 }
             }
         }
     }
+}
 
-    // SIGN clause: a group's clause applies to its signed DISPLAY numeric
-    // items without their own; a separate sign takes one more character
+// The data items being built from the entries: the open groups, the item
+// level-88 entries belong to, and the level-66 entries (resolved after the
+// layout)
+typedef struct {
+    int stack[64];
+    int depth;
+    int last_item;
+    AstNode *renames[256];
+    int renames_record[256];
+    int num_renames;
+} ItemBuilder;
+
+// A level-88 condition-name of the last item; false: out of space
+static bool add_condition_name(ItemBuilder *b, AstNode *decl) {
+    if (b->last_item < 0) {
+        diag_error(decl->loc, "Condition-name '%s' has no data item", decl->name);
+        return true;
+    }
+    VarInfo *cv = new_var(decl->name);
+    if (!cv) return false;
+    cv->is_cond = true;
+    cv->parent = b->last_item;
+    cv->cond_values = decl->children;
+    cv->decl = decl;
+    return true;
+}
+
+// A level-66 RENAMES entry of the record being described
+static void add_renames(ItemBuilder *b, AstNode *decl) {
+    int record = b->depth > 0 ? b->stack[0] : -1;
+    if (record < 0 || vars[record].level == 77) {
+        diag_error(decl->loc, "RENAMES entry '%s' does not follow a record", decl->name);
+    } else if (b->num_renames < 256) {
+        b->renames_record[b->num_renames] = record;
+        b->renames[b->num_renames++] = decl;
+    }
+}
+
+// An item's attributes from its entry (sema.c has computed them)
+static void item_from_decl(VarInfo *v, AstNode *decl, int level) {
+    v->level = level;
+    v->decl = decl;
+    v->is_filler = strcasecmp(decl->name, "FILLER") == 0;
+    v->is_group = !has_clause(decl, AST_PIC_CLAUSE) && !decl->is_numeric;
+    v->justified = has_clause(decl, AST_JUSTIFIED);
+    v->size = (int)decl->data_size;
+    v->decimal_places = decl->decimal_places;
+    v->digits = decl->digits;
+    v->is_numeric = decl->is_numeric;
+    v->is_signed = decl->is_signed;
+    v->usage_type = decl->usage_type;
+    v->mask = decl->mask;
+    v->num_edited = decl->mask && !strchr(decl->mask, 'X');
+    v->float_char = decl->float_char;
+    v->blank_zero = decl->blank_when_zero;
+    v->sign_mode = decl->sign_mode;
+    for (AstNode *c = decl->children; c; c = c->next) {
+        if (c->kind == AST_STRING_LITERAL || c->kind == AST_LITERAL_NUMBER ||
+            c->kind == AST_FIGURATIVE_CONSTANT) v->value = c;
+    }
+}
+
+// A record of a file: every record description of a file shares its
+// record area (and SAME RECORD AREA files the area of the group's first)
+static void place_file_record(VarInfo *v, int idx, int file, AstNode *decl) {
+    v->file = file;
+    if (v->level == 77)
+        diag_error(decl->loc, "Level 77 is not allowed in an FD");
+    int area_file = file;
+    for (int g = 0; g < num_files; g++)
+        if (files[g].same_group == files[file].same_group && files[file].same_group >= 0 &&
+            files[g].first_record >= 0) { area_file = g; break; }
+    if (files[area_file].first_record < 0) files[area_file].first_record = idx;
+    else v->redefines = files[area_file].first_record;
+    if (files[file].first_record < 0) files[file].first_record = idx;
+}
+
+// OCCURS: the table's bounds, dimensions and INDEXED BY names; false: out
+// of space
+static bool add_occurs(int idx, AstNode *decl, AstNode *occurs) {
+    VarInfo *v = &vars[idx];
+    int level = v->level;
+    v->occurs = atoi(occurs->name);
+    v->depending = occurs->extra;
+    v->occurs_min = occurs->digits > 0 ? occurs->digits : 0;
+    if (v->depending && (occurs->digits < 0 || occurs->digits >= v->occurs))
+        diag_error(decl->loc, "OCCURS %d TO %d is not a valid range", occurs->digits, v->occurs);
+    if (v->occurs < 1 || level == 1 || level == 77) {
+        diag_error(decl->loc, "Invalid OCCURS on '%s'", decl->name);
+        v->occurs = 0;
+    }
+    int dims = 0;
+    for (const VarInfo *a = v; a; a = a->parent >= 0 ? &vars[a->parent] : NULL)
+        if (a->occurs) dims++;
+    if (dims > 16) {
+        diag_error(decl->loc, "'%s' is a table of %d dimensions (16 limit)", decl->name, dims);
+        v->occurs = 0;
+    }
+    for (AstNode *ix = occurs->children; ix; ix = ix->next) {
+        VarInfo *xv = new_var(ix->name);
+        if (!xv) return false;
+        v = &vars[idx];     // vars[] does not move, but keep v explicit
+        xv->is_index = true;
+        xv->is_numeric = true;
+        xv->is_signed = true;
+        xv->usage_type = USAGE_COMP5;
+        xv->size = 8;
+        xv->digits = 18;
+        xv->decl = decl;
+        if (v->first_index < 0) v->first_index = (int)(xv - vars);
+    }
+    return true;
+}
+
+// A data item (levels 01 to 49 and 77); false: out of space
+static bool add_item(ItemBuilder *b, const DataDecl *dd, int level) {
+    AstNode *decl = dd->node;
+    int file = dd->file == -2 ? -1 : dd->file;
+    VarInfo *v = new_var(decl->name);
+    if (!v) return false;
+    int idx = (int)(v - vars);
+    b->last_item = idx;
+    item_from_decl(v, decl, level);
+    v->linkage = dd->file == -2;
+    v->owner = dd->owner;
+    if (level == 1 || level == 77) {
+        b->depth = 0;
+        if (file >= 0) place_file_record(v, idx, file, decl);
+    } else {
+        while (b->depth > 0 && vars[b->stack[b->depth - 1]].level >= level) b->depth--;
+        if (b->depth == 0) {
+            diag_error(decl->loc, "Level %02d item '%s' is not inside a group", level, decl->name);
+            return true;
+        }
+        v->parent = b->stack[b->depth - 1];
+        if (!vars[v->parent].is_group)
+            diag_error(decl->loc, "'%s' has a PICTURE, so it cannot contain '%s'",
+                       vars[v->parent].name, decl->name);
+        add_child(v->parent, idx);
+    }
+    if (b->depth < 64) b->stack[b->depth++] = idx;
+
+    AstNode *redef = find_clause(decl, AST_REDEFINES);
+    if (redef) {
+        v->redefines = find_redefined(redef->name, v->parent, idx);
+        if (v->redefines < 0)
+            diag_error(decl->loc, "REDEFINES target '%s' is not the preceding item at this level", redef->name);
+    }
+
+    AstNode *occurs = find_clause(decl, AST_OCCURS);
+    return !occurs || add_occurs(idx, decl, occurs);
+}
+
+// The data items of the entries; false: out of space
+static bool build_items(ItemBuilder *b) {
+    for (int di = 0; di < ndecls; di++) {
+        AstNode *decl = decls[di].node;
+        if (decl->kind != AST_VAR_DECL) continue;
+        int level = decl->text ? atoi(decl->text) : 1;
+        bool ok = true;
+        if (level == 88) ok = add_condition_name(b, decl);
+        else if (level == 66) add_renames(b, decl);
+        else if (level == 1 || level == 77 || (level >= 2 && level <= 49)) ok = add_item(b, &decls[di], level);
+        else if (level != 78 || !diag_later_element(decl->loc, LATER_SECTION, "78", 2))
+            diag_error(decl->loc, "Level %d is not supported", level);
+        if (!ok) return false;
+    }
+    return true;
+}
+
+// SIGN clause: a group's clause applies to its signed DISPLAY numeric
+// items without their own; a separate sign takes one more character
+static void apply_sign_clauses(void) {
     for (int i = 0; i < num_vars; i++) {
         VarInfo *v = &vars[i];
         if (v->is_cond || v->is_index || v->is_group) continue;
@@ -1056,8 +1082,10 @@ static void build_data(IrProgram *ir, AstNode *program) {
         }
         if (v->sign_mode & SIGN_SEPARATE) v->size += 1;
     }
+}
 
-    // Validate the hierarchy, then lay out the records
+// Validate the hierarchy, then lay out the records
+static void layout_records(void) {
     for (int i = 0; i < num_vars; i++) {
         VarInfo *v = &vars[i];
         if (v->is_cond || v->is_index) continue;
@@ -1092,9 +1120,10 @@ static void build_data(IrProgram *ir, AstNode *program) {
             record_external[r] = strdup(nm);
         }
     }
-    for (int k = 0; k < num_renames; k++) build_renames(renames[k], renames_record[k]);
-    build_file_records();
-    build_debug_item(program);
+}
+
+// The storage of the program's own records
+static void emit_record_storage(IrProgram *ir) {
     for (int r = 0; r < num_records; r++) {
         record_data[r] = NULL;
         record_coded[r] = false;
@@ -1111,116 +1140,143 @@ static void build_data(IrProgram *ir, AstNode *program) {
         append_instr(ir, d);
         record_data[r] = d;
     }
+}
 
-    // File control blocks
-    for (int f = 0; f < num_files; f++) {
-        FileInfo *fi = &files[f];
-        if (fi->first_record < 0) {
-            diag_error(fi->select->loc, "File '%s' has no FD with a record description", fi->name);
-            continue;
-        }
-        fi->largest_record = fi->first_record;
-        for (int i = 0; i < num_vars; i++)
-            if (vars[i].file == f && vars[i].parent < 0 && vars[i].size > vars[fi->largest_record].size)
-                fi->largest_record = i;
-        if (fi->owner) continue;            // the containing program's
-        char name_lit[32];
-        emit_data_lit(ir, "fname", fi->select->text, name_lit, sizeof(name_lit));
-        int area = vars[fi->first_record].record;
-        // An EXTERNAL file: this is the control block it starts as
-        char tpl[32];
-        if (fi->external) snprintf(tpl, sizeof(tpl), "$fcbtpl_%d", f);
-        else snprintf(tpl, sizeof(tpl), "%%r%d", fi->fcb_record);
-        IrInstr *d = new_instr(IR_DATA_FILE, tpl, name_lit, NULL, 0, fi->max_size, 0, 0, USAGE_DISPLAY);
-        if (fi->fd && fi->fd->is_global) d->symbol = global_symbol(self_symbol, 'f', fi->name);
-        AstNode *sel = fi->select;
-        d->flags = (sel->decimal_places == 1 ? FILE_LINE : 0) |
-                   (sel->is_signed ? FILE_OPTIONAL : 0) |
-                   (fi->variable ? FILE_VARIABLE : 0) |
-                   (fi->linage_record >= 0 ? FILE_LINAGE : 0) |
-                   (sel->org == FILE_ORG_RELATIVE ? ORG_RELATIVE : 0) |
-                   (sel->org == FILE_ORG_INDEXED ? ORG_INDEXED : 0) |
-                   (fi->is_sort ? ORG_SORT : 0) |
-                   (sel->access == FILE_ACCESS_RANDOM ? ACC_RANDOM : 0) |
-                   (sel->access == FILE_ACCESS_DYNAMIC ? ACC_DYNAMIC : 0);
-        d->digits = fi->min_size;
-        if (fi->linage_record >= 0) {
-            char lin[16];
-            snprintf(lin, sizeof(lin), "%%r%d", fi->linage_record);
-            d->cmp_op = strdup(lin);
-        }
-        if (sel->org == FILE_ORG_INDEXED) {
-            // Key table: the record area, the number of keys, then offset,
-            // length and duplicates of the prime key and each alternate key
-            fi->nkeys = 0;
-            char table[2048];
-            record_label(table, sizeof(table), area, 0);
-            int n = (int)strlen(table);
-            char body[2000] = "";
-            int bn = 0;
-            for (int pass = 0; pass < 2; pass++) {
-                for (AstNode *k = sel->children; k; k = k->next) {
-                    if (k->kind != AST_FILE_KEY) continue;
-                    bool prime = strcmp(k->name, "RECORD") == 0;
-                    if (prime != (pass == 0) || strcmp(k->name, "RELATIVE") == 0) continue;
-                    VarInfo *kv = find_item(k->extra, true);
-                    if (!kv) continue;
-                    int top = (int)(kv - vars);
-                    while (vars[top].parent >= 0) top = vars[top].parent;
-                    if (vars[top].file != f) {
-                        diag_error(k->extra->loc, "Key '%s' is not in a record of file '%s'", kv->name, fi->name);
-                        continue;
-                    }
-                    if (fi->nkeys >= 16) break;
-                    fi->key_item[fi->nkeys++] = (int)(kv - vars);
-                    bn += snprintf(body + bn, sizeof(body) - bn, " %d %d %d", kv->offset, kv->size,
-                                   k->is_signed ? 1 : 0);
-                }
+// An indexed file's key table: the record area, the number of keys, then
+// offset, length and duplicates of the prime key and each alternate key
+static void emit_key_table(IrProgram *ir, int f, IrInstr *d) {
+    FileInfo *fi = &files[f];
+    AstNode *sel = fi->select;
+    int area = vars[fi->first_record].record;
+    fi->nkeys = 0;
+    char table[2048];
+    record_label(table, sizeof(table), area, 0);
+    int n = (int)strlen(table);
+    char body[2000] = "";
+    int bn = 0;
+    for (int pass = 0; pass < 2; pass++) {
+        for (AstNode *k = sel->children; k; k = k->next) {
+            if (k->kind != AST_FILE_KEY) continue;
+            bool prime = strcmp(k->name, "RECORD") == 0;
+            if (prime != (pass == 0) || strcmp(k->name, "RELATIVE") == 0) continue;
+            VarInfo *kv = find_item(k->extra, true);
+            if (!kv) continue;
+            int top = (int)(kv - vars);
+            while (vars[top].parent >= 0) top = vars[top].parent;
+            if (vars[top].file != f) {
+                diag_error(k->extra->loc, "Key '%s' is not in a record of file '%s'", kv->name, fi->name);
+                continue;
             }
-            if (!file_key(f, "RECORD"))
-                diag_error(sel->loc, "INDEXED file '%s' has no RECORD KEY", fi->name);
-            snprintf(table + n, sizeof(table) - n, " %d%s", fi->nkeys, body);
-            char label[32];
-            snprintf(label, sizeof(label), "$keys_%d", f);
-            IrInstr *q = new_instr(IR_DATA_QWORDS, label, NULL, table, 0, 0, 0, 0, USAGE_DISPLAY);
-            append_instr(ir, q);
-            d->jump_target = strdup(label);
+            if (fi->nkeys >= 16) break;
+            fi->key_item[fi->nkeys++] = (int)(kv - vars);
+            bn += snprintf(body + bn, sizeof(body) - bn, " %d %d %d", kv->offset, kv->size,
+                           k->is_signed ? 1 : 0);
         }
-        if (sel->org == FILE_ORG_RELATIVE && file_key(f, "RELATIVE")) {
-            // The largest record number the RELATIVE KEY item holds (READ: 14)
-            VarInfo *kv = find_item(file_key(f, "RELATIVE"), true);
-            if (kv && kv->is_numeric && kv->decimal_places == 0 && kv->digits > 0 && kv->digits < 19) {
-                long long lim = 1;
-                for (int k = 0; k < kv->digits; k++) lim *= 10;
-                char num[32];
-                snprintf(num, sizeof(num), "%lld", lim - 1);
-                d->jump_target = strdup(num);
-            } else if (kv && !kv->is_numeric) {
-                diag_error(sel->loc, "RELATIVE KEY '%s' must be an unsigned integer item", kv->name);
-            }
-        }
-        if (sel->org == FILE_ORG_RELATIVE && sel->access != FILE_ACCESS_SEQUENTIAL && !file_key(f, "RELATIVE"))
-            diag_error(sel->loc, "RELATIVE file '%s' with RANDOM or DYNAMIC access needs a RELATIVE KEY", fi->name);
-        bool any_mode = false;
-        for (int k = 1; k <= 4; k++) any_mode |= use_for_mode(k) >= 0;
-        if (any_mode || use_for_file(fi->name) >= 0) d->flags |= FILE_USE;
-        if (fi->select->extra) {
-            VarInfo *st = find_item(fi->select->extra, true);
-            if (st && (st->is_numeric || st->size != 2))
-                diag_error(fi->select->extra->loc, "FILE STATUS item '%s' must be a two-character alphanumeric item", st->name);
-            else if (st && !fi->external && record_ptr_slot[st->record] < 0 && !record_extern[st->record]) {
-                char label[48];
-                record_label(label, sizeof(label), st->record, st->offset);
-                d->content = strdup(label);
-            } else if (st && num_status_fixups < 64) {
-                // Its address is known at run time only: stored at initialization
-                external_status_fixups[num_status_fixups][0] = f;
-                external_status_fixups[num_status_fixups++][1] = (int)(st - vars);
-            }
-            if (st) fi->status_var = (int)(st - vars);
-        }
-        append_instr(ir, d);
     }
+    if (!file_key(f, "RECORD"))
+        diag_error(sel->loc, "INDEXED file '%s' has no RECORD KEY", fi->name);
+    snprintf(table + n, sizeof(table) - n, " %d%s", fi->nkeys, body);
+    char label[32];
+    snprintf(label, sizeof(label), "$keys_%d", f);
+    IrInstr *q = new_instr(IR_DATA_QWORDS, label, NULL, table, 0, 0, 0, 0, USAGE_DISPLAY);
+    append_instr(ir, q);
+    d->jump_target = strdup(label);
+}
+
+// A relative file's largest record number: what its RELATIVE KEY item holds
+// (READ: 14)
+static void relative_key_limit(int f, IrInstr *d) {
+    AstNode *sel = files[f].select;
+    VarInfo *kv = find_item(file_key(f, "RELATIVE"), true);
+    if (kv && kv->is_numeric && kv->decimal_places == 0 && kv->digits > 0 && kv->digits < 19) {
+        long long lim = 1;
+        for (int k = 0; k < kv->digits; k++) lim *= 10;
+        char num[32];
+        snprintf(num, sizeof(num), "%lld", lim - 1);
+        d->jump_target = strdup(num);
+    } else if (kv && !kv->is_numeric) {
+        diag_error(sel->loc, "RELATIVE KEY '%s' must be an unsigned integer item", kv->name);
+    }
+}
+
+// The FILE STATUS item of a file
+static void file_status_item(int f, IrInstr *d) {
+    FileInfo *fi = &files[f];
+    VarInfo *st = find_item(fi->select->extra, true);
+    if (st && (st->is_numeric || st->size != 2))
+        diag_error(fi->select->extra->loc, "FILE STATUS item '%s' must be a two-character alphanumeric item", st->name);
+    else if (st && !fi->external && record_ptr_slot[st->record] < 0 && !record_extern[st->record]) {
+        char label[48];
+        record_label(label, sizeof(label), st->record, st->offset);
+        d->content = strdup(label);
+    } else if (st && num_status_fixups < 64) {
+        // Its address is known at run time only: stored at initialization
+        external_status_fixups[num_status_fixups][0] = f;
+        external_status_fixups[num_status_fixups++][1] = (int)(st - vars);
+    }
+    if (st) fi->status_var = (int)(st - vars);
+}
+
+// A file's control block (IR_DATA_FILE)
+static void emit_file_block(IrProgram *ir, int f) {
+    FileInfo *fi = &files[f];
+    if (fi->first_record < 0) {
+        diag_error(fi->select->loc, "File '%s' has no FD with a record description", fi->name);
+        return;
+    }
+    fi->largest_record = fi->first_record;
+    for (int i = 0; i < num_vars; i++)
+        if (vars[i].file == f && vars[i].parent < 0 && vars[i].size > vars[fi->largest_record].size)
+            fi->largest_record = i;
+    if (fi->owner) return;            // the containing program's
+    char name_lit[32];
+    emit_data_lit(ir, "fname", fi->select->text, name_lit, sizeof(name_lit));
+    // An EXTERNAL file: this is the control block it starts as
+    char tpl[32];
+    if (fi->external) snprintf(tpl, sizeof(tpl), "$fcbtpl_%d", f);
+    else snprintf(tpl, sizeof(tpl), "%%r%d", fi->fcb_record);
+    IrInstr *d = new_instr(IR_DATA_FILE, tpl, name_lit, NULL, 0, fi->max_size, 0, 0, USAGE_DISPLAY);
+    if (fi->fd && fi->fd->is_global) d->symbol = global_symbol(self_symbol, 'f', fi->name);
+    AstNode *sel = fi->select;
+    d->flags = (sel->decimal_places == 1 ? FILE_LINE : 0) |
+               (sel->is_signed ? FILE_OPTIONAL : 0) |
+               (fi->variable ? FILE_VARIABLE : 0) |
+               (fi->linage_record >= 0 ? FILE_LINAGE : 0) |
+               (sel->org == FILE_ORG_RELATIVE ? ORG_RELATIVE : 0) |
+               (sel->org == FILE_ORG_INDEXED ? ORG_INDEXED : 0) |
+               (fi->is_sort ? ORG_SORT : 0) |
+               (sel->access == FILE_ACCESS_RANDOM ? ACC_RANDOM : 0) |
+               (sel->access == FILE_ACCESS_DYNAMIC ? ACC_DYNAMIC : 0);
+    d->digits = fi->min_size;
+    if (fi->linage_record >= 0) {
+        char lin[16];
+        snprintf(lin, sizeof(lin), "%%r%d", fi->linage_record);
+        d->cmp_op = strdup(lin);
+    }
+    if (sel->org == FILE_ORG_INDEXED) emit_key_table(ir, f, d);
+    if (sel->org == FILE_ORG_RELATIVE && file_key(f, "RELATIVE")) relative_key_limit(f, d);
+    if (sel->org == FILE_ORG_RELATIVE && sel->access != FILE_ACCESS_SEQUENTIAL && !file_key(f, "RELATIVE"))
+        diag_error(sel->loc, "RELATIVE file '%s' with RANDOM or DYNAMIC access needs a RELATIVE KEY", fi->name);
+    bool any_mode = false;
+    for (int k = 1; k <= 4; k++) any_mode |= use_for_mode(k) >= 0;
+    if (any_mode || use_for_file(fi->name) >= 0) d->flags |= FILE_USE;
+    if (fi->select->extra) file_status_item(f, d);
+    append_instr(ir, d);
+}
+
+static void build_data(IrProgram *ir, AstNode *program) {
+    collect_files(program);
+    collect_global_files();
+    collect_decls(program);
+    ItemBuilder b = { .last_item = -1 };
+    if (!build_items(&b)) return;
+    apply_sign_clauses();
+    layout_records();
+    for (int k = 0; k < b.num_renames; k++) build_renames(b.renames[k], b.renames_record[k]);
+    build_file_records();
+    build_debug_item(program);
+    emit_record_storage(ir);
+    for (int f = 0; f < num_files; f++) emit_file_block(ir, f);
 }
 
 // ── Data references ──────────────────────────────────────────────────────────
