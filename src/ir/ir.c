@@ -1759,16 +1759,28 @@ static void emit_check(IrProgram *ir, SourceLocation loc, const char *what, int 
     c->flags = limit ? 1 : 0;
 }
 
-static int odo_length(IrProgram *ir, const VarInfo *v, const VarInfo *t) {
+// The current length of group v, whose table t has OCCURS DEPENDING ON, less
+// skip characters (a reference modifier's start - 1: a constant, or start
+// pushed at run time): a length slot, or the maximum length
+static int odo_length_from(IrProgram *ir, const VarInfo *v, const VarInfo *t, int skip, AstNode *start) {
     VarInfo *dv = find_item(t->depending, true);
+    bool maximum = false;
     if (resolving_receiver && dv)
         for (int a = dv->parent; a >= 0; a = vars[a].parent)
-            if (&vars[a] == v) return v->size;
-    if (!dv || !dv->is_numeric || dv->decimal_places > 0) {
+            if (&vars[a] == v) maximum = true;
+    if (!maximum && (!dv || !dv->is_numeric || dv->decimal_places > 0)) {
         if (dv) diag_error(t->depending->loc, "DEPENDING ON item '%s' must be an integer", dv->name);
-        return v->size;
+        maximum = true;
     }
+    if (maximum && !start) return v->size - skip;
     int slot = addr_slots++;
+    if (maximum) {
+        emit_num(ir, IR_NUM_CONST, v->size + 1, 0);
+        push_int(ir, start);
+        emit_num(ir, IR_NUM_SUB, 0, 0);
+        emit(ir, IR_LEN_SET)->imm = slot;
+        return -(slot + 1);
+    }
     push_int(ir, t->depending);
     if (ir_runtime_checks) {
         char what[160];
@@ -1777,10 +1789,20 @@ static int odo_length(IrProgram *ir, const VarInfo *v, const VarInfo *t) {
     }
     emit_num(ir, IR_NUM_CONST, t->size, 0);
     emit_num(ir, IR_NUM_MUL, 0, 0);
-    emit_num(ir, IR_NUM_CONST, t->offset - v->offset, 0);
+    emit_num(ir, IR_NUM_CONST, t->offset - v->offset - skip, 0);
     emit_num(ir, IR_NUM_ADD, 0, 0);
+    if (start) {                            // less start - 1
+        push_int(ir, start);
+        emit_num(ir, IR_NUM_SUB, 0, 0);
+        emit_num(ir, IR_NUM_CONST, 1, 0);
+        emit_num(ir, IR_NUM_ADD, 0, 0);
+    }
     emit(ir, IR_LEN_SET)->imm = slot;
     return -(slot + 1);
+}
+
+static int odo_length(IrProgram *ir, const VarInfo *v, const VarInfo *t) {
+    return odo_length_from(ir, v, t, 0, NULL);
 }
 
 static bool eval_function(IrProgram *ir, AstNode *f);
@@ -1909,10 +1931,12 @@ static bool resolve_ref_now(IrProgram *ir, AstNode *ref, FieldRef *out) {
 
     // A group holding a table with OCCURS DEPENDING ON: its length follows
     // the current number of occurrences (the table ends the group)
-    VarInfo *odo = ref->loop ? NULL : odo_table_in(v);
+    // (and a reference modifier without a length runs to its current end)
+    VarInfo *odo = ref->loop && length ? NULL : odo_table_in(v);
     if (!dynamic) {
         record_label(out->label, sizeof(out->label), v->record, offset);
-        out->size = odo ? odo_length(ir, v, odo) : size;
+        out->size = !odo ? size : ref->loop ? odo_length_from(ir, v, odo, (int)start_val - 1, NULL)
+                                            : odo_length(ir, v, odo);
         return true;
     }
 
@@ -1976,7 +2000,9 @@ static bool resolve_ref_now(IrProgram *ir, AstNode *ref, FieldRef *out) {
         size = -(slot + 1);
     }
     snprintf(out->label, sizeof(out->label), "*A_%d", slot);
-    out->size = odo ? odo_length(ir, v, odo) : size;
+    if (!odo) out->size = size;
+    else if (!ref->loop) out->size = odo_length(ir, v, odo);
+    else out->size = odo_length_from(ir, v, odo, start_const ? (int)start_val - 1 : 0, start_const ? NULL : start);
     return true;
 }
 

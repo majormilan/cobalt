@@ -23,6 +23,8 @@
 
 ### Fixed
 
+- A reference modifier without a length on a group with an OCCURS
+  DEPENDING ON table runs to the group's current end, not its maximum.
 - A signed numeric literal moved to, or compared with, an alphanumeric
   item is treated as its unsigned digits (`MOVE -12 TO X` gives "12").
 - The constant-condition warning for a loop condition (`PERFORM ... UNTIL
