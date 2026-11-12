@@ -28,6 +28,8 @@
 
 ### Fixed
 
+- `-D gnucobol`: DISPLAY of a SIGN TRAILING SEPARATE item shows the sign
+  last (`012-`), as GnuCOBOL does.
 - Report Writer: the data-name of a SUM entry names the sum counter, as
   the standard defines, so procedures can read and change it.
 - DISPLAY UPON SYSERR, or a mnemonic-name of SYSERR, writes to standard

@@ -5504,13 +5504,16 @@ static void lower_display(IrProgram *ir, AstNode *node) {
                 int int_digits = d - s > 0 ? d - s : 0, frac = s > 0 ? s : 0;
                 static char mask[48];
                 static VarInfo pretty;
+                // (SIGN TRAILING SEPARATE: the sign last, as stored)
+                bool trailing = (f.var->sign_mode & SIGN_SEPARATE) && !(f.var->sign_mode & SIGN_LEADING);
                 int n = 0;
-                if (f.var->is_signed) mask[n++] = 'S';
+                if (f.var->is_signed && !trailing) mask[n++] = 'S';
                 for (int k = 0; k < int_digits && n < 40; k++) mask[n++] = '9';
                 if (frac) {
                     mask[n++] = '.';
                     for (int k = 0; k < frac && n < 40; k++) mask[n++] = '9';
                 }
+                if (f.var->is_signed && trailing) mask[n++] = 'S';
                 mask[n] = '\0';
                 memset(&pretty, 0, sizeof(pretty));
                 pretty.mask = mask;
