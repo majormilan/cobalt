@@ -3350,8 +3350,9 @@ static void move_text_to_numeric(IrProgram *ir, const FieldRef *sf, VarInfo *dv,
     memset(&text_view, 0, sizeof(text_view));
     text_view.usage_type = USAGE_DISPLAY;
     text_view.is_numeric = true;
+    // (a length known at run time: the runtime keeps the low-order 18)
     text_view.size = sf->size > 18 ? 18 : sf->size;
-    text_view.digits = text_view.size;
+    text_view.digits = sf->size < 0 ? 18 : text_view.size;
     FieldRef tf = *sf;
     tf.var = &text_view;
     if (sf->size > 18) {
@@ -3594,10 +3595,6 @@ static void lower_move(IrProgram *ir, AstNode *src, AstNode *dest_node, const ch
         // integer of its length (high-order digits beyond the receiver are lost)
         FieldRef sf;
         if (!resolve_ref(ir, src, &sf)) return;
-        if (sf.size < 0) {
-            diag_error(src->loc, "MOVE of a variable-length item to numeric '%s' is not supported yet", dv->name);
-            return;
-        }
         move_text_to_numeric(ir, &sf, dv, dest_node);
     }
 }

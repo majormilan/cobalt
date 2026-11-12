@@ -23,6 +23,8 @@
 
 ### Fixed
 
+- MOVE of an item whose length is known only at run time (a reference
+  modifier with variable start or length) to a numeric item is supported.
 - Exponentiation takes an exponent with decimals (`9 ** 0.5` is 3); a
   negative base with such an exponent is a size error.
 - MOVE of HIGH-VALUE, LOW-VALUE, QUOTE or an ALL literal to a numeric item
