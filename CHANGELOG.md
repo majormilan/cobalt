@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.1.1-alpha (2026-11-16)
+
+Corrections to the first release, found by a review of the compiler and
+its runtime against the standard and GnuCOBOL, with clearer diagnostics and
+some common extensions.
 
 ### Added
 

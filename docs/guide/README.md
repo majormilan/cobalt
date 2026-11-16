@@ -1,6 +1,6 @@
 # Cobalt User Guide
 
-This guide describes Cobalt 0.1.0-alpha, a general-purpose COBOL
+This guide describes Cobalt 0.1.1-alpha, a general-purpose COBOL
 cross-compiler: how to install it, how to compile and run COBOL programs with
 it, which language it implements and how its programs behave when they run.
 In this release Cobalt supports COBOL-85 on two targets, Linux and Windows on

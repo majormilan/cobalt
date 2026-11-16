@@ -1,6 +1,6 @@
 # 3. The language
 
-In release 0.1.0-alpha, Cobalt compiles **COBOL-85**: ANSI X3.23-1985
+In release 0.1.1-alpha, Cobalt compiles **COBOL-85**: ANSI X3.23-1985
 (ISO 1989:1985) with its 1989 amendment, the intrinsic functions. Its modules are implemented at their
 highest level (level 2), except the Communication module, which is not
 supported. It is checked with the NIST CCVS85 validation suite.

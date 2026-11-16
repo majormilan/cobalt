@@ -5,7 +5,7 @@
 **A self-contained cross-compiler for COBOL**
 
 [![CI](https://github.com/majormilan/cobalt/actions/workflows/ci.yml/badge.svg)](https://github.com/majormilan/cobalt/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/release-0.1.0--alpha-orange)](https://github.com/majormilan/cobalt/releases)
+[![Release](https://img.shields.io/badge/release-0.1.1--alpha-orange)](https://github.com/majormilan/cobalt/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Language](https://img.shields.io/badge/language-COBOL-005f87)](docs/guide/03-language.md)
 [![Targets](https://img.shields.io/badge/targets-Linux%20%7C%20Windows-lightgrey)](docs/guide/08-platforms.md)
@@ -38,7 +38,8 @@ $ cobalt -t x86_64-pc-windows-msvc payroll.cbl         # Windows executable, bui
 
 ## Current Release
 
-Version **0.1.0-alpha** is the first public release. Its scope is the COBOL-85
+Version **0.1.1-alpha** is the current release: the first public release (0.1.0-alpha)
+with its corrections and diagnostics improvements. Its scope is the COBOL-85
 standard on two targets. Support for additional COBOL standards, vendor
 dialects, architectures and operating systems is planned for subsequent
 releases (see [Roadmap](#roadmap)).
@@ -68,7 +69,7 @@ releases (see [Roadmap](#roadmap)).
 
 ### Language standards
 
-| Standard | Status in 0.1.0-alpha |
+| Standard | Status in 0.1.1-alpha |
 |---|---|
 | COBOL-85 (ANSI X3.23-1985, ISO 1989:1985) with the 1989 Intrinsic Function amendment | Supported |
 | COBOL 2002 (ISO/IEC 1989:2002) | Planned; selected elements available as extensions |
@@ -109,15 +110,15 @@ license and the example programs. Checksums are published in `SHA256SUMS`.
 **Linux**
 
 ```
-tar xzf cobalt-0.1.0-alpha-linux-x86_64.tar.gz
-sudo cp cobalt-0.1.0-alpha-linux-x86_64/cobalt /usr/local/bin/
+tar xzf cobalt-0.1.1-alpha-linux-x86_64.tar.gz
+sudo cp cobalt-0.1.1-alpha-linux-x86_64/cobalt /usr/local/bin/
 ```
 
 **Windows (PowerShell)**
 
 ```
-Expand-Archive cobalt-0.1.0-alpha-windows-x86_64.zip
-Copy-Item cobalt-0.1.0-alpha-windows-x86_64\cobalt.exe "$env:LOCALAPPDATA\Programs\cobalt\"
+Expand-Archive cobalt-0.1.1-alpha-windows-x86_64.zip
+Copy-Item cobalt-0.1.1-alpha-windows-x86_64\cobalt.exe "$env:LOCALAPPDATA\Programs\cobalt\"
 ```
 
 Add the destination directory to the `PATH`. To install from a source build,
@@ -141,7 +142,7 @@ guide provides a complete introduction.
 
 ## Language Support
 
-Cobalt 0.1.0-alpha implements COBOL-85 at its highest level in the following
+Cobalt 0.1.1-alpha implements COBOL-85 at its highest level in the following
 modules: Nucleus, Sequential I-O, Relative I-O, Indexed I-O, Sort-Merge,
 Inter-Program Communication, Source Text Manipulation, Intrinsic Functions,
 Segmentation, Debug and Report Writer. The Communication module is not

@@ -21,7 +21,7 @@ Windows):
 ```
 $ sudo make install            # /usr/local/bin/cobalt; PREFIX=... for elsewhere
 $ cobalt --version
-cobalt 0.1.0-alpha
+cobalt 0.1.1-alpha
 ```
 
 ## A first program

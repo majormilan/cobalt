@@ -4,6 +4,6 @@
 #ifndef COBALT_VERSION_H
 #define COBALT_VERSION_H
 
-#define COBALT_VERSION "0.1.0-alpha"
+#define COBALT_VERSION "0.1.1-alpha"
 
 #endif
