@@ -153,7 +153,9 @@ the program checks:
   of the item;
 - the contents of each numeric DISPLAY item its value is taken from: a
   byte that is not a digit (spaces moved through a group, a REDEFINES,
-  data read from a file) ends the run instead of counting as 0.
+  data read from a file) ends the run instead of counting as 0;
+- the contents of each PACKED-DECIMAL (COMP-3) item its value is taken
+  from: digits in every half-byte, and a sign in the last.
 
 ```
 ledger.cbl:42: run-time error in program LEDGER: the subscript of 'ENTRY' is 11, out of range 1 to 10
@@ -161,8 +163,8 @@ ledger.cbl:57: run-time error in program LEDGER: the reference modification star
 ledger.cbl:63: run-time error in program LEDGER: a numeric item holds '    ', which is not a number
 ```
 
-The check of numeric items is on for the whole run unit when its main
-program is compiled with `-fcheck`.
+Each program checks numeric items as it was compiled: a called program
+compiled with `-fcheck` checks them while it runs, whatever its caller.
 
 Literal subscripts and reference modifications are checked when compiling,
 with or without `-fcheck`.

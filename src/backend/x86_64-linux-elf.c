@@ -1482,6 +1482,7 @@ typedef struct {
 
 // The runtime routines, and the storage of other programs
 static void emit_externs(FILE *f, const IrProgram *ir) {
+    if (ir->subprogram) fprintf(f, "extern cobrt_runtime_flags\n");   // (its -fcheck setting)
     for (size_t r = 0; r < sizeof(runtime_routines) / sizeof(runtime_routines[0]); r++) {
         fprintf(f, "extern %s\n", runtime_routines[r]);
     }
@@ -1540,6 +1541,7 @@ static void emit_bss(Emitter *em, FILE *f) {
     if (ir->subprogram) {
         fprintf(f, "L_entry_rsp: resq 1\n");      // the stack at the entry (EXIT PROGRAM)
         fprintf(f, "L_prog_state: resq 1\n");     // 0: initialize on the next CALL
+        fprintf(f, "L_caller_flags: resq 1\n");   // the caller's cobrt_runtime_flags
     }
     // the save cells of PERFORM statements and PERFORM ... TIMES loops
     int nperform = 0;
@@ -2430,6 +2432,14 @@ static void emit_instr(Emitter *em, FILE *f, IrInstr *i, const char *sanitized_v
                 fprintf(f, "L_arg_%d:\n", k);
                 fprintf(f, "    mov [rel A_%d], rax\n", em->ir->using_slots[k]);
             }
+            // the numeric data check (-fcheck) as this program was compiled,
+            // the caller's setting kept for the return
+            fprintf(f, "    mov rax, [rel cobrt_runtime_flags]\n");
+            fprintf(f, "    mov [rel L_caller_flags], rax\n");
+            if (em->ir->runtime_flags & IR_RT_CHECK_DATA)
+                fprintf(f, "    or qword [rel cobrt_runtime_flags], %d\n", IR_RT_CHECK_DATA);
+            else
+                fprintf(f, "    and qword [rel cobrt_runtime_flags], %d\n", ~IR_RT_CHECK_DATA);
             fprintf(f, "    mov byte [rel cobrt_tgt_err], 0\n");
             fprintf(f, "    mov byte [rel cobrt_val_err], 0\n");
             if (!em->ir->initial) {
@@ -2449,6 +2459,8 @@ static void emit_instr(Emitter *em, FILE *f, IrInstr *i, const char *sanitized_v
             break;
         case IR_EXIT_PROGRAM:
             if (!em->ir->subprogram) break;     // no effect in the main program
+            fprintf(f, "    mov rax, [rel L_caller_flags]\n");
+            fprintf(f, "    mov [rel cobrt_runtime_flags], rax\n");
             fprintf(f, "    mov rsp, [rel L_entry_rsp]\n");
             fprintf(f, "    add rsp, 8\n");
             fprintf(f, "    pop r15\n    pop r14\n    pop r13\n    pop r12\n    pop rbx\n    pop rbp\n");

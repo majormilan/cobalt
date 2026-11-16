@@ -31,6 +31,9 @@
 
 ### Fixed
 
+- `-fcheck` also checks PACKED-DECIMAL items (a half-byte that is not a
+  digit, or a missing sign), and a called program checks numeric items as
+  it was compiled, whatever its caller.
 - `-D gnucobol`: DISPLAY of a COMP-5 item shows the digits its storage
   holds and the stored integer, as GnuCOBOL does.
 - No false size error when an 18-digit item and one with decimals are

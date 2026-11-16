@@ -1,0 +1,3 @@
+SUB CHECKED
+tests/runerr/packed_data.cbl:11: run-time error in program PACKED-DATA: a packed-decimal item holds X'1A2C', which is not a number
+[exit 1]

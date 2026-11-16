@@ -17,6 +17,7 @@ global runtime_num_addw
 global runtime_num_store
 global runtime_num_load_p
 extern runtime_check_data_fail
+extern runtime_check_packed_fail
 global runtime_num_store_p
 global runtime_packed_store_c
 global runtime_num_load_d
@@ -335,6 +336,9 @@ decode_overpunch:
 runtime_packed_load:
     mov rdi, ARG0
     mov rsi, ARG1
+    test qword [rel cobrt_runtime_flags], RT_CHECK_DATA
+    jnz .pl_check
+.pl_checked:
     movzx r8d, byte [rdi + rsi - 1]
     and r8d, 0x0f                       ; sign nibble
     cmp rsi, 8
@@ -392,6 +396,32 @@ runtime_packed_load:
     cmp r8d, 0x0b
     cmove rax, rdx
     ret
+.pl_check:
+    ; -fcheck: every nibble a digit, the last a sign (A to F)
+    xor ecx, ecx
+.pl_byte:
+    movzx eax, byte [rdi + rcx]
+    mov edx, eax
+    shr edx, 4
+    cmp edx, 9
+    ja .pl_bad
+    and eax, 0x0f
+    lea rdx, [rcx + 1]
+    cmp rdx, rsi
+    je .pl_last
+    cmp eax, 9
+    ja .pl_bad
+    inc rcx
+    jmp .pl_byte
+.pl_last:
+    cmp eax, 10
+    jb .pl_bad
+    jmp .pl_checked
+.pl_bad:
+    sub rsp, 8                          ; (aligned for the call)
+    mov ARG0, rdi
+    mov ARG1, rsi
+    call runtime_check_packed_fail      ; does not return
 
 ; The same routines called with a descriptor of the item (8 bytes the
 ; compiler emits once per item and kind of call: its address, dd, then the

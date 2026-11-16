@@ -19,6 +19,7 @@ global cobrt_error_number
 global cobrt_error_end
 global runtime_check_fail
 global runtime_check_data_fail
+global runtime_check_packed_fail
 extern cobrt_close_files
 
 ; Write the zero-terminated string ARG0 to standard error
@@ -156,9 +157,49 @@ runtime_check_data_fail:
     call cobrt_error_text
     call cobrt_error_end
 
+; A packed-decimal item whose bytes are not packed digits (-fcheck): ARG0 =
+; the item, ARG1 = its size. Does not return.
+;   <where>a packed-decimal item holds X'1A2F', which is not a number
+runtime_check_packed_fail:
+    push rbx
+    push r12
+    push r13
+    mov rbx, ARG0
+    mov r12, ARG1
+    call cobrt_error_begin
+    lea ARG0, [rel msg_packed]
+    call cobrt_error_text
+    xor r13d, r13d
+.byte:
+    cmp r13, r12
+    jae .done
+    movzx eax, byte [rbx + r13]
+    lea rcx, [rel hex_digits]
+    mov edx, eax
+    shr edx, 4
+    mov dl, [rcx + rdx]
+    mov [rel hex_pair], dl
+    and eax, 0x0f
+    mov al, [rcx + rax]
+    mov [rel hex_pair + 1], al
+    lea ARG0, [rel hex_pair]
+    call cobrt_error_text
+    inc r13
+    jmp .byte
+.done:
+    lea ARG0, [rel msg_packed_end]
+    call cobrt_error_text
+    call cobrt_error_end
+
 section .rodata
 msg_data: db "a numeric item holds '", 0
 msg_data_end: db "', which is not a number", 0
+msg_packed: db "a packed-decimal item holds X'", 0
+msg_packed_end: db "', which is not a number", 0
+hex_digits: db "0123456789ABCDEF"
+
+section .data
+hex_pair: db 0, 0, 0
 
 section .bss
 cobrt_where: resq 1
