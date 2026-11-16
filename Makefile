@@ -6,6 +6,10 @@ DEPFLAGS = -MMD -MP                    # Auto-generate .d dependency files
 CFLAGS += -include compat.h            # what a host's C library lacks (include/compat.h)
 LDFLAGS =  # Add libs later, e.g., -lm
 
+# A command that fails removes its target: a partly written file never
+# counts as up to date (a sanitizer build's tools exit non-zero on a leak)
+.DELETE_ON_ERROR:
+
 SRCDIR = src
 BINDIR = bin
 OBJDIR = obj

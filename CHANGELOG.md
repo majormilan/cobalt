@@ -31,6 +31,8 @@
 
 ### Fixed
 
+- A build with sanitizers no longer needs `make` run twice: the assembler
+  frees its macros, and a failing command removes its target.
 - `-fcheck` also checks PACKED-DECIMAL items (a half-byte that is not a
   digit, or a missing sign), and a called program checks numeric items as
   it was compiled, whatever its caller.

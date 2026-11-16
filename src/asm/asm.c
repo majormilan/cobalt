@@ -1028,6 +1028,7 @@ static void assemble_text(Asm *as, const char *text, const char *file, int depth
             if (*s == '%' && strncasecmp(s, "%endmacro", 9) == 0) {
                 if (recording >= 0) {
                     if (!body) body = strdup("");
+                    free(as->macros[recording].body);   // (the empty body it started with)
                     as->macros[recording].body = body;
                     body = NULL;
                 } else {
@@ -1474,6 +1475,11 @@ AsmObject *asm_assemble(const char *source, const char *filename, const AsmOptio
     for (int k = 0; k < as.ndefines; k++) free(as.define_values[k]);
     free(as.define_values);
     namemap_free(&as.defines);
+    for (int k = 0; k < as.nmacros; k++) {
+        free(as.macros[k].name);
+        free(as.macros[k].body);
+    }
+    free(as.macros);
     if (as.errors) {
         asm_free(o);
         return NULL;
