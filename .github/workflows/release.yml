@@ -1,7 +1,8 @@
 # A release for each version tag (v0.1.0-alpha, ...): build and test on
 # Linux, make the packages (make dist: a static cobalt for Linux, cobalt.exe
 # for Windows, checked with the examples) and publish them as a GitHub
-# release whose notes are the version's section of CHANGELOG.md. Versions
+# release whose notes are the version's section of CHANGELOG.md, followed by
+# the downloads, installation and documentation. Versions
 # with a pre-release part (-alpha, -beta) are marked as pre-releases. A tag
 # moved to a new commit updates its release: notes and packages replaced.
 name: Release
@@ -18,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0                # (the previous tag, for the comparison)
       - name: Tools
         run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 zip
       - name: The tag names this version
@@ -31,12 +34,49 @@ jobs:
         run: make && make test
       - name: Packages
         run: make dist
-      - name: Release notes (CHANGELOG.md)
+      - name: Release notes (CHANGELOG.md, then downloads and documentation)
         run: |
           awk -v v="$VERSION" '
             /^## / { on = index($0, "## " v " ") == 1 || $0 == "## " v; next }
             on { print }' CHANGELOG.md > notes.md
           test -s notes.md
+          repo="https://github.com/$GITHUB_REPOSITORY"
+          tree="$repo/blob/$GITHUB_REF_NAME"
+          previous=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+          {
+            echo
+            echo "### Downloads"
+            echo
+            echo "| Package | Platform |"
+            echo "|---|---|"
+            echo "| \`cobalt-$VERSION-linux-x86_64.tar.gz\` | Linux x86-64: \`cobalt\`, a static executable |"
+            echo "| \`cobalt-$VERSION-windows-x86_64.zip\` | Windows x86-64: \`cobalt.exe\` |"
+            echo "| \`SHA256SUMS\` | Checksums of the packages |"
+            echo
+            echo "Each package holds the compiler, which builds executables for both"
+            echo "Linux and Windows (\`-t\`), with the user guide (\`guide/\`), example"
+            echo "programs with their expected output (\`examples/\`), README.md,"
+            echo "CHANGELOG.md and LICENSE. Nothing else is needed: the assembler, the"
+            echo "linker and the runtime are part of the executable."
+            echo
+            echo "### Installation"
+            echo
+            echo "Unpack the package and put \`cobalt\` (or \`cobalt.exe\`) on the PATH;"
+            echo "see [Installation]($tree/README.md#installation). Then:"
+            echo
+            echo '```'
+            echo 'cobalt hello.cbl && ./hello'
+            echo '```'
+            echo
+            echo "### Documentation"
+            echo
+            echo "- [User guide]($tree/docs/guide/README.md)"
+            echo "- [Known limitations]($tree/docs/guide/09-limits.md)"
+            echo "- [Changelog]($tree/CHANGELOG.md)"
+            if [ -n "$previous" ]; then
+              echo "- [Changes since $previous]($repo/compare/$previous...$GITHUB_REF_NAME)"
+            fi
+          } >> notes.md
       - uses: softprops/action-gh-release@v2
         with:
           name: Cobalt ${{ env.VERSION }}

@@ -2,9 +2,33 @@
 
 ## 0.1.1-alpha (2026-11-16)
 
-Corrections to the first release, found by a review of the compiler and
-its runtime against the standard and GnuCOBOL, with clearer diagnostics and
-some common extensions.
+The second alpha release of Cobalt, a general-purpose COBOL cross-compiler
+for COBOL-85 on Linux and Windows (x86-64). It corrects the defects found by
+a review of the compiler and its runtime against the standard and GnuCOBOL,
+reports invalid and vendor-specific code more clearly, and adds the first
+extension sets. As an alpha release, command-line options, messages and file
+formats may change before version 1.0.
+
+### Highlights
+
+- **Arithmetic:** 18-digit quotients, products, sums with decimals and
+  powers are exact instead of raising a false size error; intrinsic
+  functions of large arguments give exact results or a size error, never
+  a wrong value; exponents with decimals are computed.
+- **PERFORM:** each PERFORM saves its return point in a cell of its own, as
+  IBM does, so programs that leave PERFORMs with GO TO no longer run out of
+  stack, and ranges that end out of order return correctly.
+- **Language corrections:** MOVE, INITIALIZE, INSPECT, UNSTRING, EVALUATE,
+  reference modification, condition-names, figurative constants, COPY
+  REPLACING and debugging lines now follow the standard.
+- **Extensions:** extension sets (`-fext=common | ibm | gnucobol |
+  cobol2002`) decide which elements beyond COBOL-85 are accepted;
+  hexadecimal literals and `LENGTH OF` are new; unsupported vendor
+  elements are named as such, without follow-on errors.
+- **Diagnostics:** invalid code that compiled silently is now reported, an
+  undefined name is reported once, and misspelled headers give one error.
+- **Running programs:** DISPLAY UPON SYSERR writes to standard error;
+  `-fcheck` also checks packed-decimal data, program by program.
 
 ### Added
 
